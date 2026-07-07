@@ -30,6 +30,7 @@ model DailyEntry {
   name      String
   code      String?
   sector    String
+  market    String?
   price     String
   changePct Float
   volume    String?
