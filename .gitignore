@@ -45,3 +45,6 @@ next-env.d.ts
 # sqlite dev database
 *.db
 *.db-journal
+
+.vercel
+.env*

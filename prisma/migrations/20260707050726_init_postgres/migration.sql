@@ -1,17 +1,19 @@
 -- CreateTable
 CREATE TABLE "StockMaster" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "code" TEXT NOT NULL,
     "market" TEXT NOT NULL,
     "sector" TEXT NOT NULL,
     "price" TEXT NOT NULL,
-    "changePct" REAL NOT NULL
+    "changePct" DOUBLE PRECISION NOT NULL,
+
+    CONSTRAINT "StockMaster_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "DailyEntry" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "date" TEXT NOT NULL,
     "listType" TEXT NOT NULL,
     "rank" INTEGER NOT NULL,
@@ -19,9 +21,11 @@ CREATE TABLE "DailyEntry" (
     "code" TEXT,
     "sector" TEXT NOT NULL,
     "price" TEXT NOT NULL,
-    "changePct" REAL NOT NULL,
+    "changePct" DOUBLE PRECISION NOT NULL,
     "volume" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "DailyEntry_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
