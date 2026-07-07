@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { MAX_ENTRIES, type UploadRow } from "@/lib/market-data";
+import { STORAGE_CAP, type UploadRow } from "@/lib/market-data";
 
 export type ParsedWorkbook = {
   volume: UploadRow[];
@@ -32,10 +32,13 @@ function toNumber(value: unknown): number {
   return parseFloat(cleaned);
 }
 
+function str(row: Record<string, unknown>, key: string): string {
+  return String(row[key] ?? "").trim();
+}
+
 function parseRows(
   sheet: XLSX.WorkSheet,
-  sheetLabel: string,
-  requireVolume: boolean
+  sheetLabel: string
 ): { rows: UploadRow[]; errors: string[]; warnings: string[] } {
   const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
     defval: "",
@@ -44,13 +47,12 @@ function parseRows(
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  raw.slice(0, MAX_ENTRIES).forEach((row, i) => {
-    const name = String(row["종목명"] ?? "").trim();
+  raw.slice(0, STORAGE_CAP).forEach((row, i) => {
+    const name = str(row, "종목명");
     if (!name) return;
 
-    const price = String(row["현재가"] ?? "").trim();
+    const price = str(row, "현재가");
     const changePct = toNumber(row["등락률"]);
-    const market = String(row["시장"] ?? "").trim();
 
     if (!price || Number.isNaN(changePct)) {
       errors.push(
@@ -60,17 +62,27 @@ function parseRows(
     }
 
     const rank = Number(row["순위"]) || rows.length + 1;
-    const item: UploadRow = { rank, name, market, price, changePct };
-    if (requireVolume) {
-      item.volume = String(row["거래량"] ?? "").trim();
-    }
-    rows.push(item);
+    rows.push({
+      rank,
+      name,
+      market: str(row, "시장"),
+      price,
+      changePct,
+      volume: str(row, "거래량") || undefined,
+      tradingValue: str(row, "거래대금") || undefined,
+      marketCap: str(row, "시가총액") || undefined,
+      per: str(row, "PER") || undefined,
+      pbr: str(row, "PBR") || undefined,
+      roe: str(row, "ROE") || undefined,
+      debtRatio: str(row, "부채비율") || undefined,
+      reserveRatio: str(row, "유보율") || undefined,
+    });
   });
 
-  if (raw.length > MAX_ENTRIES) {
+  if (raw.length > STORAGE_CAP) {
     warnings.push(
-      `[${sheetLabel}] ${MAX_ENTRIES}종목까지만 반영돼요 — 나머지 ${
-        raw.length - MAX_ENTRIES
+      `[${sheetLabel}] ${STORAGE_CAP}종목까지만 반영돼요 — 나머지 ${
+        raw.length - STORAGE_CAP
       }개 행은 무시했어요`
     );
   }
@@ -90,7 +102,7 @@ export function parseWorkbook(buffer: Buffer): ParsedWorkbook {
   let gainer: UploadRow[] = [];
 
   if (volSheet) {
-    const r = parseRows(volSheet, "거래량상위", true);
+    const r = parseRows(volSheet, "거래량상위");
     volume = r.rows;
     errors.push(...r.errors);
     warnings.push(...r.warnings);
@@ -99,7 +111,7 @@ export function parseWorkbook(buffer: Buffer): ParsedWorkbook {
   }
 
   if (gainSheet) {
-    const r = parseRows(gainSheet, "급상승", false);
+    const r = parseRows(gainSheet, "급상승");
     gainer = r.rows;
     errors.push(...r.errors);
     warnings.push(...r.warnings);

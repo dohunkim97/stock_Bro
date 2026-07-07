@@ -34,6 +34,13 @@ model DailyEntry {
   price     String
   changePct Float
   volume    String?
+  tradingValue  String?
+  marketCap     String?
+  per           String?
+  pbr           String?
+  roe           String?
+  debtRatio     String?
+  reserveRatio  String?
   createdAt DateTime @default(now())
 
   @@index([date, listType])

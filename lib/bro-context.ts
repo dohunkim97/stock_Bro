@@ -22,20 +22,28 @@ async function marketDataBlock(): Promise<string> {
     }))
   );
 
+  // Only the top few of each list go into the prompt — up to 100 entries
+  // per list would blow up the context for no benefit to a 3-5 sentence reply.
   const lines = [`[오늘의 시장 데이터 · ${date} KRX 장마감]`];
   if (volume.length) {
     lines.push(
       "거래량 상위: " +
         volume
+          .slice(0, 10)
           .map((v) => `${v.name}(${v.code ?? "코드미상"}) ${v.price}원 ${formatChg(v.changePct)}`)
           .join(", ") +
+        (volume.length > 10 ? ` 외 ${volume.length - 10}종목` : "") +
         "."
     );
   }
   if (gainer.length) {
     lines.push(
       "급상승: " +
-        gainer.map((g) => `${g.name} ${formatChg(g.changePct)}`).join(", ") +
+        gainer
+          .slice(0, 10)
+          .map((g) => `${g.name} ${formatChg(g.changePct)}`)
+          .join(", ") +
+        (gainer.length > 10 ? ` 외 ${gainer.length - 10}종목` : "") +
         "."
     );
   }
