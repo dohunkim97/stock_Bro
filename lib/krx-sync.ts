@@ -145,13 +145,15 @@ export async function fetchKrxDayRanking(
   // Financial ratios (PER/PBR/ROE/부채비율) are a best-effort enrichment on
   // top of the core ranking — if data.go.kr's financial APIs are slow, rate
   // limited, or a stock's crno lookup fails, those columns just stay blank
-  // rather than failing the whole sync.
+  // rather than failing the whole sync. Budget is capped well under the
+  // route's 60s maxDuration so there's always room left for the DB write.
   const ratios = await fetchFinancialRatiosByCode(
     [...volumeTop, ...gainerTop].map((r) => ({
       code: r.code,
       price: r.price,
       sharesOutstanding: r.sharesOutstanding,
-    }))
+    })),
+    30000
   );
 
   return {

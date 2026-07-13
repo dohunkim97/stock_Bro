@@ -4,13 +4,20 @@
 // none of these three data.go.kr services key on the same identifier, so
 // this module is the glue between them.
 //
-// Field names are inferred from the sibling API's documented conventions
-// (basDt/srtnCd/isinCd/mrktCtg/itmsNm/crno all confirmed working already);
-// not yet verified live for these two specific operations.
+// This is a best-effort enrichment layered on top of the core ranking sync.
+// Production (Vercel) network latency to data.go.kr runs meaningfully
+// slower than local — a full ~40-stock enrichment pass can blow past the
+// route's time limit. Rather than let that take the whole sync down with
+// it, fetchFinancialRatiosByCode stops starting new lookups once a time
+// budget is exhausted; whatever stocks didn't get enriched just keep blank
+// ratio columns instead of failing the request.
 
 const LISTED_INFO_URL = "https://apis.data.go.kr/1160100/service/GetKrxListedInfoService/getItemInfo";
 const FINA_STAT_URL =
   "https://apis.data.go.kr/1160100/service/GetFinaStatInfoService_V2/getSummFinaStat_V2";
+
+const PER_REQUEST_TIMEOUT_MS = 5000;
+const CONCURRENCY = 12;
 
 export type FinancialRatios = {
   per?: string;
@@ -20,9 +27,9 @@ export type FinancialRatios = {
 };
 
 async function fetchJson(url: URL): Promise<Record<string, unknown> | null> {
-  const res = await fetch(url.toString());
-  if (!res.ok) return null;
   try {
+    const res = await fetch(url.toString(), { signal: AbortSignal.timeout(PER_REQUEST_TIMEOUT_MS) });
+    if (!res.ok) return null;
     return await res.json();
   } catch {
     return null;
@@ -128,13 +135,18 @@ function computeRatios(
 
 // Looks up financial ratios for a batch of (code, price, sharesOutstanding)
 // rows, deduping repeated codes and running a bounded number of requests in
-// parallel so a ~40-stock day stays well inside the route's time budget.
+// parallel. `budgetMs` caps total time spent here — once exceeded, remaining
+// stocks are simply skipped (blank ratio columns) rather than risking the
+// whole route timing out.
 export async function fetchFinancialRatiosByCode(
-  rows: { code: string; price: number; sharesOutstanding: number }[]
+  rows: { code: string; price: number; sharesOutstanding: number }[],
+  budgetMs = 30000
 ): Promise<Map<string, FinancialRatios>> {
   const serviceKey = process.env.KRX_SERVICE_KEY;
   const result = new Map<string, FinancialRatios>();
   if (!serviceKey) return result;
+
+  const deadline = Date.now() + budgetMs;
 
   const uniqueByCode = new Map<string, { price: number; sharesOutstanding: number }>();
   for (const r of rows) {
@@ -149,8 +161,9 @@ export async function fetchFinancialRatiosByCode(
   const candidateYears = [nowYear - 1, nowYear - 2];
 
   const entries = [...uniqueByCode.entries()];
-  const CONCURRENCY = 8;
   for (let i = 0; i < entries.length; i += CONCURRENCY) {
+    if (Date.now() >= deadline) break;
+
     const batch = entries.slice(i, i + CONCURRENCY);
     await Promise.all(
       batch.map(async ([code, { price, sharesOutstanding }]) => {
