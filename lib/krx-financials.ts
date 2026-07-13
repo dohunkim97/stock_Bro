@@ -1,0 +1,171 @@
+// Bridges 종목코드 (from GetStockSecuritiesInfoService) to 법인등록번호 (crno)
+// via GetKrxListedInfoService, then pulls annual financials from
+// GetFinaStatInfoService_V2 to derive PER/PBR/ROE/부채비율 ourselves —
+// none of these three data.go.kr services key on the same identifier, so
+// this module is the glue between them.
+//
+// Field names are inferred from the sibling API's documented conventions
+// (basDt/srtnCd/isinCd/mrktCtg/itmsNm/crno all confirmed working already);
+// not yet verified live for these two specific operations.
+
+const LISTED_INFO_URL = "https://apis.data.go.kr/1160100/service/GetKrxListedInfoService/getItemInfo";
+const FINA_STAT_URL =
+  "https://apis.data.go.kr/1160100/service/GetFinaStatInfoService_V2/getSummFinaStat_V2";
+
+export type FinancialRatios = {
+  per?: string;
+  pbr?: string;
+  roe?: string;
+  debtRatio?: string;
+};
+
+async function fetchJson(url: URL): Promise<Record<string, unknown> | null> {
+  const res = await fetch(url.toString());
+  if (!res.ok) return null;
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+function itemsOf(json: Record<string, unknown> | null): Record<string, unknown>[] {
+  const body = (json as { response?: { body?: unknown } } | null)?.response?.body as
+    | { items?: { item?: unknown } }
+    | undefined;
+  const items = body?.items?.item;
+  return Array.isArray(items) ? (items as Record<string, unknown>[]) : items ? [items as Record<string, unknown>] : [];
+}
+
+// srtnCd here comes back prefixed ("A005930"), unlike the plain 6-digit
+// code from GetStockSecuritiesInfoService ("005930") — strip any leading
+// non-digit characters before comparing. Foreign-incorporated names (HK/US
+// shells etc.) report crno as all zeros, meaning "no domestic corp number".
+function stripCodePrefix(raw: unknown): string {
+  return String(raw ?? "").replace(/[^0-9]/g, "");
+}
+
+function isRealCrno(crno: string | undefined): crno is string {
+  return !!crno && /[1-9]/.test(crno);
+}
+
+async function fetchCrno(code: string, serviceKey: string): Promise<string | null> {
+  const url = new URL(LISTED_INFO_URL);
+  url.searchParams.set("serviceKey", serviceKey);
+  url.searchParams.set("resultType", "json");
+  url.searchParams.set("numOfRows", "5");
+  url.searchParams.set("pageNo", "1");
+  url.searchParams.set("likeSrtnCd", code);
+
+  const json = await fetchJson(url);
+  const list = itemsOf(json);
+  const match = list.find((it) => stripCodePrefix(it.srtnCd) === code) ?? list[0];
+  const crno = (match?.crno as string | undefined)?.trim();
+  return isRealCrno(crno) ? crno : null;
+}
+
+type FinancialSummary = {
+  netIncome: number;
+  totalEquity: number;
+  debtRatio: number;
+};
+
+async function fetchFinancialSummary(
+  crno: string,
+  serviceKey: string,
+  years: number[]
+): Promise<FinancialSummary | null> {
+  for (const year of years) {
+    const url = new URL(FINA_STAT_URL);
+    url.searchParams.set("serviceKey", serviceKey);
+    url.searchParams.set("resultType", "json");
+    url.searchParams.set("numOfRows", "10");
+    url.searchParams.set("pageNo", "1");
+    url.searchParams.set("crno", crno);
+    url.searchParams.set("bizYear", String(year));
+
+    const json = await fetchJson(url);
+    const list = itemsOf(json);
+    if (list.length === 0) continue;
+
+    const consolidated = list.find((it) => it.fnclDcd === "110");
+    const standalone = list.find((it) => it.fnclDcd === "120");
+    const picked = consolidated ?? standalone ?? list[0];
+
+    const netIncome = Number(picked.enpCrtmNpf);
+    const totalEquity = Number(picked.enpTcptAmt);
+    const debtRatio = Number(picked.fnclDebtRto);
+    if (!Number.isFinite(netIncome) || !Number.isFinite(totalEquity)) continue;
+
+    return { netIncome, totalEquity, debtRatio };
+  }
+  return null;
+}
+
+function computeRatios(
+  summary: FinancialSummary,
+  price: number,
+  sharesOutstanding: number
+): FinancialRatios {
+  const ratios: FinancialRatios = {};
+
+  if (Number.isFinite(summary.debtRatio)) {
+    ratios.debtRatio = `${summary.debtRatio.toFixed(1)}%`;
+  }
+
+  if (sharesOutstanding > 0) {
+    const eps = summary.netIncome / sharesOutstanding;
+    const bps = summary.totalEquity / sharesOutstanding;
+    if (eps !== 0) ratios.per = (price / eps).toFixed(1);
+    if (bps > 0) ratios.pbr = (price / bps).toFixed(1);
+  }
+  if (summary.totalEquity > 0) {
+    ratios.roe = `${((summary.netIncome / summary.totalEquity) * 100).toFixed(1)}%`;
+  }
+
+  return ratios;
+}
+
+// Looks up financial ratios for a batch of (code, price, sharesOutstanding)
+// rows, deduping repeated codes and running a bounded number of requests in
+// parallel so a ~40-stock day stays well inside the route's time budget.
+export async function fetchFinancialRatiosByCode(
+  rows: { code: string; price: number; sharesOutstanding: number }[]
+): Promise<Map<string, FinancialRatios>> {
+  const serviceKey = process.env.KRX_SERVICE_KEY;
+  const result = new Map<string, FinancialRatios>();
+  if (!serviceKey) return result;
+
+  const uniqueByCode = new Map<string, { price: number; sharesOutstanding: number }>();
+  for (const r of rows) {
+    if (!uniqueByCode.has(r.code)) {
+      uniqueByCode.set(r.code, { price: r.price, sharesOutstanding: r.sharesOutstanding });
+    }
+  }
+
+  const nowYear = Number(
+    new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric" }).format(new Date())
+  );
+  const candidateYears = [nowYear - 1, nowYear - 2];
+
+  const entries = [...uniqueByCode.entries()];
+  const CONCURRENCY = 8;
+  for (let i = 0; i < entries.length; i += CONCURRENCY) {
+    const batch = entries.slice(i, i + CONCURRENCY);
+    await Promise.all(
+      batch.map(async ([code, { price, sharesOutstanding }]) => {
+        try {
+          const crno = await fetchCrno(code, serviceKey);
+          if (!crno) return;
+          const summary = await fetchFinancialSummary(crno, serviceKey, candidateYears);
+          if (!summary) return;
+          result.set(code, computeRatios(summary, price, sharesOutstanding));
+        } catch {
+          // best-effort enrichment — leave this stock's ratios blank on any failure
+        }
+      })
+    );
+  }
+
+  return result;
+}

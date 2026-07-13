@@ -1,11 +1,8 @@
 import type { UploadRow } from "@/lib/market-data";
+import { fetchFinancialRatiosByCode, type FinancialRatios } from "@/lib/krx-financials";
 
 // data.go.kr — 금융위원회_주식시세정보 (KRX daily price info)
 // https://www.data.go.kr/data/15094808/openapi.do
-//
-// Field names below follow that API's documented response shape. We haven't
-// tested against a live service key yet — if the real response differs,
-// adjust the field reads in parseRow() rather than the rest of this file.
 const API_BASE =
   "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getStockPriceInfo";
 
@@ -18,6 +15,7 @@ type RawKrxRow = {
   volume: number;
   tradingValue: number;
   marketCap: number;
+  sharesOutstanding: number;
 };
 
 function formatWon(value: number): string {
@@ -101,14 +99,18 @@ function parseRow(item: Record<string, unknown>): RawKrxRow | null {
     volume: Number(item.trqu) || 0,
     tradingValue: Number(item.trPrc) || 0,
     marketCap: Number(item.mrktTotAmt) || 0,
+    sharesOutstanding: Number(item.lstgStCnt) || 0,
   };
 }
 
-function toUploadRows(rows: RawKrxRow[], by: (r: RawKrxRow) => number): UploadRow[] {
-  return [...rows]
-    .sort((a, b) => by(b) - by(a))
-    .slice(0, 10)
-    .map((r, i) => ({
+function topN(rows: RawKrxRow[], by: (r: RawKrxRow) => number, n: number): RawKrxRow[] {
+  return [...rows].sort((a, b) => by(b) - by(a)).slice(0, n);
+}
+
+function toUploadRows(rows: RawKrxRow[], ratios: Map<string, FinancialRatios>): UploadRow[] {
+  return rows.map((r, i) => {
+    const fin = ratios.get(r.code);
+    return {
       rank: i + 1,
       name: r.name,
       market: r.market,
@@ -117,7 +119,12 @@ function toUploadRows(rows: RawKrxRow[], by: (r: RawKrxRow) => number): UploadRo
       volume: formatShares(r.volume),
       tradingValue: formatWon(r.tradingValue),
       marketCap: formatWon(r.marketCap),
-    }));
+      per: fin?.per,
+      pbr: fin?.pbr,
+      roe: fin?.roe,
+      debtRatio: fin?.debtRatio,
+    };
+  });
 }
 
 export async function fetchKrxDayRanking(
@@ -132,14 +139,24 @@ export async function fetchKrxDayRanking(
   const kospi = rows.filter((r) => r.market === "코스피");
   const kosdaq = rows.filter((r) => r.market === "코스닥");
 
-  const volume = [
-    ...toUploadRows(kospi, (r) => r.volume),
-    ...toUploadRows(kosdaq, (r) => r.volume),
-  ];
-  const gainer = [
-    ...toUploadRows(kospi, (r) => r.changePct),
-    ...toUploadRows(kosdaq, (r) => r.changePct),
-  ];
+  const volumeTop = [...topN(kospi, (r) => r.volume, 10), ...topN(kosdaq, (r) => r.volume, 10)];
+  const gainerTop = [...topN(kospi, (r) => r.changePct, 10), ...topN(kosdaq, (r) => r.changePct, 10)];
 
-  return { volume, gainer, rawCount: rows.length };
+  // Financial ratios (PER/PBR/ROE/부채비율) are a best-effort enrichment on
+  // top of the core ranking — if data.go.kr's financial APIs are slow, rate
+  // limited, or a stock's crno lookup fails, those columns just stay blank
+  // rather than failing the whole sync.
+  const ratios = await fetchFinancialRatiosByCode(
+    [...volumeTop, ...gainerTop].map((r) => ({
+      code: r.code,
+      price: r.price,
+      sharesOutstanding: r.sharesOutstanding,
+    }))
+  );
+
+  return {
+    volume: toUploadRows(volumeTop, ratios),
+    gainer: toUploadRows(gainerTop, ratios),
+    rawCount: rows.length,
+  };
 }
