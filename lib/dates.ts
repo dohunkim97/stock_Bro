@@ -1,8 +1,24 @@
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
+// Explicitly Asia/Seoul — the server (Vercel) runs in UTC, so deriving
+// "today" from the server's local Date would read as the previous day
+// during Korean early-morning hours (e.g. 08:00 KST is still 23:00 UTC
+// the day before).
 export function todayISO(): string {
-  const now = new Date();
-  return toISO(now);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const y = parts.find((p) => p.type === "year")?.value;
+  const m = parts.find((p) => p.type === "month")?.value;
+  const d = parts.find((p) => p.type === "day")?.value;
+  return `${y}-${m}-${d}`;
+}
+
+export function toYYYYMMDD(iso: string): string {
+  return iso.replace(/-/g, "");
 }
 
 function toISO(d: Date): string {

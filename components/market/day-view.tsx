@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { StockTable } from "./stock-table";
 import { ExcelUploadButton } from "./excel-upload-button";
+import { KrxSyncButton } from "./krx-sync-button";
 import { chgColorVar, formatChg } from "@/lib/format";
 import { aggregateSectors } from "@/lib/sector-aggregation";
 import type { DailyEntry } from "@/app/generated/prisma/client";
@@ -24,7 +25,8 @@ export function DayView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <KrxSyncButton date={date} />
         <ExcelUploadButton date={date} />
       </div>
 
