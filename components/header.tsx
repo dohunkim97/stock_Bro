@@ -54,26 +54,20 @@ export function Header() {
         borderBottom: "1px solid var(--border)",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div
-          style={{
-            width: 26,
-            height: 26,
-            borderRadius: 7,
-            background: "var(--accent)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#0a0d13",
-            fontWeight: 800,
-            fontSize: 15,
-            fontFamily: "var(--mono)",
-          }}
-        >
-          시
-        </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <svg width="24" height="27" viewBox="0 0 24 28" aria-hidden>
+          <defs>
+            <linearGradient id="eggGrad" x1="15%" y1="10%" x2="85%" y2="95%">
+              <stop offset="0%" stopColor="#fff3c4" />
+              <stop offset="45%" stopColor="#f4c430" />
+              <stop offset="100%" stopColor="#b8860b" />
+            </linearGradient>
+          </defs>
+          <ellipse cx="12" cy="15" rx="10" ry="12" fill="url(#eggGrad)" stroke="#8a6200" strokeWidth="1" />
+          <ellipse cx="8.5" cy="9" rx="2.2" ry="3" fill="#fff8e1" opacity="0.65" />
+        </svg>
         <span style={{ fontWeight: 800, fontSize: 16.5, letterSpacing: "-0.02em" }}>
-          시선<span style={{ color: "var(--accent)" }}>.</span>주식
+          Golden<span style={{ color: "var(--accent)" }}>Goodes</span>
         </span>
         <span
           style={{
