@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { AddEntryForm } from "./add-entry-form";
 import { DeleteEntryButton } from "./delete-entry-button";
+import { Modal } from "@/components/ui/modal";
 import { chgColorVar, formatChg } from "@/lib/format";
 import { SORT_OPTIONS, sortEntries } from "@/lib/sort";
 import { STORAGE_CAP } from "@/lib/constants";
@@ -37,6 +38,121 @@ function selectStyle(): React.CSSProperties {
   };
 }
 
+function Row({ s, cols, expanded }: { s: DailyEntry; cols: string; expanded: boolean }) {
+  return (
+    <div
+      className="hover-row"
+      style={{
+        display: "grid",
+        gridTemplateColumns: cols,
+        gap: 0,
+        padding: "12px 18px",
+        alignItems: "center",
+        borderBottom: "1px solid var(--border)",
+        fontSize: 13.5,
+      }}
+    >
+      <span style={{ fontFamily: "var(--mono)", color: "var(--faint)", fontSize: 12 }}>{s.rank}</span>
+      <span>
+        <span style={{ fontWeight: 600 }}>{s.name}</span>{" "}
+        <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)", marginLeft: 5 }}>
+          {s.code ?? "-"}
+        </span>
+      </span>
+      <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontWeight: 500 }}>{s.price}</span>
+      <span
+        style={{
+          textAlign: "right",
+          fontFamily: "var(--mono)",
+          fontWeight: 600,
+          color: chgColorVar(s.changePct),
+        }}
+      >
+        {formatChg(s.changePct)}
+      </span>
+      <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12, color: "var(--dim)" }}>
+        {s.volume ?? "-"}
+      </span>
+      <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12, color: "var(--dim)" }}>
+        {s.tradingValue ?? "-"}
+      </span>
+      {expanded && (
+        <>
+          <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12, color: "var(--dim)" }}>
+            {s.marketCap ?? "-"}
+          </span>
+          <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.per ?? "-"}</span>
+          <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.pbr ?? "-"}</span>
+          <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.roe ?? "-"}</span>
+          <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.debtRatio ?? "-"}</span>
+          <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.reserveRatio ?? "-"}</span>
+        </>
+      )}
+      <DeleteEntryButton id={s.id} />
+    </div>
+  );
+}
+
+function MarketSortControls({
+  market,
+  setMarket,
+  marketCounts,
+  accentVar,
+  sortKey,
+  setSortKey,
+}: {
+  market: (typeof MARKETS)[number];
+  setMarket: (m: (typeof MARKETS)[number]) => void;
+  marketCounts: Record<string, number>;
+  accentVar: string;
+  sortKey: string;
+  setSortKey: (k: string) => void;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 2,
+          background: "var(--panel2)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          padding: 2,
+        }}
+      >
+        {MARKETS.map((m) => {
+          const active = m === market;
+          return (
+            <button
+              key={m}
+              onClick={() => setMarket(m)}
+              style={{
+                border: "none",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 600,
+                padding: "6px 11px",
+                borderRadius: 6,
+                background: active ? accentVar : "transparent",
+                color: active ? "#0a0d13" : "var(--dim)",
+              }}
+            >
+              {m} {marketCounts[m] ? `(${marketCounts[m]})` : ""}
+            </button>
+          );
+        })}
+      </div>
+      <select value={sortKey} onChange={(e) => setSortKey(e.target.value)} style={selectStyle()}>
+        {SORT_OPTIONS.map((o) => (
+          <option key={o.key} value={o.key}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 export function StockTable({
   date,
   listType,
@@ -60,7 +176,7 @@ export function StockTable({
 }) {
   const [market, setMarket] = useState<(typeof MARKETS)[number]>("코스피");
   const [sortKey, setSortKey] = useState("rank");
-  const [expanded, setExpanded] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
 
   const marketCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -68,15 +184,20 @@ export function StockTable({
     return counts;
   }, [entries]);
 
-  const filtered = useMemo(
-    () => entries.filter((e) => e.market === market),
-    [entries, market]
-  );
+  const filtered = useMemo(() => entries.filter((e) => e.market === market), [entries, market]);
   const sorted = useMemo(() => sortEntries(filtered, sortKey), [filtered, sortKey]);
-  const visible = expanded ? sorted : sorted.slice(0, HOME_DISPLAY_COUNT);
+  const visible = sorted.slice(0, HOME_DISPLAY_COUNT);
 
-  const cols = expanded ? EXPANDED_COLS : COLLAPSED_COLS;
-  const labels = expanded ? EXPANDED_LABELS : COLLAPSED_LABELS;
+  const controls = (
+    <MarketSortControls
+      market={market}
+      setMarket={setMarket}
+      marketCounts={marketCounts}
+      accentVar={accentVar}
+      sortKey={sortKey}
+      setSortKey={setSortKey}
+    />
+  );
 
   return (
     <section style={panelStyle}>
@@ -93,63 +214,36 @@ export function StockTable({
       >
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           <span style={{ fontWeight: 700, fontSize: 15 }}>{title}</span>
-          <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: badgeColor }}>
-            {badgeText}
-          </span>
+          <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: badgeColor }}>{badgeText}</span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div
+
+        {sorted.length > HOME_DISPLAY_COUNT && (
+          <button
+            onClick={() => setModalOpen(true)}
             style={{
-              display: "flex",
-              gap: 2,
               background: "var(--panel2)",
               border: "1px solid var(--border)",
               borderRadius: 8,
-              padding: 2,
+              padding: "7px 12px",
+              color: "var(--dim)",
+              fontSize: 12.5,
+              fontWeight: 600,
+              cursor: "pointer",
             }}
           >
-            {MARKETS.map((m) => {
-              const active = m === market;
-              return (
-                <button
-                  key={m}
-                  onClick={() => setMarket(m)}
-                  style={{
-                    border: "none",
-                    cursor: "pointer",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    padding: "6px 11px",
-                    borderRadius: 6,
-                    background: active ? accentVar : "transparent",
-                    color: active ? "#0a0d13" : "var(--dim)",
-                  }}
-                >
-                  {m} {marketCounts[m] ? `(${marketCounts[m]})` : ""}
-                </button>
-              );
-            })}
-          </div>
-          <select
-            value={sortKey}
-            onChange={(e) => setSortKey(e.target.value)}
-            style={selectStyle()}
-          >
-            {SORT_OPTIONS.map((o) => (
-              <option key={o.key} value={o.key}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </div>
+            더보기 (전체 {sorted.length}종목)
+          </button>
+        )}
+
+        {controls}
       </div>
 
       <div style={{ overflowX: "auto" }}>
-        <div style={{ minWidth: expanded ? 920 : 500 }}>
+        <div style={{ minWidth: 500 }}>
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: cols,
+              gridTemplateColumns: COLLAPSED_COLS,
               gap: 0,
               padding: "9px 18px",
               fontSize: 11,
@@ -158,7 +252,7 @@ export function StockTable({
               borderBottom: "1px solid var(--border)",
             }}
           >
-            {labels.map((l, i) => (
+            {COLLAPSED_LABELS.map((l, i) => (
               <span key={i} style={i >= 2 ? { textAlign: "right" } : undefined}>
                 {l}
               </span>
@@ -173,93 +267,10 @@ export function StockTable({
           )}
 
           {visible.map((s) => (
-            <div
-              key={s.id}
-              className="hover-row"
-              style={{
-                display: "grid",
-                gridTemplateColumns: cols,
-                gap: 0,
-                padding: "12px 18px",
-                alignItems: "center",
-                borderBottom: "1px solid var(--border)",
-                fontSize: 13.5,
-              }}
-            >
-              <span style={{ fontFamily: "var(--mono)", color: "var(--faint)", fontSize: 12 }}>
-                {s.rank}
-              </span>
-              <span>
-                <span style={{ fontWeight: 600 }}>{s.name}</span>{" "}
-                <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)", marginLeft: 5 }}>
-                  {s.code ?? "-"}
-                </span>
-              </span>
-              <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontWeight: 500 }}>
-                {s.price}
-              </span>
-              <span
-                style={{
-                  textAlign: "right",
-                  fontFamily: "var(--mono)",
-                  fontWeight: 600,
-                  color: chgColorVar(s.changePct),
-                }}
-              >
-                {formatChg(s.changePct)}
-              </span>
-              <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12, color: "var(--dim)" }}>
-                {s.volume ?? "-"}
-              </span>
-              <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12, color: "var(--dim)" }}>
-                {s.tradingValue ?? "-"}
-              </span>
-              {expanded && (
-                <>
-                  <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12, color: "var(--dim)" }}>
-                    {s.marketCap ?? "-"}
-                  </span>
-                  <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>
-                    {s.per ?? "-"}
-                  </span>
-                  <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>
-                    {s.pbr ?? "-"}
-                  </span>
-                  <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>
-                    {s.roe ?? "-"}
-                  </span>
-                  <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>
-                    {s.debtRatio ?? "-"}
-                  </span>
-                  <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>
-                    {s.reserveRatio ?? "-"}
-                  </span>
-                </>
-              )}
-              <DeleteEntryButton id={s.id} />
-            </div>
+            <Row key={s.id} s={s} cols={COLLAPSED_COLS} expanded={false} />
           ))}
         </div>
       </div>
-
-      {sorted.length > HOME_DISPLAY_COUNT && (
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          style={{
-            width: "100%",
-            padding: "11px",
-            background: "var(--panel2)",
-            border: "none",
-            borderTop: "1px solid var(--border)",
-            color: "var(--dim)",
-            fontSize: 12.5,
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
-          {expanded ? "접기" : `더보기 (전체 ${sorted.length}종목 · 전체 항목 보기)`}
-        </button>
-      )}
 
       {entries.length < STORAGE_CAP && (
         <AddEntryForm
@@ -270,6 +281,36 @@ export function StockTable({
           showVolumeField={showVolumeField}
         />
       )}
+
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={`${title} · 전체 ${sorted.length}종목`}>
+        <div style={{ marginBottom: 14, display: "flex", justifyContent: "flex-end" }}>{controls}</div>
+        <div style={{ overflowX: "auto" }}>
+          <div style={{ minWidth: 920 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: EXPANDED_COLS,
+                gap: 0,
+                padding: "9px 18px",
+                fontSize: 11,
+                color: "var(--faint)",
+                fontFamily: "var(--mono)",
+                borderBottom: "1px solid var(--border)",
+              }}
+            >
+              {EXPANDED_LABELS.map((l, i) => (
+                <span key={i} style={i >= 2 ? { textAlign: "right" } : undefined}>
+                  {l}
+                </span>
+              ))}
+              <span />
+            </div>
+            {sorted.map((s) => (
+              <Row key={s.id} s={s} cols={EXPANDED_COLS} expanded />
+            ))}
+          </div>
+        </div>
+      </Modal>
     </section>
   );
 }

@@ -1,9 +1,8 @@
 import { StockTable } from "./stock-table";
 import { ExcelUploadButton } from "./excel-upload-button";
 import { KrxSyncButton } from "./krx-sync-button";
-import { MentionRanking } from "./mention-ranking";
 import { WatchlistNews } from "./watchlist-news";
-import { SectorContributors } from "./sector-contributors";
+import { MostMentionedPanel } from "./most-mentioned-panel";
 import { aggregateSectors } from "@/lib/sector-aggregation";
 import { rankMostMentioned } from "@/lib/mention-ranking";
 import type { DailyEntry, Watchlist } from "@/app/generated/prisma/client";
@@ -30,7 +29,7 @@ export function DayView({
     changePct: e.changePct,
   }));
   const agg = aggregateSectors(combined);
-  const mentions = rankMostMentioned(recentEntries);
+  const mentions = rankMostMentioned(recentEntries, 50);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -146,16 +145,13 @@ export function DayView({
                   );
                 })}
               </div>
-              <SectorContributors hotSector={agg.hotSector ?? ""} contributors={agg.contributors} />
+              <MostMentionedPanel rows={mentions} days={recentDays} />
             </div>
           </>
         )}
       </section>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
-        <MentionRanking rows={mentions} days={recentDays} />
-        <WatchlistNews items={watchlist} />
-      </div>
+      <WatchlistNews items={watchlist} />
     </div>
   );
 }
