@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { StockTable } from "./stock-table";
 import { ExcelUploadButton } from "./excel-upload-button";
 import { KrxSyncButton } from "./krx-sync-button";
@@ -5,31 +6,42 @@ import { WatchlistNews } from "./watchlist-news";
 import { MostMentionedPanel } from "./most-mentioned-panel";
 import { aggregateSectors } from "@/lib/sector-aggregation";
 import { rankMostMentioned } from "@/lib/mention-ranking";
+import { prevWeekKey, nextWeekKey, type WeekInfo } from "@/lib/week";
 import type { DailyEntry, Watchlist } from "@/app/generated/prisma/client";
+
+const weekNavBtnStyle: React.CSSProperties = {
+  border: "1px solid var(--border)",
+  background: "var(--panel)",
+  color: "var(--dim)",
+  fontSize: 12,
+  fontWeight: 600,
+  padding: "6px 11px",
+  borderRadius: 8,
+};
 
 export function DayView({
   date,
   volumeEntries,
   gainerEntries,
-  recentEntries,
-  recentDays,
+  weekInfo,
+  weekEntries,
   watchlist,
 }: {
   date: string;
   volumeEntries: DailyEntry[];
   gainerEntries: DailyEntry[];
-  recentEntries: DailyEntry[];
-  recentDays: number;
+  weekInfo: WeekInfo;
+  weekEntries: DailyEntry[];
   watchlist: Watchlist[];
 }) {
-  const combined = recentEntries.map((e) => ({
+  const combined = weekEntries.map((e) => ({
     name: e.name,
     code: e.code,
     sector: e.sector,
     changePct: e.changePct,
   }));
   const agg = aggregateSectors(combined);
-  const mentions = rankMostMentioned(recentEntries, 50);
+  const mentions = rankMostMentioned(weekEntries, 50);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -86,29 +98,44 @@ export function DayView({
             pointerEvents: "none",
           }}
         />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
+          <span
+            style={{
+              fontFamily: "var(--mono)",
+              fontSize: 11,
+              color: "var(--accent)",
+              letterSpacing: "0.14em",
+              textTransform: "uppercase",
+            }}
+          >
+            ▲ Weekly Hot Sector · {weekInfo.label}
+          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <Link
+              href={`/market?period=day&date=${date}&sectorWeek=${prevWeekKey(weekInfo.key)}`}
+              style={weekNavBtnStyle}
+            >
+              ‹ 이전 주
+            </Link>
+            <Link
+              href={`/market?period=day&date=${date}&sectorWeek=${nextWeekKey(weekInfo.key)}`}
+              style={weekNavBtnStyle}
+            >
+              다음 주 ›
+            </Link>
+          </div>
+        </div>
+
         {!agg.hasData ? (
           <div style={{ padding: "12px 0", color: "var(--dim)", fontSize: 14 }}>
-            최근 {recentDays}일간 입력된 종목이 없어요. 상승 TOP·거래 TOP에 종목을 입력하면 주요
+            {weekInfo.label}에는 입력된 종목이 없어요. 상승 TOP·거래 TOP에 종목을 입력하면 주요
             섹터가 여기 나타나요.
           </div>
         ) : (
           <>
-            <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 4 }}>
-              <span
-                style={{
-                  fontFamily: "var(--mono)",
-                  fontSize: 11,
-                  color: "var(--accent)",
-                  letterSpacing: "0.14em",
-                  textTransform: "uppercase",
-                }}
-              >
-                ▲ Weekly Hot Sector · 최근 {recentDays}일
-              </span>
-            </div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 14, marginBottom: 22, flexWrap: "wrap" }}>
               <h2 style={{ margin: 0, fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em" }}>
-                최근 {recentDays}일 시장이 주목한 섹터는{" "}
+                {weekInfo.label} 시장이 주목한 섹터는{" "}
                 <span style={{ color: "var(--accent)" }}>{agg.hotSector}</span>
               </h2>
               <span style={{ fontFamily: "var(--mono)", fontSize: 13, color: "var(--dim)" }}>
@@ -145,7 +172,37 @@ export function DayView({
                   );
                 })}
               </div>
-              <MostMentionedPanel rows={mentions} days={recentDays} />
+              <MostMentionedPanel rows={mentions} weekLabel={weekInfo.label} />
+            </div>
+
+            <div
+              style={{
+                marginTop: 20,
+                padding: "14px 16px",
+                background: "var(--panel)",
+                border: "1px solid var(--border)",
+                borderRadius: 10,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <span style={{ fontWeight: 700, fontSize: 13 }}>이 섹터가 강세였던 이유</span>
+                <span
+                  style={{
+                    fontFamily: "var(--mono)",
+                    fontSize: 10,
+                    color: "var(--down)",
+                    border: "1px solid var(--down)",
+                    padding: "1px 6px",
+                    borderRadius: 5,
+                  }}
+                >
+                  AI 분석 연동 예정
+                </span>
+              </div>
+              <div style={{ fontSize: 13, color: "var(--faint)" }}>
+                Bro AI가 연동되면 {weekInfo.label}에 {agg.hotSector} 섹터가 강세였던 이유를 자동으로
+                요약해줄 예정이에요.
+              </div>
             </div>
           </>
         )}

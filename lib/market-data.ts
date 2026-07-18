@@ -1,6 +1,5 @@
 import { prisma } from "@/lib/prisma";
 import { STORAGE_CAP } from "@/lib/constants";
-import { daysAgoISO } from "@/lib/dates";
 
 export type ListType = "volume" | "gainer";
 export { STORAGE_CAP };
@@ -46,12 +45,12 @@ export async function getDayEntries(date: string) {
   return { volume, gainer };
 }
 
-// Entries from the last `days` calendar days (today inclusive), both list
-// types combined — the data source for the weekly sector rollup and the
-// most-mentioned-stocks ranking on the market home screen.
-export async function getRecentEntries(days = 7) {
+// Entries within an inclusive date range, both list types combined — the
+// data source for the weekly sector rollup and the most-mentioned-stocks
+// ranking on the market home screen.
+export async function getEntriesInRange(startISO: string, endISO: string) {
   return prisma.dailyEntry.findMany({
-    where: { date: { gte: daysAgoISO(days - 1) } },
+    where: { date: { gte: startISO, lte: endISO } },
     orderBy: { date: "desc" },
   });
 }

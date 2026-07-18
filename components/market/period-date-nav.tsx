@@ -16,10 +16,13 @@ function periodSubLabel(period: string) {
 export function PeriodDateNav({
   period,
   date,
+  sectorWeek,
 }: {
   period: string;
   date: string;
+  sectorWeek: string;
 }) {
+  const weekParam = `&sectorWeek=${sectorWeek}`;
   return (
     <div
       style={{
@@ -33,7 +36,7 @@ export function PeriodDateNav({
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <Link
-          href={`/market?period=${period}&date=${prevBusinessDay(date)}`}
+          href={`/market?period=${period}&date=${prevBusinessDay(date)}${weekParam}`}
           style={navBtnStyle}
         >
           ‹
@@ -55,7 +58,7 @@ export function PeriodDateNav({
           </span>
         </div>
         <Link
-          href={`/market?period=${period}&date=${nextBusinessDay(date)}`}
+          href={`/market?period=${period}&date=${nextBusinessDay(date)}${weekParam}`}
           style={navBtnStyle}
         >
           ›
@@ -77,7 +80,7 @@ export function PeriodDateNav({
         {PERIOD_TABS.map((p) => {
           const active = p.key === period;
           return (
-            <Link key={p.key} href={`/market?period=${p.key}&date=${date}`}>
+            <Link key={p.key} href={`/market?period=${p.key}&date=${date}${weekParam}`}>
               <button
                 style={{
                   border: "none",

@@ -51,7 +51,7 @@ function Row({ r, rank }: { r: MentionRow; rank: number }) {
   );
 }
 
-export function MostMentionedPanel({ rows, days }: { rows: MentionRow[]; days: number }) {
+export function MostMentionedPanel({ rows, weekLabel }: { rows: MentionRow[]; weekLabel: string }) {
   const [modalOpen, setModalOpen] = useState(false);
   const visible = rows.slice(0, DEFAULT_COUNT);
 
@@ -91,7 +91,7 @@ export function MostMentionedPanel({ rows, days }: { rows: MentionRow[]; days: n
 
       {visible.length === 0 ? (
         <div style={{ padding: "12px 0", fontSize: 13, color: "var(--faint)" }}>
-          최근 {days}일간 입력된 종목이 없어요
+          {weekLabel}에 입력된 종목이 없어요
         </div>
       ) : (
         visible.map((r, i) => <Row key={r.name} r={r} rank={i + 1} />)
