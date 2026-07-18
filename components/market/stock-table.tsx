@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AddEntryForm } from "./add-entry-form";
 import { DeleteEntryButton } from "./delete-entry-button";
 import { Modal } from "@/components/ui/modal";
@@ -39,9 +40,13 @@ function selectStyle(): React.CSSProperties {
 }
 
 function Row({ s, cols, expanded }: { s: DailyEntry; cols: string; expanded: boolean }) {
+  const router = useRouter();
+  const clickable = !!s.code;
+
   return (
     <div
       className="hover-row"
+      onClick={clickable ? () => router.push(`/stock?code=${s.code}`) : undefined}
       style={{
         display: "grid",
         gridTemplateColumns: cols,
@@ -50,6 +55,7 @@ function Row({ s, cols, expanded }: { s: DailyEntry; cols: string; expanded: boo
         alignItems: "center",
         borderBottom: "1px solid var(--border)",
         fontSize: 13.5,
+        cursor: clickable ? "pointer" : "default",
       }}
     >
       <span style={{ fontFamily: "var(--mono)", color: "var(--faint)", fontSize: 12 }}>{s.rank}</span>
@@ -88,7 +94,9 @@ function Row({ s, cols, expanded }: { s: DailyEntry; cols: string; expanded: boo
           <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.reserveRatio ?? "-"}</span>
         </>
       )}
-      <DeleteEntryButton id={s.id} />
+      <span onClick={(e) => e.stopPropagation()}>
+        <DeleteEntryButton id={s.id} />
+      </span>
     </div>
   );
 }

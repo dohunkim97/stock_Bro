@@ -1,3 +1,5 @@
+import { isKrxHoliday } from "@/lib/krx-holidays";
+
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
 // Explicitly Asia/Seoul — the server (Vercel) runs in UTC, so deriving
@@ -62,16 +64,17 @@ export function formatDateLabel(iso: string): string {
   return `${y}.${m}.${day} (${WEEKDAYS[d.getDay()]})`;
 }
 
-function isWeekend(d: Date): boolean {
+function isMarketClosed(d: Date): boolean {
   const w = d.getDay();
-  return w === 0 || w === 6;
+  if (w === 0 || w === 6) return true;
+  return isKrxHoliday(toISO(d));
 }
 
 export function prevBusinessDay(iso: string): string {
   const d = fromISO(iso);
   do {
     d.setDate(d.getDate() - 1);
-  } while (isWeekend(d));
+  } while (isMarketClosed(d));
   return toISO(d);
 }
 
@@ -79,6 +82,6 @@ export function nextBusinessDay(iso: string): string {
   const d = fromISO(iso);
   do {
     d.setDate(d.getDate() + 1);
-  } while (isWeekend(d));
+  } while (isMarketClosed(d));
   return toISO(d);
 }
