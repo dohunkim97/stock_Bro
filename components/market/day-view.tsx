@@ -1,10 +1,9 @@
-import Link from "next/link";
 import { StockTable } from "./stock-table";
 import { ExcelUploadButton } from "./excel-upload-button";
 import { KrxSyncButton } from "./krx-sync-button";
 import { MentionRanking } from "./mention-ranking";
 import { WatchlistNews } from "./watchlist-news";
-import { chgColorVar, formatChg } from "@/lib/format";
+import { SectorContributors } from "./sector-contributors";
 import { aggregateSectors } from "@/lib/sector-aggregation";
 import { rankMostMentioned } from "@/lib/mention-ranking";
 import type { DailyEntry, Watchlist } from "@/app/generated/prisma/client";
@@ -147,60 +146,7 @@ export function DayView({
                   );
                 })}
               </div>
-              <div style={{ borderLeft: "1px solid var(--border)", paddingLeft: 24 }}>
-                <div style={{ fontSize: 12, color: "var(--faint)", marginBottom: 12, fontFamily: "var(--mono)" }}>
-                  {agg.hotSector} 섹터 기여 종목
-                </div>
-                {agg.contributors.map((s) => (
-                  <Link
-                    key={s.name}
-                    href={s.code ? `/stock?code=${s.code}` : "/stock"}
-                    className="hover-accent-border"
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "11px 13px",
-                      marginBottom: 7,
-                      background: "var(--panel)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 10,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <span style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                      <span style={{ fontWeight: 600, fontSize: 13.5 }}>{s.name}</span>
-                      <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--faint)" }}>
-                        {s.code ?? "-"}
-                      </span>
-                    </span>
-                    <span style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 13, color: chgColorVar(s.changePct) }}>
-                      {formatChg(s.changePct)}
-                    </span>
-                  </Link>
-                ))}
-                <Link
-                  href={agg.contributors[0]?.code ? `/stock?code=${agg.contributors[0].code}` : "/stock"}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    marginTop: 6,
-                    padding: 11,
-                    background: "var(--accent)",
-                    color: "#0a0d13",
-                    border: "none",
-                    borderRadius: 10,
-                    fontWeight: 700,
-                    fontSize: 13.5,
-                    cursor: "pointer",
-                    textAlign: "center",
-                  }}
-                >
-                  {agg.contributors[0]?.name ?? agg.hotSector} 상세 분석 보기 →
-                </Link>
-              </div>
+              <SectorContributors hotSector={agg.hotSector ?? ""} contributors={agg.contributors} />
             </div>
           </>
         )}

@@ -139,8 +139,17 @@ export async function fetchKrxDayRanking(
   const kospi = rows.filter((r) => r.market === "코스피");
   const kosdaq = rows.filter((r) => r.market === "코스닥");
 
-  const volumeTop = [...topN(kospi, (r) => r.volume, 10), ...topN(kosdaq, (r) => r.volume, 10)];
-  const gainerTop = [...topN(kospi, (r) => r.changePct, 10), ...topN(kosdaq, (r) => r.changePct, 10)];
+  // Pull well beyond the 10 shown by default on the home screen — "더보기"
+  // on the market home tables needs real extra rows to expand into.
+  const SYNC_TOP_N = 30;
+  const volumeTop = [
+    ...topN(kospi, (r) => r.volume, SYNC_TOP_N),
+    ...topN(kosdaq, (r) => r.volume, SYNC_TOP_N),
+  ];
+  const gainerTop = [
+    ...topN(kospi, (r) => r.changePct, SYNC_TOP_N),
+    ...topN(kosdaq, (r) => r.changePct, SYNC_TOP_N),
+  ];
 
   // Financial ratios (PER/PBR/ROE/부채비율) are a best-effort enrichment on
   // top of the core ranking — if data.go.kr's financial APIs are slow, rate
