@@ -21,6 +21,27 @@ export function toYYYYMMDD(iso: string): string {
   return iso.replace(/-/g, "");
 }
 
+// ISO date `daysBack` calendar days before today (Asia/Seoul), inclusive of
+// today when daysBack is 0. Used to build "last N days" query cutoffs —
+// plain string comparison works because ISO dates sort chronologically.
+export function daysAgoISO(daysBack: number): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const y = Number(parts.find((p) => p.type === "year")?.value);
+  const m = Number(parts.find((p) => p.type === "month")?.value);
+  const d = Number(parts.find((p) => p.type === "day")?.value);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() - daysBack);
+  const yy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
 function toISO(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");

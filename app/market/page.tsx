@@ -1,9 +1,12 @@
 import { PeriodDateNav } from "@/components/market/period-date-nav";
 import { DayView } from "@/components/market/day-view";
 import { ReportView } from "@/components/market/report-view";
-import { getDayEntries } from "@/lib/market-data";
+import { getDayEntries, getRecentEntries } from "@/lib/market-data";
+import { getWatchlist } from "@/lib/watchlist";
 import { todayISO } from "@/lib/dates";
 import { weekReport, monthReport } from "@/lib/reports-data";
+
+const SECTOR_WINDOW_DAYS = 7;
 
 export default async function MarketPage({
   searchParams,
@@ -31,6 +34,19 @@ export default async function MarketPage({
 }
 
 async function DayViewLoader({ date }: { date: string }) {
-  const { volume, gainer } = await getDayEntries(date);
-  return <DayView date={date} volumeEntries={volume} gainerEntries={gainer} />;
+  const [{ volume, gainer }, recentEntries, watchlist] = await Promise.all([
+    getDayEntries(date),
+    getRecentEntries(SECTOR_WINDOW_DAYS),
+    getWatchlist(),
+  ]);
+  return (
+    <DayView
+      date={date}
+      volumeEntries={volume}
+      gainerEntries={gainer}
+      recentEntries={recentEntries}
+      recentDays={SECTOR_WINDOW_DAYS}
+      watchlist={watchlist}
+    />
+  );
 }

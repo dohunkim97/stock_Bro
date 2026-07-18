@@ -2,26 +2,36 @@ import Link from "next/link";
 import { StockTable } from "./stock-table";
 import { ExcelUploadButton } from "./excel-upload-button";
 import { KrxSyncButton } from "./krx-sync-button";
+import { MentionRanking } from "./mention-ranking";
+import { WatchlistNews } from "./watchlist-news";
 import { chgColorVar, formatChg } from "@/lib/format";
 import { aggregateSectors } from "@/lib/sector-aggregation";
-import type { DailyEntry } from "@/app/generated/prisma/client";
+import { rankMostMentioned } from "@/lib/mention-ranking";
+import type { DailyEntry, Watchlist } from "@/app/generated/prisma/client";
 
 export function DayView({
   date,
   volumeEntries,
   gainerEntries,
+  recentEntries,
+  recentDays,
+  watchlist,
 }: {
   date: string;
   volumeEntries: DailyEntry[];
   gainerEntries: DailyEntry[];
+  recentEntries: DailyEntry[];
+  recentDays: number;
+  watchlist: Watchlist[];
 }) {
-  const combined = [...volumeEntries, ...gainerEntries].map((e) => ({
+  const combined = recentEntries.map((e) => ({
     name: e.name,
     code: e.code,
     sector: e.sector,
     changePct: e.changePct,
   }));
   const agg = aggregateSectors(combined);
+  const mentions = rankMostMentioned(recentEntries);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -30,31 +40,33 @@ export function DayView({
         <ExcelUploadButton date={date} />
       </div>
 
-      <StockTable
-        date={date}
-        listType="volume"
-        title="거래량 상위"
-        badgeText="TOP 10"
-        badgeColor="var(--dim)"
-        accentVar="var(--accent)"
-        accentSoftVar="var(--accent-soft)"
-        entries={volumeEntries}
-        showVolumeField
-      />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
+        <StockTable
+          date={date}
+          listType="gainer"
+          title="급상승 종목"
+          badgeText="상승 TOP"
+          badgeColor="var(--up)"
+          accentVar="var(--up)"
+          accentSoftVar="var(--up-soft)"
+          entries={gainerEntries}
+          showVolumeField={false}
+        />
 
-      <StockTable
-        date={date}
-        listType="gainer"
-        title="급상승 종목"
-        badgeText="▲ TOP 10"
-        badgeColor="var(--up)"
-        accentVar="var(--up)"
-        accentSoftVar="var(--up-soft)"
-        entries={gainerEntries}
-        showVolumeField={false}
-      />
+        <StockTable
+          date={date}
+          listType="volume"
+          title="거래량 상위"
+          badgeText="거래 TOP"
+          badgeColor="var(--dim)"
+          accentVar="var(--accent)"
+          accentSoftVar="var(--accent-soft)"
+          entries={volumeEntries}
+          showVolumeField
+        />
+      </div>
 
-      {/* 주목 섹터 결과 */}
+      {/* 주요 섹터 결과 (최근 N일) */}
       <section
         style={{
           background: "linear-gradient(180deg, var(--panel2), var(--panel))",
@@ -78,8 +90,8 @@ export function DayView({
         />
         {!agg.hasData ? (
           <div style={{ padding: "12px 0", color: "var(--dim)", fontSize: 14 }}>
-            아직 오늘 입력된 종목이 없어요. 위 표에 거래량 상위·급상승 종목을 입력하면 오늘의
-            주목 섹터가 여기 나타나요.
+            최근 {recentDays}일간 입력된 종목이 없어요. 상승 TOP·거래 TOP에 종목을 입력하면 주요
+            섹터가 여기 나타나요.
           </div>
         ) : (
           <>
@@ -93,16 +105,17 @@ export function DayView({
                   textTransform: "uppercase",
                 }}
               >
-                ▲ Today&apos;s Hot Sector
+                ▲ Weekly Hot Sector · 최근 {recentDays}일
               </span>
             </div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 14, marginBottom: 22, flexWrap: "wrap" }}>
               <h2 style={{ margin: 0, fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em" }}>
-                오늘 시장이 주목한 섹터는 <span style={{ color: "var(--accent)" }}>{agg.hotSector}</span>
+                최근 {recentDays}일 시장이 주목한 섹터는{" "}
+                <span style={{ color: "var(--accent)" }}>{agg.hotSector}</span>
               </h2>
               <span style={{ fontFamily: "var(--mono)", fontSize: 13, color: "var(--dim)" }}>
-                입력 {agg.totalCount}종목 중{" "}
-                <b style={{ color: "var(--text)" }}>{agg.hotSectorCount}종목</b> 포함
+                랭킹 등장 {agg.totalCount}건 중{" "}
+                <b style={{ color: "var(--text)" }}>{agg.hotSectorCount}건</b> 포함
               </span>
             </div>
 
@@ -117,7 +130,7 @@ export function DayView({
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                         <span style={{ fontWeight: 600, fontSize: 14, color }}>{sec.name}</span>
                         <span style={{ fontFamily: "var(--mono)", fontSize: 12.5, color: "var(--dim)" }}>
-                          {sec.count}종목 · <b style={{ color }}>{sec.pct}%</b>
+                          {sec.count}건 · <b style={{ color }}>{sec.pct}%</b>
                         </span>
                       </div>
                       <div style={{ height: 9, background: "var(--bg)", borderRadius: 6, overflow: "hidden" }}>
@@ -192,6 +205,11 @@ export function DayView({
           </>
         )}
       </section>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
+        <MentionRanking rows={mentions} days={recentDays} />
+        <WatchlistNews items={watchlist} />
+      </div>
     </div>
   );
 }

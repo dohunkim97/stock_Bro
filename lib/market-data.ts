@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { STORAGE_CAP } from "@/lib/constants";
+import { daysAgoISO } from "@/lib/dates";
 
 export type ListType = "volume" | "gainer";
 export { STORAGE_CAP };
@@ -43,6 +44,16 @@ export async function getDayEntries(date: string) {
     }),
   ]);
   return { volume, gainer };
+}
+
+// Entries from the last `days` calendar days (today inclusive), both list
+// types combined — the data source for the weekly sector rollup and the
+// most-mentioned-stocks ranking on the market home screen.
+export async function getRecentEntries(days = 7) {
+  return prisma.dailyEntry.findMany({
+    where: { date: { gte: daysAgoISO(days - 1) } },
+    orderBy: { date: "desc" },
+  });
 }
 
 export async function addEntry(input: {

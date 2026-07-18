@@ -45,3 +45,12 @@ model DailyEntry {
 
   @@index([date, listType])
 }
+
+model Watchlist {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  market    String?
+  sector    String?
+  createdAt DateTime @default(now())
+}
