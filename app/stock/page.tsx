@@ -4,8 +4,12 @@ import { StockPicker } from "@/components/stock/stock-picker";
 import { DetailSections } from "@/components/stock/detail-sections";
 import { WatchlistButton } from "@/components/stock/watchlist-button";
 import { isWatched } from "@/lib/watchlist";
+import { findLatestEntryByCode } from "@/lib/market-data";
+import type { StockMaster } from "@/app/generated/prisma/client";
 
 const DEFAULT_CODE = "042700"; // 한미반도체
+
+type CurStock = Pick<StockMaster, "code" | "name" | "market" | "sector" | "price" | "changePct">;
 
 export default async function StockPage({
   searchParams,
@@ -14,10 +18,26 @@ export default async function StockPage({
 }) {
   const { code } = await searchParams;
   const allStocks = await prisma.stockMaster.findMany({ orderBy: { name: "asc" } });
-  const cur =
-    allStocks.find((s) => s.code === code) ??
-    allStocks.find((s) => s.code === DEFAULT_CODE) ??
-    allStocks[0];
+  let cur: CurStock | undefined = allStocks.find((s) => s.code === code);
+
+  // Most stocks that show up via KRX sync aren't in the curated StockMaster
+  // seed list — fall back to their latest ranking snapshot instead of
+  // silently defaulting to a different stock.
+  if (!cur && code) {
+    const fallback = await findLatestEntryByCode(code);
+    if (fallback?.code) {
+      cur = {
+        code: fallback.code,
+        name: fallback.name,
+        market: fallback.market ?? "-",
+        sector: fallback.sector,
+        price: fallback.price,
+        changePct: fallback.changePct,
+      };
+    }
+  }
+
+  cur = cur ?? allStocks.find((s) => s.code === DEFAULT_CODE) ?? allStocks[0];
   const watched = await isWatched(cur.code);
 
   return (

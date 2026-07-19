@@ -47,6 +47,17 @@ export async function getDayEntries(date: string) {
   return { volume, gainer };
 }
 
+// Falls back to the most recent ranking snapshot for a code that isn't in
+// StockMaster's curated seed list — used by the stock detail page so any
+// code that ever showed up in a KRX sync resolves to real data instead of
+// silently defaulting to the wrong stock.
+export async function findLatestEntryByCode(code: string) {
+  return prisma.dailyEntry.findFirst({
+    where: { code },
+    orderBy: { date: "desc" },
+  });
+}
+
 // Entries within an inclusive date range, both list types combined — the
 // data source for the weekly sector rollup and the most-mentioned-stocks
 // ranking on the market home screen.
