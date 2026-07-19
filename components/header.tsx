@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useTheme } from "./theme-provider";
+import { todayISO, formatDateLabel, currentMarketStatus, type MarketStatus } from "@/lib/dates";
 
 const NAV_ITEMS = [
   { href: "/market", label: "Market" },
@@ -11,32 +12,26 @@ const NAV_ITEMS = [
   { href: "/bro", label: "Bro" },
 ];
 
-const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
-
-function useClockLabel() {
-  const [label, setLabel] = useState("");
+function useMarketClock() {
+  const [state, setState] = useState<{ dateLabel: string; status: MarketStatus }>({
+    dateLabel: "",
+    status: { isOpen: false, label: "" },
+  });
   useEffect(() => {
     const update = () => {
-      const now = new Date();
-      const y = now.getFullYear();
-      const m = String(now.getMonth() + 1).padStart(2, "0");
-      const d = String(now.getDate()).padStart(2, "0");
-      const w = WEEKDAYS[now.getDay()];
-      const hour = now.getHours();
-      const status = hour >= 9 && hour < 15.5 ? "장중" : "장마감";
-      setLabel(`${y}.${m}.${d} (${w}) ${status}`);
+      setState({ dateLabel: formatDateLabel(todayISO()), status: currentMarketStatus() });
     };
     update();
     const id = setInterval(update, 30000);
     return () => clearInterval(id);
   }, []);
-  return label;
+  return state;
 }
 
 export function Header() {
   const pathname = usePathname();
   const { theme, toggleTheme } = useTheme();
-  const clockLabel = useClockLabel();
+  const { dateLabel, status } = useMarketClock();
 
   return (
     <header
@@ -138,11 +133,13 @@ export function Header() {
             width: 7,
             height: 7,
             borderRadius: "50%",
-            background: "var(--up)",
+            background: status.isOpen ? "#22c55e" : "var(--up)",
             animation: "blink 1.6s infinite",
           }}
         />
-        <span>{clockLabel}</span>
+        <span>
+          {dateLabel} {status.label}
+        </span>
       </div>
       <button
         onClick={toggleTheme}

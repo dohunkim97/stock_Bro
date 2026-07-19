@@ -64,3 +64,33 @@ export function nextBusinessDay(iso: string): string {
   } while (isMarketClosed(d));
   return toISO(d);
 }
+
+const MARKET_OPEN_MINUTES = 9 * 60; // 09:00
+const MARKET_CLOSE_MINUTES = 15 * 60 + 30; // 15:30
+
+export type MarketStatus = { isOpen: boolean; label: string };
+
+// Real KRX trading-session check — weekday, not a holiday, and inside
+// 09:00–15:30 KST. Safe to call from the browser (client components):
+// it derives Asia/Seoul time explicitly rather than relying on the
+// viewer's local timezone, which would misreport the session outside Korea.
+export function currentMarketStatus(): MarketStatus {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const iso = `${get("year")}-${get("month")}-${get("day")}`;
+  const minutesNow = Number(get("hour")) * 60 + Number(get("minute"));
+
+  const tradingDay = !isMarketClosed(fromISO(iso));
+  const withinHours = minutesNow >= MARKET_OPEN_MINUTES && minutesNow <= MARKET_CLOSE_MINUTES;
+  const isOpen = tradingDay && withinHours;
+
+  return { isOpen, label: isOpen ? "KRX 장중" : "장종료" };
+}
