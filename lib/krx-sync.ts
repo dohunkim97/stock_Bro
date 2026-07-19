@@ -113,6 +113,7 @@ function toUploadRows(rows: RawKrxRow[], ratios: Map<string, FinancialRatios>): 
     return {
       rank: i + 1,
       name: r.name,
+      code: r.code,
       market: r.market,
       price: r.price.toLocaleString(),
       changePct: r.changePct,

@@ -10,6 +10,8 @@ export type UploadRow = {
   market: string;
   price: string;
   changePct: number;
+  code?: string;
+  sector?: string;
   volume?: string;
   tradingValue?: string;
   marketCap?: string;
@@ -112,8 +114,8 @@ export async function replaceDayEntries(
         listType,
         rank: i + 1,
         name: row.name.trim(),
-        code: stock?.code ?? null,
-        sector: stock?.sector ?? "기타",
+        code: row.code?.trim() || stock?.code || null,
+        sector: row.sector?.trim() || stock?.sector || "기타",
         market: row.market.trim() || stock?.market || null,
         price: row.price.trim(),
         changePct: row.changePct,
