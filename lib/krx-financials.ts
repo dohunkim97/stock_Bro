@@ -1,8 +1,8 @@
 // Bridges 종목코드 (from GetStockSecuritiesInfoService) to 법인등록번호 (crno)
 // via GetKrxListedInfoService, then pulls annual financials from
-// GetFinaStatInfoService_V2 to derive PER/PBR/ROE/부채비율 ourselves —
-// none of these three data.go.kr services key on the same identifier, so
-// this module is the glue between them.
+// GetFinaStatInfoService_V2 and industry classification from
+// GetCorpBasicInfoService_V2 — none of these four data.go.kr services key
+// on the same identifier, so this module is the glue between them.
 //
 // This is a best-effort enrichment layered on top of the core ranking sync.
 // Production (Vercel) network latency to data.go.kr runs meaningfully
@@ -10,11 +10,15 @@
 // route's time limit. Rather than let that take the whole sync down with
 // it, fetchFinancialRatiosByCode stops starting new lookups once a time
 // budget is exhausted; whatever stocks didn't get enriched just keep blank
-// ratio columns instead of failing the request.
+// columns instead of failing the request.
+
+import { formatWon } from "@/lib/format";
 
 const LISTED_INFO_URL = "https://apis.data.go.kr/1160100/service/GetKrxListedInfoService/getItemInfo";
 const FINA_STAT_URL =
   "https://apis.data.go.kr/1160100/service/GetFinaStatInfoService_V2/getSummFinaStat_V2";
+const CORP_BASIC_URL =
+  "https://apis.data.go.kr/1160100/service/GetCorpBasicInfoService_V2/getCorpOutline_V2";
 
 const PER_REQUEST_TIMEOUT_MS = 5000;
 const CONCURRENCY = 12;
@@ -24,6 +28,8 @@ export type FinancialRatios = {
   pbr?: string;
   roe?: string;
   debtRatio?: string;
+  revenue?: string;
+  industry?: string;
 };
 
 async function fetchJson(url: URL): Promise<Record<string, unknown> | null> {
@@ -75,6 +81,7 @@ type FinancialSummary = {
   netIncome: number;
   totalEquity: number;
   debtRatio: number;
+  revenue: number;
 };
 
 async function fetchFinancialSummary(
@@ -102,11 +109,31 @@ async function fetchFinancialSummary(
     const netIncome = Number(picked.enpCrtmNpf);
     const totalEquity = Number(picked.enpTcptAmt);
     const debtRatio = Number(picked.fnclDebtRto);
+    const revenue = Number(picked.enpSaleAmt);
     if (!Number.isFinite(netIncome) || !Number.isFinite(totalEquity)) continue;
 
-    return { netIncome, totalEquity, debtRatio };
+    return { netIncome, totalEquity, debtRatio, revenue };
   }
   return null;
+}
+
+// GetCorpBasicInfoService_V2 returns one row per historical filing/change
+// event for a company, and most of them leave sicNm (표준산업분류명) blank —
+// only a handful of snapshots actually carry it. Scan a batch and take the
+// first non-empty one rather than assuming the latest row has it.
+async function fetchIndustryName(crno: string, serviceKey: string): Promise<string | null> {
+  const url = new URL(CORP_BASIC_URL);
+  url.searchParams.set("serviceKey", serviceKey);
+  url.searchParams.set("resultType", "json");
+  url.searchParams.set("numOfRows", "20");
+  url.searchParams.set("pageNo", "1");
+  url.searchParams.set("crno", crno);
+
+  const json = await fetchJson(url);
+  const list = itemsOf(json);
+  const withIndustry = list.find((it) => String(it.sicNm ?? "").trim());
+  const sicNm = (withIndustry?.sicNm as string | undefined)?.trim();
+  return sicNm || null;
 }
 
 function computeRatios(
@@ -118,6 +145,9 @@ function computeRatios(
 
   if (Number.isFinite(summary.debtRatio)) {
     ratios.debtRatio = `${summary.debtRatio.toFixed(1)}%`;
+  }
+  if (Number.isFinite(summary.revenue) && summary.revenue > 0) {
+    ratios.revenue = formatWon(summary.revenue);
   }
 
   if (sharesOutstanding > 0) {
@@ -133,11 +163,11 @@ function computeRatios(
   return ratios;
 }
 
-// Looks up financial ratios for a batch of (code, price, sharesOutstanding)
-// rows, deduping repeated codes and running a bounded number of requests in
-// parallel. `budgetMs` caps total time spent here — once exceeded, remaining
-// stocks are simply skipped (blank ratio columns) rather than risking the
-// whole route timing out.
+// Looks up financial ratios + industry classification for a batch of
+// (code, price, sharesOutstanding) rows, deduping repeated codes and
+// running a bounded number of requests in parallel. `budgetMs` caps total
+// time spent here — once exceeded, remaining stocks are simply skipped
+// (blank columns) rather than risking the whole route timing out.
 export async function fetchFinancialRatiosByCode(
   rows: { code: string; price: number; sharesOutstanding: number }[],
   budgetMs = 30000
@@ -170,11 +200,17 @@ export async function fetchFinancialRatiosByCode(
         try {
           const crno = await fetchCrno(code, serviceKey);
           if (!crno) return;
-          const summary = await fetchFinancialSummary(crno, serviceKey, candidateYears);
-          if (!summary) return;
-          result.set(code, computeRatios(summary, price, sharesOutstanding));
+
+          const [summary, industry] = await Promise.all([
+            fetchFinancialSummary(crno, serviceKey, candidateYears),
+            fetchIndustryName(crno, serviceKey),
+          ]);
+
+          const ratios: FinancialRatios = summary ? computeRatios(summary, price, sharesOutstanding) : {};
+          if (industry) ratios.industry = industry;
+          if (Object.keys(ratios).length > 0) result.set(code, ratios);
         } catch {
-          // best-effort enrichment — leave this stock's ratios blank on any failure
+          // best-effort enrichment — leave this stock's columns blank on any failure
         }
       })
     );

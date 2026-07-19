@@ -1,5 +1,6 @@
 import type { UploadRow } from "@/lib/market-data";
 import { fetchFinancialRatiosByCode, type FinancialRatios } from "@/lib/krx-financials";
+import { formatWon } from "@/lib/format";
 
 // data.go.kr — 금융위원회_주식시세정보 (KRX daily price info)
 // https://www.data.go.kr/data/15094808/openapi.do
@@ -17,19 +18,6 @@ type RawKrxRow = {
   marketCap: number;
   sharesOutstanding: number;
 };
-
-function formatWon(value: number): string {
-  const EOK = 100_000_000;
-  const JO = EOK * 10_000;
-  if (!Number.isFinite(value) || value <= 0) return "-";
-  if (value >= JO) {
-    const jo = Math.floor(value / JO);
-    const eok = Math.round((value % JO) / EOK);
-    return eok > 0 ? `${jo}조 ${eok.toLocaleString()}억` : `${jo}조`;
-  }
-  if (value >= EOK) return `${Math.round(value / EOK).toLocaleString()}억`;
-  return `${value.toLocaleString()}원`;
-}
 
 function formatShares(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "-";
@@ -124,6 +112,13 @@ function toUploadRows(rows: RawKrxRow[], ratios: Map<string, FinancialRatios>): 
       pbr: fin?.pbr,
       roe: fin?.roe,
       debtRatio: fin?.debtRatio,
+      revenue: fin?.revenue,
+      industry: fin?.industry,
+      // No separate informal-sector data source exists yet — real 업종
+      // classification is the closest thing we have, so it doubles as the
+      // 섹터 used by the market home's sector rollup (replacing the "기타"
+      // default) until a dedicated sector mapping is worth building.
+      sector: fin?.industry,
     };
   });
 }

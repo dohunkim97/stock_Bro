@@ -9,7 +9,9 @@ import type { StockMaster } from "@/app/generated/prisma/client";
 
 const DEFAULT_CODE = "042700"; // 한미반도체
 
-type CurStock = Pick<StockMaster, "code" | "name" | "market" | "sector" | "price" | "changePct">;
+type CurStock = Pick<StockMaster, "code" | "name" | "market" | "sector" | "price" | "changePct"> & {
+  revenue?: string | null;
+};
 
 export default async function StockPage({
   searchParams,
@@ -33,6 +35,7 @@ export default async function StockPage({
         sector: fallback.sector,
         price: fallback.price,
         changePct: fallback.changePct,
+        revenue: fallback.revenue,
       };
     }
   }
@@ -58,21 +61,39 @@ export default async function StockPage({
                 initialWatched={watched}
               />
             </div>
-            <span
-              style={{
-                display: "inline-block",
-                marginTop: 9,
-                background: "var(--accent-soft)",
-                color: "var(--accent)",
-                fontFamily: "var(--mono)",
-                fontSize: 11.5,
-                fontWeight: 600,
-                padding: "4px 10px",
-                borderRadius: 6,
-              }}
-            >
-              {cur.sector} · {cur.market}
-            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 9, flexWrap: "wrap" }}>
+              <span
+                style={{
+                  display: "inline-block",
+                  background: "var(--accent-soft)",
+                  color: "var(--accent)",
+                  fontFamily: "var(--mono)",
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  padding: "4px 10px",
+                  borderRadius: 6,
+                }}
+              >
+                {cur.sector} · {cur.market}
+              </span>
+              {cur.revenue && (
+                <span
+                  style={{
+                    display: "inline-block",
+                    background: "var(--panel2)",
+                    color: "var(--dim)",
+                    fontFamily: "var(--mono)",
+                    fontSize: 11.5,
+                    fontWeight: 600,
+                    padding: "4px 10px",
+                    borderRadius: 6,
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  매출액 {cur.revenue}
+                </span>
+              )}
+            </div>
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontFamily: "var(--mono)", fontSize: 32, fontWeight: 700, lineHeight: 1, color: chgColorVar(cur.changePct) }}>

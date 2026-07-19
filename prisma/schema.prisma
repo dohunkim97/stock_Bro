@@ -41,6 +41,8 @@ model DailyEntry {
   roe           String?
   debtRatio     String?
   reserveRatio  String?
+  industry      String?
+  revenue       String?
   createdAt DateTime @default(now())
 
   @@index([date, listType])

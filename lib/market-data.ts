@@ -20,6 +20,8 @@ export type UploadRow = {
   roe?: string;
   debtRatio?: string;
   reserveRatio?: string;
+  industry?: string;
+  revenue?: string;
 };
 
 export async function resolveStock(name: string) {
@@ -138,6 +140,8 @@ export async function replaceDayEntries(
         roe: row.roe?.trim() || null,
         debtRatio: row.debtRatio?.trim() || null,
         reserveRatio: row.reserveRatio?.trim() || null,
+        industry: row.industry?.trim() || null,
+        revenue: row.revenue?.trim() || null,
       };
     });
 
