@@ -13,13 +13,22 @@ datasource db {
 }
 
 model StockMaster {
-  id        String @id @default(cuid())
-  name      String @unique
-  code      String @unique
-  market    String
-  sector    String
-  price     String
-  changePct Float
+  id         String    @id @default(cuid())
+  name       String    @unique
+  code       String    @unique
+  market     String
+  sector     String
+  price      String
+  changePct  Float
+  marketCap  String?
+  per        String?
+  pbr        String?
+  roe        String?
+  debtRatio  String?
+  revenue    String?
+  industry   String?
+  quoteDate  String?
+  updatedAt  DateTime  @updatedAt
 }
 
 model DailyEntry {
