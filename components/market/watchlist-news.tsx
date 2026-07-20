@@ -1,5 +1,7 @@
 import Link from "next/link";
 import type { Watchlist } from "@/app/generated/prisma/client";
+import { fetchNews, type NewsItem } from "@/lib/naver-news";
+import { NewsList } from "@/components/news-list";
 
 const panelStyle: React.CSSProperties = {
   background: "var(--panel)",
@@ -8,11 +10,13 @@ const panelStyle: React.CSSProperties = {
   overflow: "hidden",
 };
 
-// Real news isn't wired in yet (no news API configured) — this mirrors the
-// same "실시간 연동 예정" placeholder pattern already used on the stock
-// detail page's news section, just scoped to the user's watchlist so the
-// layout is ready to swap in a real feed later.
-export function WatchlistNews({ items }: { items: Watchlist[] }) {
+export async function WatchlistNews({ items }: { items: Watchlist[] }) {
+  const newsByCode = new Map<string, NewsItem[]>();
+  if (items.length > 0) {
+    const results = await Promise.all(items.map((w) => fetchNews(w.name, 3)));
+    items.forEach((w, i) => newsByCode.set(w.code, results[i] ?? []));
+  }
+
   return (
     <section style={panelStyle}>
       <div
@@ -25,17 +29,8 @@ export function WatchlistNews({ items }: { items: Watchlist[] }) {
         }}
       >
         <span style={{ fontWeight: 700, fontSize: 15 }}>관심종목 뉴스</span>
-        <span
-          style={{
-            fontFamily: "var(--mono)",
-            fontSize: 10,
-            color: "var(--down)",
-            border: "1px solid var(--down)",
-            padding: "1px 6px",
-            borderRadius: 5,
-          }}
-        >
-          실시간 연동 예정
+        <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--faint)" }}>
+          네이버 뉴스 검색
         </span>
       </div>
 
@@ -45,39 +40,27 @@ export function WatchlistNews({ items }: { items: Watchlist[] }) {
         </div>
       ) : (
         items.map((w) => (
-          <div
-            key={w.code}
-            style={{
-              display: "flex",
-              gap: 14,
-              padding: "13px 18px",
-              borderBottom: "1px solid var(--border)",
-              alignItems: "flex-start",
-            }}
-          >
-            <span
-              style={{
-                background: "var(--accent-soft)",
-                color: "var(--accent)",
-                fontSize: 10.5,
-                fontWeight: 600,
-                padding: "3px 8px",
-                borderRadius: 5,
-                flexShrink: 0,
-                whiteSpace: "nowrap",
-                marginTop: 2,
-              }}
-            >
-              {w.sector ?? "관심종목"}
-            </span>
-            <div style={{ flex: 1 }}>
-              <Link href={`/stock?code=${w.code}`} style={{ fontSize: 14, fontWeight: 500 }}>
+          <div key={w.code} style={{ padding: "14px 18px", borderBottom: "1px solid var(--border)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 4 }}>
+              <span
+                style={{
+                  background: "var(--accent-soft)",
+                  color: "var(--accent)",
+                  fontSize: 10.5,
+                  fontWeight: 600,
+                  padding: "3px 8px",
+                  borderRadius: 5,
+                  flexShrink: 0,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {w.sector ?? "관심종목"}
+              </span>
+              <Link href={`/stock?code=${w.code}`} style={{ fontSize: 14, fontWeight: 600 }}>
                 {w.name}
               </Link>
-              <div style={{ fontSize: 11.5, color: "var(--faint)", marginTop: 3 }}>
-                관련 뉴스 연동 준비 중이에요 · {w.market ?? ""}
-              </div>
             </div>
+            <NewsList items={newsByCode.get(w.code) ?? []} emptyLabel={`${w.name} 관련 최근 뉴스가 없어요`} />
           </div>
         ))
       )}

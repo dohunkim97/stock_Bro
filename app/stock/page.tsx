@@ -147,7 +147,7 @@ export default async function StockPage({
         </div>
       </div>
 
-      <DetailSections />
+      <DetailSections stockName={cur.name} />
     </main>
   );
 }

@@ -4,9 +4,10 @@ import {
   valuation,
   financials,
   revenueMix,
-  news,
   competitors,
 } from "@/lib/stock-detail-sample";
+import { fetchNews } from "@/lib/naver-news";
+import { NewsList } from "@/components/news-list";
 
 const panelStyle: React.CSSProperties = {
   background: "var(--panel)",
@@ -15,7 +16,8 @@ const panelStyle: React.CSSProperties = {
   padding: "18px 20px",
 };
 
-export function DetailSections() {
+export async function DetailSections({ stockName }: { stockName: string }) {
+  const news = await fetchNews(stockName);
   const areaPoints = `${chartPoints} 620,220 0,220`;
   const conicStops = revenueMix.reduce((acc, r) => {
     const start = acc.offset;
@@ -154,48 +156,11 @@ export function DetailSections() {
       <section style={{ ...panelStyle, gridColumn: "1 / -1" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 15 }}>
           <span style={{ fontWeight: 700, fontSize: 14.5 }}>최근 이슈 · 뉴스</span>
-          <span
-            style={{
-              fontFamily: "var(--mono)",
-              fontSize: 10,
-              color: "var(--down)",
-              border: "1px solid var(--down)",
-              padding: "1px 6px",
-              borderRadius: 5,
-            }}
-          >
-            실시간 연동 예정
+          <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--faint)" }}>
+            네이버 뉴스 검색
           </span>
         </div>
-        {news.map((n) => (
-          <div
-            key={n.title}
-            className="hover-row"
-            style={{ display: "flex", gap: 14, padding: "13px 0", borderTop: "1px solid var(--border)", alignItems: "flex-start" }}
-          >
-            <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)", width: 44, flexShrink: 0, paddingTop: 2 }}>
-              {n.date}
-            </span>
-            <span
-              style={{
-                background: n.tagBg,
-                color: n.tagColor,
-                fontSize: 10.5,
-                fontWeight: 600,
-                padding: "3px 8px",
-                borderRadius: 5,
-                flexShrink: 0,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {n.tag}
-            </span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 500, lineHeight: 1.4 }}>{n.title}</div>
-              <div style={{ fontSize: 11.5, color: "var(--faint)", marginTop: 3 }}>{n.source}</div>
-            </div>
-          </div>
-        ))}
+        <NewsList items={news} emptyLabel={`${stockName} 관련 최근 뉴스가 없어요`} />
       </section>
 
       {/* 업종 내 경쟁사 비교 */}

@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Modal } from "@/components/ui/modal";
+import { NewsList } from "@/components/news-list";
 import { chgColorVar, formatChg } from "@/lib/format";
 import { formatDateLabel } from "@/lib/dates";
 import type { MentionRow } from "@/lib/mention-ranking";
 import type { HotSectorResult, SectorBar } from "@/lib/sector-aggregation";
+import type { NewsItem } from "@/lib/naver-news";
 
 const DEFAULT_COUNT = 10;
 const LIST_TYPE_LABEL: Record<string, string> = { gainer: "급상승", volume: "거래량상위" };
@@ -144,10 +146,29 @@ function MentionRowLink({ r, rank }: { r: MentionRow; rank: number }) {
 }
 
 // Shown on the left in place of the sector bars once a mentioned stock is
-// clicked. The occurrence list (date/list type/rank/등락률) is real data
-// we already have — the "왜" narrative itself needs real news/공시, which
-// isn't wired in yet, so that part stays a labeled placeholder for now.
+// clicked. The occurrence list (date/list type/rank/등락률) is real data we
+// already have; the news list below it is fetched on demand from our own
+// /api/news route (which just proxies the 네이버 뉴스 검색 API) — real
+// headlines, not an AI-written explanation.
 function MentionDetail({ row, onBack }: { row: MentionRow; onBack: () => void }) {
+  const [news, setNews] = useState<NewsItem[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setNews(null);
+    fetch(`/api/news?query=${encodeURIComponent(row.name)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) setNews(Array.isArray(data.items) ? data.items : []);
+      })
+      .catch(() => {
+        if (!cancelled) setNews([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [row.name]);
+
   return (
     <div>
       <button
@@ -213,25 +234,17 @@ function MentionDetail({ row, onBack }: { row: MentionRow; onBack: () => void })
           marginBottom: 14,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <span style={{ fontWeight: 700, fontSize: 12.5 }}>이슈·기사·공시 요약</span>
-          <span
-            style={{
-              fontFamily: "var(--mono)",
-              fontSize: 10,
-              color: "var(--down)",
-              border: "1px solid var(--down)",
-              padding: "1px 6px",
-              borderRadius: 5,
-            }}
-          >
-            AI 분석 연동 예정
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <span style={{ fontWeight: 700, fontSize: 12.5 }}>이슈·기사</span>
+          <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--faint)" }}>
+            네이버 뉴스 검색
           </span>
         </div>
-        <div style={{ fontSize: 12.5, color: "var(--faint)" }}>
-          Bro AI가 연동되면 {row.name}이 이번 주 자주 언급된 이유를 뉴스·공시 기반으로 요약해줄
-          예정이에요.
-        </div>
+        {news === null ? (
+          <div style={{ padding: "10px 0", fontSize: 12.5, color: "var(--faint)" }}>불러오는 중…</div>
+        ) : (
+          <NewsList items={news} emptyLabel={`${row.name} 관련 최근 뉴스가 없어요`} />
+        )}
       </div>
 
       <Link href={row.code ? `/stock?code=${row.code}` : "/stock"} style={ctaButtonStyle}>

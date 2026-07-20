@@ -1,7 +1,9 @@
-// Detail sections (chart / valuation / financials / revenue mix / news / competitors)
+// Detail sections (chart / valuation / financials / revenue mix / competitors)
 // are kept as the 한미반도체 sample from the design mockup regardless of which stock
 // is selected in the picker — see chats/chat1.md: "종목을 바꾸면 상단 식별 정보는
 // 갱신되지만, 아래 상세 분석은 아직 한미반도체 샘플이 그대로 표시됩니다."
+// (뉴스 섹션만 예외 — components/stock/detail-sections.tsx에서 네이버 뉴스
+// 검색으로 실제 데이터를 가져와요.)
 
 export const chartPoints =
   "0,175 40,168 80,180 120,150 160,158 200,130 240,138 280,105 320,118 360,88 400,96 440,70 480,82 520,52 560,60 600,34 620,30";
@@ -31,13 +33,6 @@ export const revenueMix = [
   { name: "HBM 본더 (TC본더)", pct: 65, color: "var(--accent)" },
   { name: "비전 플레이스먼트", pct: 20, color: "var(--down)" },
   { name: "기타 반도체 장비", pct: 15, color: "var(--faint)" },
-];
-
-export const news = [
-  { date: "07.06", tag: "실적", tagBg: "var(--up-soft)", tagColor: "var(--up)", title: "한미반도체, 2분기 영업이익 컨센서스 상회 전망… TC본더 수주 급증", source: "한국경제 · 3시간 전" },
-  { date: "07.04", tag: "수주", tagBg: "var(--accent-soft)", tagColor: "var(--accent)", title: "SK하이닉스 HBM4용 신규 본더 라인 발주… 하반기 매출 반영 기대", source: "전자신문 · 2일 전" },
-  { date: "07.02", tag: "산업", tagBg: "var(--down-soft)", tagColor: "var(--down)", title: "엔비디아 차세대 GPU 수요 확대에 HBM 밸류체인 동반 강세", source: "머니투데이 · 4일 전" },
-  { date: "06.28", tag: "리스크", tagBg: "var(--down-soft)", tagColor: "var(--down)", title: "고객사 편중·환율 변동성은 잠재 리스크… 밸류에이션 부담 지적도", source: "이데일리 · 8일 전" },
 ];
 
 export const competitors = [
