@@ -62,6 +62,7 @@ a {
 button,
 input {
   font-family: inherit;
+  color: inherit;
 }
 
 ::-webkit-scrollbar {
