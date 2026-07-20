@@ -3,7 +3,7 @@ import { StockTable } from "./stock-table";
 import { ExcelUploadButton } from "./excel-upload-button";
 import { KrxSyncButton } from "./krx-sync-button";
 import { WatchlistNews } from "./watchlist-news";
-import { MostMentionedPanel } from "./most-mentioned-panel";
+import { WeeklySectorPanel } from "./weekly-sector-panel";
 import { aggregateSectors } from "@/lib/sector-aggregation";
 import { rankMostMentioned } from "@/lib/mention-ranking";
 import { prevWeekKey, nextWeekKey, type WeekInfo } from "@/lib/week";
@@ -144,36 +144,7 @@ export function DayView({
               </span>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 28 }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
-                {agg.sectors.map((sec) => {
-                  const isHot = sec.name === agg.hotSector;
-                  const color = isHot ? "var(--accent)" : "var(--text)";
-                  const barColor = isHot ? "var(--accent)" : "var(--dim)";
-                  return (
-                    <div key={sec.name}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                        <span style={{ fontWeight: 600, fontSize: 14, color }}>{sec.name}</span>
-                        <span style={{ fontFamily: "var(--mono)", fontSize: 12.5, color: "var(--dim)" }}>
-                          {sec.count}건 · <b style={{ color }}>{sec.pct}%</b>
-                        </span>
-                      </div>
-                      <div style={{ height: 9, background: "var(--bg)", borderRadius: 6, overflow: "hidden" }}>
-                        <div
-                          style={{
-                            height: "100%",
-                            width: `${sec.width}%`,
-                            background: barColor,
-                            borderRadius: 6,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <MostMentionedPanel rows={mentions} weekLabel={weekInfo.label} />
-            </div>
+            <WeeklySectorPanel agg={agg} mentions={mentions} />
 
             <div
               style={{
