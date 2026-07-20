@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Watchlist } from "@/app/generated/prisma/client";
 import { fetchNews, type NewsItem } from "@/lib/naver-news";
 import { NewsList } from "@/components/news-list";
+import { simplifyIndustry } from "@/lib/industry-labels";
 
 const panelStyle: React.CSSProperties = {
   background: "var(--panel)",
@@ -43,6 +44,7 @@ export async function WatchlistNews({ items }: { items: Watchlist[] }) {
           <div key={w.code} style={{ padding: "14px 18px", borderBottom: "1px solid var(--border)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 4 }}>
               <span
+                title={w.sector ?? undefined}
                 style={{
                   background: "var(--accent-soft)",
                   color: "var(--accent)",
@@ -54,7 +56,7 @@ export async function WatchlistNews({ items }: { items: Watchlist[] }) {
                   whiteSpace: "nowrap",
                 }}
               >
-                {w.sector ?? "관심종목"}
+                {w.sector ? simplifyIndustry(w.sector) : "관심종목"}
               </span>
               <Link href={`/stock?code=${w.code}`} style={{ fontSize: 14, fontWeight: 600 }}>
                 {w.name}

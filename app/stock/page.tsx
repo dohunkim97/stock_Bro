@@ -7,6 +7,7 @@ import { isWatched } from "@/lib/watchlist";
 import { findLatestEntryByCode } from "@/lib/market-data";
 import { refreshStockSnapshot } from "@/lib/krx-quote";
 import { formatDateLabel } from "@/lib/dates";
+import { simplifyIndustry } from "@/lib/industry-labels";
 import type { StockMaster } from "@/app/generated/prisma/client";
 
 // A live refresh (price lookup + financial/industry enrichment) can take a
@@ -98,6 +99,7 @@ export default async function StockPage({
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 9, flexWrap: "wrap" }}>
               <span
+                title={cur.sector}
                 style={{
                   display: "inline-block",
                   background: "var(--accent-soft)",
@@ -109,7 +111,7 @@ export default async function StockPage({
                   borderRadius: 6,
                 }}
               >
-                {cur.sector} · {cur.market}
+                {simplifyIndustry(cur.sector)} · {cur.market}
               </span>
               {stats.map((s) => (
                 <span
@@ -147,7 +149,15 @@ export default async function StockPage({
         </div>
       </div>
 
-      <DetailSections stockName={cur.name} />
+      <DetailSections
+        stockName={cur.name}
+        code={cur.code}
+        market={cur.market}
+        marketCap={cur.marketCap}
+        per={cur.per}
+        pbr={cur.pbr}
+        debtRatio={cur.debtRatio}
+      />
     </main>
   );
 }

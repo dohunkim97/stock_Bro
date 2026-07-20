@@ -117,6 +117,68 @@ async function fetchFinancialSummary(
   return null;
 }
 
+export type YearlyFinancials = {
+  year: number;
+  revenue: number;
+  operatingProfit: number;
+  netIncome: number;
+  debtRatio: number;
+};
+
+async function fetchYearFinancials(
+  crno: string,
+  serviceKey: string,
+  year: number
+): Promise<YearlyFinancials | null> {
+  const url = new URL(FINA_STAT_URL);
+  url.searchParams.set("serviceKey", serviceKey);
+  url.searchParams.set("resultType", "json");
+  url.searchParams.set("numOfRows", "10");
+  url.searchParams.set("pageNo", "1");
+  url.searchParams.set("crno", crno);
+  url.searchParams.set("bizYear", String(year));
+
+  const json = await fetchJson(url);
+  const list = itemsOf(json);
+  if (list.length === 0) return null;
+
+  const consolidated = list.find((it) => it.fnclDcd === "110");
+  const standalone = list.find((it) => it.fnclDcd === "120");
+  const picked = consolidated ?? standalone ?? list[0];
+
+  const revenue = Number(picked.enpSaleAmt);
+  const operatingProfit = Number(picked.enpBzopPft);
+  const netIncome = Number(picked.enpCrtmNpf);
+  const debtRatio = Number(picked.fnclDebtRto);
+  if (!Number.isFinite(revenue) || !Number.isFinite(netIncome)) return null;
+
+  return { year, revenue, operatingProfit, netIncome, debtRatio };
+}
+
+// Unlike fetchFinancialSummary (which stops at the first year with data —
+// fine for a single current-ratio snapshot), this fetches every requested
+// year in parallel so the stock detail page can show a real multi-year
+// trend instead of a single point.
+export async function fetchFinancialHistoryByCode(
+  code: string,
+  years: number[]
+): Promise<YearlyFinancials[]> {
+  const serviceKey = process.env.KRX_SERVICE_KEY;
+  if (!serviceKey) return [];
+
+  try {
+    const crno = await fetchCrno(code, serviceKey);
+    if (!crno) return [];
+
+    const results = await Promise.all(years.map((y) => fetchYearFinancials(crno, serviceKey, y)));
+    return results
+      .filter((r): r is YearlyFinancials => r !== null)
+      .sort((a, b) => a.year - b.year);
+  } catch {
+    return [];
+  }
+}
+
 // GetCorpBasicInfoService_V2 returns one row per historical filing/change
 // event for a company, and most of them leave sicNm (표준산업분류명) blank —
 // only a handful of snapshots actually carry it. Scan a batch and take the

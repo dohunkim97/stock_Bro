@@ -81,6 +81,53 @@ async function findLatestQuote(code: string, serviceKey: string): Promise<RawQuo
   return null;
 }
 
+export type PricePoint = { date: string; close: number };
+
+// One ranged query per stock (beginBasDt/endBasDt), not one call per day —
+// the price API supports date-range filtering for a single code, so a
+// ~100-day chart costs exactly one request.
+export async function fetchPriceHistory(code: string, days = 100): Promise<PricePoint[]> {
+  const serviceKey = process.env.KRX_SERVICE_KEY;
+  if (!serviceKey) return [];
+
+  const end = todayISO();
+  const [y, m, d] = end.split("-").map(Number);
+  const beginDate = new Date(y, m - 1, d);
+  beginDate.setDate(beginDate.getDate() - days);
+  const begin = `${beginDate.getFullYear()}-${String(beginDate.getMonth() + 1).padStart(2, "0")}-${String(beginDate.getDate()).padStart(2, "0")}`;
+
+  const url = new URL(API_BASE);
+  url.searchParams.set("serviceKey", serviceKey);
+  url.searchParams.set("resultType", "json");
+  url.searchParams.set("numOfRows", "200");
+  url.searchParams.set("pageNo", "1");
+  url.searchParams.set("likeSrtnCd", code);
+  url.searchParams.set("beginBasDt", toYYYYMMDD(begin));
+  url.searchParams.set("endBasDt", toYYYYMMDD(end));
+
+  try {
+    const res = await fetch(url.toString(), { signal: AbortSignal.timeout(PER_REQUEST_TIMEOUT_MS) });
+    if (!res.ok) return [];
+    const json = await res.json();
+    const items = json?.response?.body?.items?.item;
+    const list: Record<string, unknown>[] = Array.isArray(items) ? items : items ? [items] : [];
+
+    const points = list
+      .filter((it) => String(it.srtnCd ?? "").replace(/[^0-9]/g, "").slice(-6) === code)
+      .map((it) => {
+        const basDt = String(it.basDt ?? "");
+        const iso = basDt.length === 8 ? `${basDt.slice(0, 4)}-${basDt.slice(4, 6)}-${basDt.slice(6, 8)}` : "";
+        const close = Number(it.clpr);
+        return { date: iso, close };
+      })
+      .filter((p): p is PricePoint => !!p.date && Number.isFinite(p.close));
+
+    return points.sort((a, b) => a.date.localeCompare(b.date));
+  } catch {
+    return [];
+  }
+}
+
 export type StockSnapshot = {
   code: string;
   name: string;
