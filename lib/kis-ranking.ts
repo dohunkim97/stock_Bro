@@ -40,24 +40,34 @@ async function kisRankingGet(
   const u = new URL(url);
   for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
 
-  try {
-    const res = await fetch(u.toString(), {
-      headers: {
-        authorization: `Bearer ${token}`,
-        appkey: appKey,
-        appsecret: appSecret,
-        tr_id: trId,
-        custtype: "P",
-      },
-      signal: AbortSignal.timeout(PER_REQUEST_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    if (json?.rt_cd !== "0") return null;
-    return Array.isArray(json.output) ? (json.output as Record<string, unknown>[]) : [];
-  } catch {
-    return null;
+  // KIS's ranking endpoints appear to have a tighter per-second rate limit
+  // than the single-stock quote endpoint — seen a whole market silently
+  // come back empty in production when four of these fired at once. One
+  // retry after a short backoff recovers from that without much added cost.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(u.toString(), {
+        headers: {
+          authorization: `Bearer ${token}`,
+          appkey: appKey,
+          appsecret: appSecret,
+          tr_id: trId,
+          custtype: "P",
+        },
+        signal: AbortSignal.timeout(PER_REQUEST_TIMEOUT_MS),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.rt_cd === "0") {
+          return Array.isArray(json.output) ? (json.output as Record<string, unknown>[]) : [];
+        }
+      }
+    } catch {
+      // fall through to retry
+    }
+    if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 700));
   }
+  return null;
 }
 
 // 등락률순위 — gives price/체결/등락률/거래량 but not 거래대금 or 상장주식수,
@@ -182,12 +192,14 @@ export async function fetchKisMarketRanking(): Promise<{ gainer: KisRankRow[]; v
   const token = await getKisAccessToken();
   if (!token) return null;
 
-  const [kospiGainer, kosdaqGainer, kospiVolume, kosdaqVolume] = await Promise.all([
-    fetchFluctuationRanking("0001", "코스피", appKey, appSecret, token),
-    fetchFluctuationRanking("1001", "코스닥", appKey, appSecret, token),
-    fetchVolumeRanking("0001", "코스피", appKey, appSecret, token),
-    fetchVolumeRanking("1001", "코스닥", appKey, appSecret, token),
-  ]);
+  // Run these one at a time rather than all four at once — production
+  // showed an entire market (코스닥) silently dropping out when fired
+  // concurrently, consistent with a per-second rate limit on these
+  // particular endpoints.
+  const kospiGainer = await fetchFluctuationRanking("0001", "코스피", appKey, appSecret, token);
+  const kosdaqGainer = await fetchFluctuationRanking("1001", "코스닥", appKey, appSecret, token);
+  const kospiVolume = await fetchVolumeRanking("0001", "코스피", appKey, appSecret, token);
+  const kosdaqVolume = await fetchVolumeRanking("1001", "코스닥", appKey, appSecret, token);
 
   const gainer = [...kospiGainer, ...kosdaqGainer];
   const volume = [...kospiVolume, ...kosdaqVolume];
