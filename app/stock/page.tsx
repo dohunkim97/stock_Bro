@@ -10,10 +10,11 @@ import { formatDateLabel, todayISO } from "@/lib/dates";
 import { simplifyIndustry } from "@/lib/industry-labels";
 import type { StockMaster } from "@/app/generated/prisma/client";
 
-// A live refresh (price lookup + financial/industry enrichment) can take a
-// few seconds under normal conditions — give it real room on Vercel rather
-// than the platform's short default.
-export const maxDuration = 30;
+// A live refresh (price lookup + financial/industry enrichment) can take
+// 15-25s under real production latency, plus DetailSections' own fetches
+// after it — give this real room on Vercel rather than the platform's
+// short default.
+export const maxDuration = 45;
 
 const DEFAULT_CODE = "042700"; // 한미반도체
 

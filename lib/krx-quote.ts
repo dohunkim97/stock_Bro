@@ -13,9 +13,17 @@ import { fetchKisQuote } from "@/lib/kis-quote";
 const API_BASE =
   "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getStockPriceInfo";
 const PER_REQUEST_TIMEOUT_MS = 6000;
-const OVERALL_TIMEOUT_MS = 12000;
+const OVERALL_TIMEOUT_MS = 12000; // budget for the fetchFinancialRatiosByCode call specifically
 const MAX_DAY_TRIES = 6;
 const FRESH_ENOUGH_MS = 10 * 60 * 1000; // 10 minutes
+
+// The whole-refresh safety net (findLatestQuote + KIS + financial ratios,
+// end to end) needs more room than the financial-ratios budget alone —
+// production latency to data.go.kr/KIS from Vercel has been observed
+// running 15-25s total. The calling page has its own maxDuration=30, so
+// this stays comfortably under that while still leaving headroom for the
+// page's own work after this returns.
+const REFRESH_SAFETY_TIMEOUT_MS = 22000;
 
 function normalizeMarket(raw: unknown): string {
   const v = String(raw ?? "").toUpperCase();
@@ -255,7 +263,7 @@ export async function refreshStockSnapshot(code: string): Promise<StockSnapshot 
   try {
     return await Promise.race([
       refreshStockSnapshotInner(code),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), OVERALL_TIMEOUT_MS + 3000)),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), REFRESH_SAFETY_TIMEOUT_MS)),
     ]);
   } catch {
     return null;
