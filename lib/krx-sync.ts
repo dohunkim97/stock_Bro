@@ -20,6 +20,7 @@ type RawKrxRow = {
   tradingValue: number;
   marketCap: number;
   sharesOutstanding: number;
+  sector?: string;
 };
 
 function formatShares(value: number): string {
@@ -117,11 +118,12 @@ function toUploadRows(rows: RawKrxRow[], ratios: Map<string, FinancialRatios>): 
       debtRatio: fin?.debtRatio,
       revenue: fin?.revenue,
       industry: fin?.industry,
-      // No separate informal-sector data source exists yet — real 업종
-      // classification is the closest thing we have, so it doubles as the
-      // 섹터 used by the market home's sector rollup (replacing the "기타"
-      // default) until a dedicated sector mapping is worth building.
-      sector: fin?.industry,
+      // KIS's bstp_kor_isnm (broad, ~20-category KRX classification, e.g.
+      // "전기·전자"/"화학"/"건설") is reliably populated and used for the
+      // market home's sector rollup — prefer it over the data.go.kr
+      // financial-enrichment path's more granular KSIC name (fin?.industry),
+      // which is best-effort and frequently blank, falling back to "기타".
+      sector: r.sector ?? fin?.industry,
     };
   });
 }

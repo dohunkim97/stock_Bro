@@ -16,7 +16,8 @@ import { isPreferredStock } from "@/lib/stock-filters";
 const FLUCTUATION_URL = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/ranking/fluctuation";
 const VOLUME_URL = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/volume-rank";
 const PER_REQUEST_TIMEOUT_MS = 8000;
-const BACKFILL_CONCURRENCY = 10;
+const BACKFILL_CONCURRENCY = 6;
+const BACKFILL_BATCH_GAP_MS = 250;
 
 export type KisRankRow = {
   name: string;
@@ -28,6 +29,7 @@ export type KisRankRow = {
   tradingValue: number;
   marketCap: number;
   sharesOutstanding: number;
+  sector?: string;
 };
 
 async function kisRankingGet(
@@ -170,16 +172,34 @@ async function fetchVolumeRanking(
     .filter((r) => r.name && r.code.length === 6 && !isPreferredStock(r.name));
 }
 
-async function backfillGainerDetails(rows: KisRankRow[]): Promise<void> {
-  for (let i = 0; i < rows.length; i += BACKFILL_CONCURRENCY) {
-    const batch = rows.slice(i, i + BACKFILL_CONCURRENCY);
+// Neither ranking endpoint returns a sector/업종 field, and 등락률순위
+// additionally lacks 거래대금/상장주식수 — a single-stock quote lookup per
+// unique code fills in both. bstp_kor_isnm is KRX's own fixed ~20-category
+// classification (전기·전자/화학/건설/제약 등) — broad, but always populated,
+// unlike the data.go.kr financial-enrichment path which frequently comes
+// back blank and falls through to "기타".
+async function enrichWithKisQuote(rows: KisRankRow[]): Promise<void> {
+  const byCode = new Map<string, KisRankRow[]>();
+  for (const r of rows) {
+    const list = byCode.get(r.code);
+    if (list) list.push(r);
+    else byCode.set(r.code, [r]);
+  }
+
+  const codes = [...byCode.keys()];
+  for (let i = 0; i < codes.length; i += BACKFILL_CONCURRENCY) {
+    if (i > 0) await new Promise((resolve) => setTimeout(resolve, BACKFILL_BATCH_GAP_MS));
+    const batch = codes.slice(i, i + BACKFILL_CONCURRENCY);
     await Promise.all(
-      batch.map(async (r) => {
-        const q = await fetchKisQuote(r.code);
+      batch.map(async (code) => {
+        const q = await fetchKisQuote(code);
         if (!q) return;
-        r.sharesOutstanding = q.sharesOutstanding;
-        r.marketCap = q.marketCap;
-        r.tradingValue = q.tradingValue;
+        for (const r of byCode.get(code) ?? []) {
+          r.sector = q.sector;
+          if (!r.sharesOutstanding) r.sharesOutstanding = q.sharesOutstanding;
+          if (!r.marketCap) r.marketCap = q.marketCap;
+          if (!r.tradingValue) r.tradingValue = q.tradingValue;
+        }
       })
     );
   }
@@ -206,7 +226,7 @@ export async function fetchKisMarketRanking(): Promise<{ gainer: KisRankRow[]; v
   const volume = [...kospiVolume, ...kosdaqVolume];
   if (gainer.length === 0 && volume.length === 0) return null;
 
-  await backfillGainerDetails(gainer);
+  await enrichWithKisQuote([...gainer, ...volume]);
 
   return { gainer, volume };
 }

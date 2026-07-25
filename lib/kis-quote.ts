@@ -47,43 +47,53 @@ export async function fetchKisQuote(code: string): Promise<KisQuote | null> {
   url.searchParams.set("FID_COND_MRKT_DIV_CODE", "J");
   url.searchParams.set("FID_INPUT_ISCD", code);
 
-  try {
-    const res = await fetch(url.toString(), {
-      headers: {
-        authorization: `Bearer ${token}`,
-        appkey: appKey,
-        appsecret: appSecret,
-        tr_id: "FHKST01010100",
-        custtype: "P",
-      },
-      signal: AbortSignal.timeout(PER_REQUEST_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    if (json?.rt_cd !== "0") return null;
-
-    const o = json.output ?? {};
-    const price = toNumber(o.stck_prpr);
-    const changePct = toNumber(o.prdy_ctrt);
-    if (!Number.isFinite(price) || !Number.isFinite(changePct) || price <= 0) return null;
-
-    // hts_avls comes back in 억원 (hundred-million-won) units.
-    const marketCap = toNumber(o.hts_avls) * 100_000_000;
-
-    return {
-      price,
-      changePct,
-      volume: toNumber(o.acml_vol) || 0,
-      tradingValue: toNumber(o.acml_tr_pbmn) || 0,
-      marketCap: Number.isFinite(marketCap) ? marketCap : 0,
-      sharesOutstanding: toNumber(o.lstn_stcn) || 0,
-      per: cleanStat(o.per),
-      pbr: cleanStat(o.pbr),
-      eps: cleanStat(o.eps),
-      bps: cleanStat(o.bps),
-      sector: String(o.bstp_kor_isnm ?? "").trim() || undefined,
-    };
-  } catch {
-    return null;
+  // Calling this for ~100 stocks in concurrent batches (market-sync sector
+  // enrichment) showed a meaningfully higher failure rate than the
+  // occasional single-stock-page-view call — consistent with KIS rate
+  // limiting under burst load. One retry after a short backoff recovers
+  // most of those without much added latency for the common (single-call)
+  // case.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url.toString(), {
+        headers: {
+          authorization: `Bearer ${token}`,
+          appkey: appKey,
+          appsecret: appSecret,
+          tr_id: "FHKST01010100",
+          custtype: "P",
+        },
+        signal: AbortSignal.timeout(PER_REQUEST_TIMEOUT_MS),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.rt_cd === "0") {
+          const o = json.output ?? {};
+          const price = toNumber(o.stck_prpr);
+          const changePct = toNumber(o.prdy_ctrt);
+          if (Number.isFinite(price) && Number.isFinite(changePct) && price > 0) {
+            // hts_avls comes back in 억원 (hundred-million-won) units.
+            const marketCap = toNumber(o.hts_avls) * 100_000_000;
+            return {
+              price,
+              changePct,
+              volume: toNumber(o.acml_vol) || 0,
+              tradingValue: toNumber(o.acml_tr_pbmn) || 0,
+              marketCap: Number.isFinite(marketCap) ? marketCap : 0,
+              sharesOutstanding: toNumber(o.lstn_stcn) || 0,
+              per: cleanStat(o.per),
+              pbr: cleanStat(o.pbr),
+              eps: cleanStat(o.eps),
+              bps: cleanStat(o.bps),
+              sector: String(o.bstp_kor_isnm ?? "").trim() || undefined,
+            };
+          }
+        }
+      }
+    } catch {
+      // fall through to retry
+    }
+    if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 500));
   }
+  return null;
 }
