@@ -1,6 +1,8 @@
 import type { UploadRow } from "@/lib/market-data";
 import { fetchFinancialRatiosByCode, type FinancialRatios } from "@/lib/krx-financials";
 import { formatWon } from "@/lib/format";
+import { todayISO, toYYYYMMDD } from "@/lib/dates";
+import { fetchKisMarketRanking } from "@/lib/kis-ranking";
 
 // data.go.kr — 금융위원회_주식시세정보 (KRX daily price info)
 // https://www.data.go.kr/data/15094808/openapi.do
@@ -123,9 +125,44 @@ function toUploadRows(rows: RawKrxRow[], ratios: Map<string, FinancialRatios>): 
   });
 }
 
+// KIS's ranking endpoints reflect the market right now, not a historical
+// date — only worth trying when the sync is for today. data.go.kr's batch
+// snapshot (fetched below) is the only option for backfilling a past date,
+// and also the fallback if KIS is unavailable for any reason.
+async function tryKisRankingForToday(
+  basDt: string
+): Promise<{ volume: UploadRow[]; gainer: UploadRow[]; rawCount: number } | null> {
+  if (basDt !== toYYYYMMDD(todayISO())) return null;
+
+  const ranking = await fetchKisMarketRanking();
+  if (!ranking) return null;
+
+  const SYNC_TOP_N = 30;
+  const volumeTop = ranking.volume.slice(0, SYNC_TOP_N * 2);
+  const gainerTop = ranking.gainer.slice(0, SYNC_TOP_N * 2);
+
+  const ratios = await fetchFinancialRatiosByCode(
+    [...volumeTop, ...gainerTop].map((r) => ({
+      code: r.code,
+      price: r.price,
+      sharesOutstanding: r.sharesOutstanding,
+    })),
+    30000
+  );
+
+  return {
+    volume: toUploadRows(volumeTop, ratios),
+    gainer: toUploadRows(gainerTop, ratios),
+    rawCount: volumeTop.length + gainerTop.length,
+  };
+}
+
 export async function fetchKrxDayRanking(
   basDt: string
 ): Promise<{ volume: UploadRow[]; gainer: UploadRow[]; rawCount: number }> {
+  const live = await tryKisRankingForToday(basDt);
+  if (live) return live;
+
   const serviceKey = process.env.KRX_SERVICE_KEY;
   if (!serviceKey) throw new Error("KRX_SERVICE_KEY가 설정되어 있지 않아요.");
 
