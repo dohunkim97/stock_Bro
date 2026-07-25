@@ -58,7 +58,7 @@ export function KrxSyncButton({ date }: { date: string }) {
           opacity: pending ? 0.6 : 1,
         }}
       >
-        {pending ? "동기화 중…" : "🔄 KRX에서 지금 가져오기"}
+        {pending ? "새로고침 중…" : "🔄 새로고침"}
       </button>
       {message && (
         <span

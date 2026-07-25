@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/ui/modal";
 import { NewsList } from "@/components/news-list";
 import { chgColorVar, formatChg } from "@/lib/format";
@@ -12,6 +12,34 @@ import type { NewsItem } from "@/lib/naver-news";
 
 const DEFAULT_COUNT = 10;
 const LIST_TYPE_LABEL: Record<string, string> = { gainer: "급상승", volume: "거래량상위" };
+
+type MentionSortMode = "mention" | "up" | "down";
+const MENTION_SORT_OPTIONS: { key: MentionSortMode; label: string }[] = [
+  { key: "mention", label: "언급순" },
+  { key: "up", label: "상승순" },
+  { key: "down", label: "하락순" },
+];
+
+function sortMentions(rows: MentionRow[], mode: MentionSortMode): MentionRow[] {
+  const sorted = [...rows];
+  if (mode === "up") sorted.sort((a, b) => b.avgChangePct - a.avgChangePct);
+  else if (mode === "down") sorted.sort((a, b) => a.avgChangePct - b.avgChangePct);
+  else sorted.sort((a, b) => b.count - a.count);
+  return sorted;
+}
+
+const selectStyle: React.CSSProperties = {
+  background: "var(--panel2)",
+  border: "1px solid var(--border)",
+  color: "var(--text)",
+  borderRadius: 7,
+  padding: "5px 8px",
+  fontSize: 11.5,
+  fontFamily: "var(--sans)",
+  outline: "none",
+  cursor: "pointer",
+  flexShrink: 0,
+};
 
 const moreButtonStyle: React.CSSProperties = {
   background: "var(--panel2)",
@@ -258,9 +286,11 @@ export function WeeklySectorPanel({ agg, mentions }: { agg: HotSectorResult; men
   const [selected, setSelected] = useState<MentionRow | null>(null);
   const [sectorModalOpen, setSectorModalOpen] = useState(false);
   const [mentionModalOpen, setMentionModalOpen] = useState(false);
+  const [mentionSort, setMentionSort] = useState<MentionSortMode>("mention");
 
   const visibleSectors = agg.sectors.slice(0, DEFAULT_COUNT);
-  const visibleMentions = mentions.slice(0, DEFAULT_COUNT);
+  const sortedMentions = useMemo(() => sortMentions(mentions, mentionSort), [mentions, mentionSort]);
+  const visibleMentions = sortedMentions.slice(0, DEFAULT_COUNT);
 
   return (
     <>
@@ -288,15 +318,28 @@ export function WeeklySectorPanel({ agg, mentions }: { agg: HotSectorResult; men
         </div>
 
         <div style={{ borderLeft: "1px solid var(--border)", paddingLeft: 24 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
             <div style={{ fontSize: 12, color: "var(--faint)", fontFamily: "var(--mono)" }}>
               이번 주 가장 많이 언급된 종목
             </div>
-            {mentions.length > DEFAULT_COUNT && (
-              <button onClick={() => setMentionModalOpen(true)} style={moreButtonStyle}>
-                더보기 (전체 {mentions.length})
-              </button>
-            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <select
+                value={mentionSort}
+                onChange={(e) => setMentionSort(e.target.value as MentionSortMode)}
+                style={selectStyle}
+              >
+                {MENTION_SORT_OPTIONS.map((o) => (
+                  <option key={o.key} value={o.key}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              {mentions.length > DEFAULT_COUNT && (
+                <button onClick={() => setMentionModalOpen(true)} style={moreButtonStyle}>
+                  더보기 (전체 {mentions.length})
+                </button>
+              )}
+            </div>
           </div>
 
           {visibleMentions.length === 0 ? (
@@ -332,7 +375,20 @@ export function WeeklySectorPanel({ agg, mentions }: { agg: HotSectorResult; men
         onClose={() => setMentionModalOpen(false)}
         title={`이번 주 가장 많이 언급된 종목 · 전체 ${mentions.length}종목`}
       >
-        {mentions.map((r, i) => (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+          <select
+            value={mentionSort}
+            onChange={(e) => setMentionSort(e.target.value as MentionSortMode)}
+            style={selectStyle}
+          >
+            {MENTION_SORT_OPTIONS.map((o) => (
+              <option key={o.key} value={o.key}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        {sortedMentions.map((r, i) => (
           <MentionRowLink key={r.name} r={r} rank={i + 1} />
         ))}
       </Modal>

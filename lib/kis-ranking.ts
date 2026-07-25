@@ -11,6 +11,7 @@
 
 import { getKisAccessToken } from "@/lib/kis-token";
 import { fetchKisQuote } from "@/lib/kis-quote";
+import { isPreferredStock } from "@/lib/stock-filters";
 
 const FLUCTUATION_URL = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/ranking/fluctuation";
 const VOLUME_URL = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/volume-rank";
@@ -116,7 +117,7 @@ async function fetchFluctuationRanking(
       marketCap: 0,
       sharesOutstanding: 0,
     }))
-    .filter((r) => r.name && r.code.length === 6);
+    .filter((r) => r.name && r.code.length === 6 && !isPreferredStock(r.name));
 }
 
 // 거래량순위 — includes 거래대금 and 상장주식수, so market cap can be
@@ -166,7 +167,7 @@ async function fetchVolumeRanking(
         sharesOutstanding: shares,
       };
     })
-    .filter((r) => r.name && r.code.length === 6);
+    .filter((r) => r.name && r.code.length === 6 && !isPreferredStock(r.name));
 }
 
 async function backfillGainerDetails(rows: KisRankRow[]): Promise<void> {

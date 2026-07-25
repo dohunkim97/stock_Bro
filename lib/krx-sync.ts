@@ -3,6 +3,7 @@ import { fetchFinancialRatiosByCode, type FinancialRatios } from "@/lib/krx-fina
 import { formatWon } from "@/lib/format";
 import { todayISO, toYYYYMMDD } from "@/lib/dates";
 import { fetchKisMarketRanking } from "@/lib/kis-ranking";
+import { isPreferredStock } from "@/lib/stock-filters";
 
 // data.go.kr — 금융위원회_주식시세정보 (KRX daily price info)
 // https://www.data.go.kr/data/15094808/openapi.do
@@ -167,7 +168,9 @@ export async function fetchKrxDayRanking(
   if (!serviceKey) throw new Error("KRX_SERVICE_KEY가 설정되어 있지 않아요.");
 
   const raw = await fetchAllRows(basDt, serviceKey);
-  const rows = raw.map(parseRow).filter((r): r is RawKrxRow => r !== null);
+  const rows = raw
+    .map(parseRow)
+    .filter((r): r is RawKrxRow => r !== null && !isPreferredStock(r.name));
 
   const kospi = rows.filter((r) => r.market === "코스피");
   const kosdaq = rows.filter((r) => r.market === "코스닥");
