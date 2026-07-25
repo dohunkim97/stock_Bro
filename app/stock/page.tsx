@@ -6,7 +6,7 @@ import { WatchlistButton } from "@/components/stock/watchlist-button";
 import { isWatched } from "@/lib/watchlist";
 import { findLatestEntryByCode } from "@/lib/market-data";
 import { refreshStockSnapshot } from "@/lib/krx-quote";
-import { formatDateLabel } from "@/lib/dates";
+import { formatDateLabel, todayISO } from "@/lib/dates";
 import { simplifyIndustry } from "@/lib/industry-labels";
 import type { StockMaster } from "@/app/generated/prisma/client";
 
@@ -141,8 +141,15 @@ export default async function StockPage({
               {chgArrow(cur.changePct)} {formatChg(cur.changePct)}
             </div>
             {cur.quoteDate && (
-              <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)", marginTop: 4 }}>
-                기준 {formatDateLabel(cur.quoteDate)}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, marginTop: 4 }}>
+                {cur.quoteDate === todayISO() && (
+                  <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, fontWeight: 700, color: "#22c55e" }}>
+                    실시간
+                  </span>
+                )}
+                <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)" }}>
+                  기준 {formatDateLabel(cur.quoteDate)}
+                </span>
               </div>
             )}
           </div>

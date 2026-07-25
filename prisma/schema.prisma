@@ -65,3 +65,13 @@ model Watchlist {
   sector    String?
   createdAt DateTime @default(now())
 }
+
+// Single-row cache for the KIS OAuth token — serverless functions don't
+// share memory between invocations, and KIS rate-limits how often a fresh
+// token can be issued, so this needs to live somewhere durable.
+model KisToken {
+  id          String   @id @default("singleton")
+  accessToken String
+  expiresAt   DateTime
+  updatedAt   DateTime @updatedAt
+}

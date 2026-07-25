@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { formatWon } from "@/lib/format";
 import { todayISO, toYYYYMMDD, prevBusinessDay } from "@/lib/dates";
 import { fetchFinancialRatiosByCode } from "@/lib/krx-financials";
+import { fetchKisQuote } from "@/lib/kis-quote";
 
 const API_BASE =
   "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getStockPriceInfo";
@@ -161,30 +162,48 @@ async function refreshStockSnapshotInner(code: string): Promise<StockSnapshot | 
     return null;
   }
 
-  const quote = await findLatestQuote(code, serviceKey);
+  // data.go.kr stays the required backbone (it's the only source that
+  // gives us name/market for a code we may not have seen before); KIS is
+  // layered on top as a real-time enhancement when it succeeds — its price
+  // reflects the actual current trade, not KRX's end-of-day batch (which
+  // we've seen lag by a day or more).
+  const [quote, kis] = await Promise.all([
+    findLatestQuote(code, serviceKey),
+    fetchKisQuote(code),
+  ]);
   if (!quote) return null;
 
+  const price = kis?.price ?? quote.price;
+  const sharesOutstanding = kis?.sharesOutstanding || quote.sharesOutstanding;
+
   const ratiosMap = await fetchFinancialRatiosByCode(
-    [{ code: quote.code, price: quote.price, sharesOutstanding: quote.sharesOutstanding }],
+    [{ code: quote.code, price, sharesOutstanding }],
     OVERALL_TIMEOUT_MS
   );
   const fin = ratiosMap.get(quote.code);
+
+  // ROE = 순이익/자기자본 = EPS/BPS when both are per-share — derivable
+  // straight from KIS's real-time EPS/BPS without a separate lookup.
+  const kisRoe =
+    kis?.eps && kis?.bps && Number(kis.bps) > 0
+      ? `${((Number(kis.eps) / Number(kis.bps)) * 100).toFixed(1)}%`
+      : undefined;
 
   const snapshot: StockSnapshot = {
     code: quote.code,
     name: quote.name,
     market: quote.market,
-    sector: fin?.industry,
-    price: quote.price.toLocaleString(),
-    changePct: quote.changePct,
-    marketCap: formatWon(quote.marketCap),
-    per: fin?.per,
-    pbr: fin?.pbr,
-    roe: fin?.roe,
+    sector: kis?.sector ?? fin?.industry,
+    price: price.toLocaleString(),
+    changePct: kis?.changePct ?? quote.changePct,
+    marketCap: kis?.marketCap ? formatWon(kis.marketCap) : formatWon(quote.marketCap),
+    per: kis?.per ?? fin?.per,
+    pbr: kis?.pbr ?? fin?.pbr,
+    roe: kisRoe ?? fin?.roe,
     debtRatio: fin?.debtRatio,
     revenue: fin?.revenue,
     industry: fin?.industry,
-    quoteDate: quote.date,
+    quoteDate: kis ? todayISO() : quote.date,
   };
 
   await prisma.stockMaster.upsert({
