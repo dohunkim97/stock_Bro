@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runMarketSync } from "@/lib/sync-runner";
 
-export const maxDuration = 60;
+export const maxDuration = 90;
 
 // Manual trigger for the "지금 동기화" button — same sync logic as the cron
 // route, just callable from the UI without the cron secret.
