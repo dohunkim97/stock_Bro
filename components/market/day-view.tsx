@@ -4,9 +4,11 @@ import { ExcelUploadButton } from "./excel-upload-button";
 import { KrxSyncButton } from "./krx-sync-button";
 import { WatchlistNews } from "./watchlist-news";
 import { WeeklySectorPanel } from "./weekly-sector-panel";
+import { AutoRefresh } from "./auto-refresh";
 import { aggregateSectors } from "@/lib/sector-aggregation";
 import { rankMostMentioned } from "@/lib/mention-ranking";
 import { prevWeekKey, nextWeekKey, type WeekInfo } from "@/lib/week";
+import { todayISO } from "@/lib/dates";
 import type { DailyEntry, Watchlist } from "@/app/generated/prisma/client";
 
 const weekNavBtnStyle: React.CSSProperties = {
@@ -45,6 +47,7 @@ export function DayView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {date === todayISO() && <AutoRefresh />}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
         <KrxSyncButton date={date} />
         <ExcelUploadButton date={date} />
