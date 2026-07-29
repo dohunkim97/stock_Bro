@@ -3,6 +3,7 @@ import { StockTable } from "./stock-table";
 import { ExcelUploadButton } from "./excel-upload-button";
 import { KrxSyncButton } from "./krx-sync-button";
 import { WatchlistNews } from "./watchlist-news";
+import { TelegramNewsPanel } from "./telegram-news";
 import { WeeklySectorPanel } from "./weekly-sector-panel";
 import { AutoRefresh } from "./auto-refresh";
 import { aggregateSectors } from "@/lib/sector-aggregation";
@@ -182,7 +183,10 @@ export function DayView({
         )}
       </section>
 
-      <WatchlistNews items={watchlist} />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
+        <WatchlistNews items={watchlist} />
+        <TelegramNewsPanel />
+      </div>
     </div>
   );
 }

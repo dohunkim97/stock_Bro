@@ -75,3 +75,18 @@ model KisToken {
   expiresAt   DateTime
   updatedAt   DateTime @updatedAt
 }
+
+// Articles forwarded from Telegram into the bot (see app/api/telegram/webhook).
+// messageId is unique per chat, not globally — Telegram also retries webhook
+// deliveries on timeout, so the composite unique key makes storage idempotent.
+model TelegramNews {
+  id         String   @id @default(cuid())
+  chatId     String
+  messageId  Int
+  text       String
+  link       String?
+  sourceName String?
+  createdAt  DateTime @default(now())
+
+  @@unique([chatId, messageId])
+}
