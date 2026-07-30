@@ -89,6 +89,18 @@ model MarketBriefing {
   createdAt  DateTime @default(now())
 }
 
+// A finer-grained investment theme for a stock (e.g. "태양광", "2차전지"),
+// extracted from Telegram article headlines — see lib/theme-extraction.ts.
+// Overrides the broad KIS 업종 classification (e.g. "건설") wherever that
+// stock shows up, since KIS itself has no theme-level category. Keyed by
+// company name (not code) since extraction only ever sees a name in text.
+model StockTheme {
+  name      String   @id
+  theme     String
+  source    String?
+  updatedAt DateTime @updatedAt
+}
+
 // Articles forwarded from Telegram into the bot (see app/api/telegram/webhook).
 // messageId is unique per chat, not globally — Telegram also retries webhook
 // deliveries on timeout, so the composite unique key makes storage idempotent.

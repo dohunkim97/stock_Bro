@@ -1,5 +1,6 @@
 import { getDayEntries, getEntriesInRange } from "@/lib/market-data";
 import { aggregateSectors } from "@/lib/sector-aggregation";
+import { applyThemes } from "@/lib/theme-lookup";
 import { rankMostMentioned } from "@/lib/mention-ranking";
 import { formatChg } from "@/lib/format";
 import { currentWeekKey, weekInfoFromKey } from "@/lib/week";
@@ -20,12 +21,14 @@ export async function marketDataBlock(): Promise<string> {
   const date = latest.date;
   const { volume, gainer } = await getDayEntries(date);
   const agg = aggregateSectors(
-    [...volume, ...gainer].map((e) => ({
-      name: e.name,
-      code: e.code,
-      sector: e.sector,
-      changePct: e.changePct,
-    }))
+    await applyThemes(
+      [...volume, ...gainer].map((e) => ({
+        name: e.name,
+        code: e.code,
+        sector: e.sector,
+        changePct: e.changePct,
+      }))
+    )
   );
 
   // Only the top few of each list go into the prompt — up to 100 entries
@@ -68,7 +71,9 @@ export async function weeklyTrendBlock(): Promise<string> {
   if (weekEntries.length === 0) return "";
 
   const agg = aggregateSectors(
-    weekEntries.map((e) => ({ name: e.name, code: e.code, sector: e.sector, changePct: e.changePct }))
+    await applyThemes(
+      weekEntries.map((e) => ({ name: e.name, code: e.code, sector: e.sector, changePct: e.changePct }))
+    )
   );
   const mentions = rankMostMentioned(weekEntries, 8);
 

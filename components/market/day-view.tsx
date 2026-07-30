@@ -8,6 +8,7 @@ import { WeeklySectorPanel } from "./weekly-sector-panel";
 import { AutoRefresh } from "./auto-refresh";
 import { AiBriefing } from "./ai-briefing";
 import { aggregateSectors } from "@/lib/sector-aggregation";
+import { applyThemes } from "@/lib/theme-lookup";
 import { rankMostMentioned } from "@/lib/mention-ranking";
 import { prevWeekKey, nextWeekKey, type WeekInfo } from "@/lib/week";
 import { todayISO } from "@/lib/dates";
@@ -23,7 +24,7 @@ const weekNavBtnStyle: React.CSSProperties = {
   borderRadius: 8,
 };
 
-export function DayView({
+export async function DayView({
   date,
   volumeEntries,
   gainerEntries,
@@ -38,12 +39,14 @@ export function DayView({
   weekEntries: DailyEntry[];
   watchlist: Watchlist[];
 }) {
-  const combined = weekEntries.map((e) => ({
-    name: e.name,
-    code: e.code,
-    sector: e.sector,
-    changePct: e.changePct,
-  }));
+  const combined = await applyThemes(
+    weekEntries.map((e) => ({
+      name: e.name,
+      code: e.code,
+      sector: e.sector,
+      changePct: e.changePct,
+    }))
+  );
   const agg = aggregateSectors(combined);
   const mentions = rankMostMentioned(weekEntries, 50);
 

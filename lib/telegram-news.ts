@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { extractThemes } from "@/lib/theme-extraction";
 
 const URL_RE = /https?:\/\/\S+/;
 
@@ -43,22 +44,38 @@ export async function saveTelegramMessage(update: TelegramUpdate): Promise<void>
   const link = extractLink(text);
   if (!link) return;
 
-  await prisma.telegramNews.upsert({
-    where: {
-      chatId_messageId: {
+  // create (not upsert) so a Telegram retry of an already-stored message is
+  // distinguishable from a genuinely new one — theme extraction below is an
+  // LLM call and should only ever run once per message.
+  let created;
+  try {
+    created = await prisma.telegramNews.create({
+      data: {
         chatId: String(message.chat.id),
         messageId: message.message_id,
+        text,
+        link,
+        sourceName: extractSourceName(message),
       },
-    },
-    create: {
-      chatId: String(message.chat.id),
-      messageId: message.message_id,
-      text,
-      link,
-      sourceName: extractSourceName(message),
-    },
-    update: {},
-  });
+    });
+  } catch {
+    return;
+  }
+
+  try {
+    const themes = await extractThemes(created.text);
+    const source = created.text.split("\n")[0].slice(0, 200);
+    for (const t of themes) {
+      await prisma.stockTheme.upsert({
+        where: { name: t.name },
+        create: { name: t.name, theme: t.theme, source },
+        update: { theme: t.theme, source },
+      });
+    }
+  } catch {
+    // Theme extraction is best-effort — a failure here shouldn't undo the
+    // fact that the article itself was already saved successfully above.
+  }
 }
 
 export async function getRecentTelegramNews(limit = 10) {
