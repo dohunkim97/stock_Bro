@@ -1,6 +1,9 @@
-import { getDayEntries } from "@/lib/market-data";
+import { getDayEntries, getEntriesInRange } from "@/lib/market-data";
 import { aggregateSectors } from "@/lib/sector-aggregation";
+import { rankMostMentioned } from "@/lib/mention-ranking";
 import { formatChg } from "@/lib/format";
+import { currentWeekKey, weekInfoFromKey } from "@/lib/week";
+import { getRecentTelegramNews } from "@/lib/telegram-news";
 import { prisma } from "@/lib/prisma";
 
 async function marketDataBlock(): Promise<string> {
@@ -56,22 +59,61 @@ async function marketDataBlock(): Promise<string> {
   return lines.join("\n");
 }
 
-const STOCK_DETAIL_BLOCK = [
-  "[한미반도체(042700) 상세 — 종목 상세 화면에서 항상 표시되는 샘플 데이터]",
-  "시총 14.4조(코스닥 3위), PER 62.3, PBR 12.1. 매출(억) 23년 1,590 → 24년 2,861 → 25E 5,500. " +
-    "영업이익 311→785→1,870. 부채비율 31→28→25%. 매출비중 HBM 본더(TC본더) 65%, 비전플레이스먼트 20%, " +
-    "기타장비 15%. 경쟁사 ASMPT/BESI/원익IPS. 리스크: 고객사 편중, 환율, 높은 밸류에이션.",
-].join("\n");
+async function weeklyTrendBlock(): Promise<string> {
+  const weekInfo = weekInfoFromKey(currentWeekKey());
+  const weekEntries = await getEntriesInRange(weekInfo.startISO, weekInfo.endISO);
+  if (weekEntries.length === 0) return "";
+
+  const agg = aggregateSectors(
+    weekEntries.map((e) => ({ name: e.name, code: e.code, sector: e.sector, changePct: e.changePct }))
+  );
+  const mentions = rankMostMentioned(weekEntries, 8);
+
+  const lines = [`[이번 주 흐름 · ${weekInfo.label}]`];
+  if (agg.hasData) {
+    lines.push(`이번 주 주도 섹터=${agg.hotSector} (랭킹 등장 ${agg.totalCount}건 중 ${agg.hotSectorCount}건).`);
+  }
+  if (mentions.length) {
+    lines.push(
+      "가장 많이 언급된 종목: " +
+        mentions
+          .map((m) => `${m.name}(${m.count}회, 평균 ${formatChg(m.avgChangePct)})`)
+          .join(", ") +
+        "."
+    );
+  }
+  return lines.join("\n");
+}
+
+async function telegramBlock(): Promise<string> {
+  const items = await getRecentTelegramNews(8);
+  if (items.length === 0) return "";
+
+  const lines = ["[텔레그램으로 전달받은 최근 기사]"];
+  for (const it of items) {
+    const d = it.createdAt;
+    const dateLabel = `${d.getMonth() + 1}.${d.getDate()}`;
+    const firstLine = it.text.split("\n")[0].trim();
+    lines.push(`- (${dateLabel}${it.sourceName ? `, ${it.sourceName}` : ""}) ${firstLine}`);
+  }
+  return lines.join("\n");
+}
 
 export async function buildSystemPrompt(): Promise<string> {
-  const marketBlock = await marketDataBlock();
+  const [marketBlock, weeklyBlock, tgBlock] = await Promise.all([
+    marketDataBlock(),
+    weeklyTrendBlock(),
+    telegramBlock(),
+  ]);
+
   return [
     '너는 "Bro"라는 이름의 개인 투자 AI 조력자야. 사용자의 친한 형/친구처럼 편하게 반말로, 짧고 명확하게 대답해. 이모지는 아주 가끔만.',
     '항상 아래 데이터에 근거해서 답하고, 데이터에 없으면 일반 지식으로 답하되 추정임을 밝혀. 투자 권유가 아니라 판단을 돕는 정보 제공이라는 점을 자연스럽게 지켜. 숫자는 원/조/억/% 단위로 한국식으로.',
+    "텔레그램 기사는 사용자가 직접 전달해준 제보야 — 출처가 불확실할 수 있으니 그대로 사실처럼 단정짓지 말고 '~라는 기사가 있었어' 식으로 참고 정보로 다뤄.",
     "답변은 3~5문장 이내로 간결하게. 음성으로도 읽히니 표/마크다운 기호는 쓰지 마.",
     "",
     marketBlock,
-    "",
-    STOCK_DETAIL_BLOCK,
+    ...(weeklyBlock ? ["", weeklyBlock] : []),
+    ...(tgBlock ? ["", tgBlock] : []),
   ].join("\n");
 }
