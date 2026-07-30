@@ -6,7 +6,10 @@ import { currentWeekKey, weekInfoFromKey } from "@/lib/week";
 import { getRecentTelegramNews } from "@/lib/telegram-news";
 import { prisma } from "@/lib/prisma";
 
-async function marketDataBlock(): Promise<string> {
+// Exported so lib/market-briefing.ts (the daily cron-generated AI summary)
+// can build the exact same market/telegram context Bro's chat sees, without
+// duplicating the query + formatting logic.
+export async function marketDataBlock(): Promise<string> {
   const latest = await prisma.dailyEntry.findFirst({
     orderBy: { date: "desc" },
   });
@@ -59,7 +62,7 @@ async function marketDataBlock(): Promise<string> {
   return lines.join("\n");
 }
 
-async function weeklyTrendBlock(): Promise<string> {
+export async function weeklyTrendBlock(): Promise<string> {
   const weekInfo = weekInfoFromKey(currentWeekKey());
   const weekEntries = await getEntriesInRange(weekInfo.startISO, weekInfo.endISO);
   if (weekEntries.length === 0) return "";
@@ -85,7 +88,7 @@ async function weeklyTrendBlock(): Promise<string> {
   return lines.join("\n");
 }
 
-async function telegramBlock(): Promise<string> {
+export async function telegramBlock(): Promise<string> {
   const items = await getRecentTelegramNews(8);
   if (items.length === 0) return "";
 

@@ -6,6 +6,7 @@ import { WatchlistNews } from "./watchlist-news";
 import { TelegramNewsPanel } from "./telegram-news";
 import { WeeklySectorPanel } from "./weekly-sector-panel";
 import { AutoRefresh } from "./auto-refresh";
+import { AiBriefing } from "./ai-briefing";
 import { aggregateSectors } from "@/lib/sector-aggregation";
 import { rankMostMentioned } from "@/lib/mention-ranking";
 import { prevWeekKey, nextWeekKey, type WeekInfo } from "@/lib/week";
@@ -53,6 +54,8 @@ export function DayView({
         <KrxSyncButton date={date} />
         <ExcelUploadButton date={date} />
       </div>
+
+      <AiBriefing date={date} />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
         <StockTable
@@ -149,36 +152,6 @@ export function DayView({
             </div>
 
             <WeeklySectorPanel agg={agg} mentions={mentions} />
-
-            <div
-              style={{
-                marginTop: 20,
-                padding: "14px 16px",
-                background: "var(--panel)",
-                border: "1px solid var(--border)",
-                borderRadius: 10,
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <span style={{ fontWeight: 700, fontSize: 13 }}>이 섹터가 강세였던 이유</span>
-                <span
-                  style={{
-                    fontFamily: "var(--mono)",
-                    fontSize: 10,
-                    color: "var(--down)",
-                    border: "1px solid var(--down)",
-                    padding: "1px 6px",
-                    borderRadius: 5,
-                  }}
-                >
-                  AI 분석 연동 예정
-                </span>
-              </div>
-              <div style={{ fontSize: 13, color: "var(--faint)" }}>
-                Bro AI가 연동되면 {weekInfo.label}에 {agg.hotSector} 섹터가 강세였던 이유를 자동으로
-                요약해줄 예정이에요.
-              </div>
-            </div>
           </>
         )}
       </section>
