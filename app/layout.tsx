@@ -4,7 +4,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { Header } from "@/components/header";
 
 export const metadata: Metadata = {
-  title: "시선.주식",
+  title: "Golden Goodes",
   description: "주식 시장 분석 대시보드",
 };
 

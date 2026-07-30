@@ -34,7 +34,7 @@ export function ReportView({
               fontSize: 12,
             }}
           >
-            B
+            G
           </div>
           <span
             style={{

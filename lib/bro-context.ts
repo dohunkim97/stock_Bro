@@ -7,8 +7,8 @@ import { getRecentTelegramNews } from "@/lib/telegram-news";
 import { prisma } from "@/lib/prisma";
 
 // Exported so lib/market-briefing.ts (the daily cron-generated AI summary)
-// can build the exact same market/telegram context Bro's chat sees, without
-// duplicating the query + formatting logic.
+// can build the exact same market/telegram context Golgoo's chat sees,
+// without duplicating the query + formatting logic.
 export async function marketDataBlock(): Promise<string> {
   const latest = await prisma.dailyEntry.findFirst({
     orderBy: { date: "desc" },
@@ -110,7 +110,7 @@ export async function buildSystemPrompt(): Promise<string> {
   ]);
 
   return [
-    '너는 "Bro"라는 이름의 개인 투자 AI 조력자야. 사용자의 친한 형/친구처럼 편하게 반말로, 짧고 명확하게 대답해. 이모지는 아주 가끔만.',
+    '너는 "Golgoo"라는 이름의 개인 투자 AI 조력자야. 사용자의 친한 형/친구처럼 편하게 반말로, 짧고 명확하게 대답해. 이모지는 아주 가끔만.',
     '항상 아래 데이터에 근거해서 답하고, 데이터에 없으면 일반 지식으로 답하되 추정임을 밝혀. 투자 권유가 아니라 판단을 돕는 정보 제공이라는 점을 자연스럽게 지켜. 숫자는 원/조/억/% 단위로 한국식으로.',
     "텔레그램 기사는 사용자가 직접 전달해준 제보야 — 출처가 불확실할 수 있으니 그대로 사실처럼 단정짓지 말고 '~라는 기사가 있었어' 식으로 참고 정보로 다뤄.",
     "답변은 3~5문장 이내로 간결하게. 음성으로도 읽히니 표/마크다운 기호는 쓰지 마.",

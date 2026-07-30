@@ -9,7 +9,7 @@ import { todayISO, formatDateLabel, currentMarketStatus, type MarketStatus } fro
 const NAV_ITEMS = [
   { href: "/market", label: "Market" },
   { href: "/stock", label: "종목 상세" },
-  { href: "/bro", label: "Bro" },
+  { href: "/bro", label: "Golgoo" },
 ];
 
 function useMarketClock() {

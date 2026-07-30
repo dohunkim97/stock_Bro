@@ -1,6 +1,6 @@
 // 네이버 검색(뉴스) API — https://developers.naver.com/docs/serviceapi/search/news/news.md
 // Real headlines/links for a stock name search. No summarization/"why it
-// moved" analysis — that still needs an LLM (Bro AI key isn't set up yet),
+// moved" analysis — that still needs an LLM (see lib/bro-context.ts / Golgoo),
 // so this is real linked news, not a fabricated explanation.
 
 const NEWS_URL = "https://openapi.naver.com/v1/search/news.json";

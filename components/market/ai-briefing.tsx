@@ -57,7 +57,7 @@ export async function AiBriefing({ date }: { date: string }) {
             fontSize: 12,
           }}
         >
-          B
+          G
         </div>
         <span
           style={{
@@ -68,7 +68,7 @@ export async function AiBriefing({ date }: { date: string }) {
             textTransform: "uppercase",
           }}
         >
-          Bro AI · {date} 시장 브리핑
+          Golgoo AI · {date} 시장 브리핑
         </span>
       </div>
       <p style={{ margin: "0 0 18px", fontSize: 14.5, lineHeight: 1.75, color: "var(--text)", maxWidth: 900 }}>

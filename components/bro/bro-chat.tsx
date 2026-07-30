@@ -28,7 +28,7 @@ type WindowWithSpeech = Window &
 
 const SUGGESTIONS = [
   "오늘 주목 섹터 3줄 요약",
-  "한미반도체 지금 사도 될까?",
+  "어느 섹터를 사야할까?",
   "PER 62배가 무슨 뜻이야?",
   "반도체 말고 볼 섹터는?",
 ];
@@ -37,7 +37,7 @@ export function BroChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
-      text: "안녕, 나 Bro야 👊 오늘 네가 입력한 종목이랑 시장 흐름 다 보고 있어. 궁금한 거 편하게 물어봐 — 🎙 버튼 누르면 말로 대화도 돼.",
+      text: "안녕, 나 Golgoo야 👊 오늘 네가 입력한 종목이랑 시장 흐름 다 보고 있어. 궁금한 거 편하게 물어봐 — 🎙 버튼 누르면 말로 대화도 돼.",
     },
   ]);
   const [sending, setSending] = useState(false);
@@ -174,11 +174,11 @@ export function BroChat() {
               fontSize: 14,
             }}
           >
-            B
+            G
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 700, fontSize: 14.5 }}>
-              Bro{" "}
+              Golgoo{" "}
               <span
                 style={{
                   fontFamily: "var(--mono)",
@@ -334,7 +334,7 @@ export function BroChat() {
                 send();
               }
             }}
-            placeholder="Bro에게 물어보거나 🎙 버튼으로 말해보세요"
+            placeholder="Golgoo에게 물어보거나 🎙 버튼으로 말해보세요"
             style={{
               flex: 1,
               background: "var(--bg)",
