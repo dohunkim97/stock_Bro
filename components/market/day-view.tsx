@@ -26,6 +26,7 @@ const weekNavBtnStyle: React.CSSProperties = {
 
 export async function DayView({
   date,
+  briefingSlot,
   volumeEntries,
   gainerEntries,
   weekInfo,
@@ -33,6 +34,7 @@ export async function DayView({
   watchlist,
 }: {
   date: string;
+  briefingSlot?: string;
   volumeEntries: DailyEntry[];
   gainerEntries: DailyEntry[];
   weekInfo: WeekInfo;
@@ -58,7 +60,7 @@ export async function DayView({
         <ExcelUploadButton date={date} />
       </div>
 
-      <AiBriefing date={date} />
+      <AiBriefing date={date} slot={briefingSlot} />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
         <StockTable

@@ -2,11 +2,19 @@
   "crons": [
     {
       "path": "/api/cron/sync-market",
-      "schedule": "0 7 * * 1-5"
+      "schedule": "33 6 * * 1-5"
     },
     {
-      "path": "/api/cron/daily-briefing",
-      "schedule": "5 7 * * 1-5"
+      "path": "/api/cron/daily-briefing?slot=morning",
+      "schedule": "0 22 * * 0-4"
+    },
+    {
+      "path": "/api/cron/daily-briefing?slot=midday",
+      "schedule": "30 3 * * 1-5"
+    },
+    {
+      "path": "/api/cron/daily-briefing?slot=close",
+      "schedule": "40 6 * * 1-5"
     }
   ]
 }

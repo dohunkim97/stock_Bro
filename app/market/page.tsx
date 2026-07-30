@@ -10,7 +10,7 @@ import { weekReport, monthReport } from "@/lib/reports-data";
 export default async function MarketPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; date?: string; sectorWeek?: string }>;
+  searchParams: Promise<{ period?: string; date?: string; sectorWeek?: string; briefingSlot?: string }>;
 }) {
   const params = await searchParams;
   const period = params.period === "week" || params.period === "month" ? params.period : "day";
@@ -22,7 +22,7 @@ export default async function MarketPage({
       <PeriodDateNav period={period} date={date} sectorWeek={sectorWeek} />
 
       {period === "day" ? (
-        <DayViewLoader date={date} sectorWeek={sectorWeek} />
+        <DayViewLoader date={date} sectorWeek={sectorWeek} briefingSlot={params.briefingSlot} />
       ) : (
         <ReportView
           report={period === "month" ? monthReport : weekReport}
@@ -33,7 +33,15 @@ export default async function MarketPage({
   );
 }
 
-async function DayViewLoader({ date, sectorWeek }: { date: string; sectorWeek: string }) {
+async function DayViewLoader({
+  date,
+  sectorWeek,
+  briefingSlot,
+}: {
+  date: string;
+  sectorWeek: string;
+  briefingSlot?: string;
+}) {
   const weekInfo = weekInfoFromKey(sectorWeek);
   const [{ volume, gainer }, weekEntries, watchlist] = await Promise.all([
     getDayEntries(date),
@@ -43,6 +51,7 @@ async function DayViewLoader({ date, sectorWeek }: { date: string; sectorWeek: s
   return (
     <DayView
       date={date}
+      briefingSlot={briefingSlot}
       volumeEntries={volume}
       gainerEntries={gainer}
       weekInfo={weekInfo}

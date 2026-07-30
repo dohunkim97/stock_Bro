@@ -84,3 +84,13 @@ export async function getRecentTelegramNews(limit = 10) {
     take: limit,
   });
 }
+
+// Used by the briefing pipeline (lib/market-briefing.ts) to pull only what's
+// new since the previous slot's cutoff, rather than an arbitrary "latest N".
+export async function getTelegramNewsSince(since: Date, limit = 30) {
+  return prisma.telegramNews.findMany({
+    where: { createdAt: { gte: since } },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
+}
