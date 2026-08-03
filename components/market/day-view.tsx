@@ -1,7 +1,5 @@
 import Link from "next/link";
 import { StockTable } from "./stock-table";
-import { ExcelUploadButton } from "./excel-upload-button";
-import { KrxSyncButton } from "./krx-sync-button";
 import { WatchlistNews } from "./watchlist-news";
 import { TelegramNewsPanel } from "./telegram-news";
 import { WeeklySectorPanel } from "./weekly-sector-panel";
@@ -55,10 +53,6 @@ export async function DayView({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       {date === todayISO() && <AutoRefresh />}
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-        <KrxSyncButton date={date} />
-        <ExcelUploadButton date={date} />
-      </div>
 
       <AiBriefing date={date} slot={briefingSlot} contributors={agg.contributors} />
 
