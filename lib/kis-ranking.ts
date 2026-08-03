@@ -205,14 +205,14 @@ async function enrichWithKisQuote(rows: KisRankRow[]): Promise<void> {
   }
 }
 
-export async function fetchKisMarketRanking(): Promise<{ gainer: KisRankRow[]; volume: KisRankRow[] } | null> {
-  const appKey = process.env.KIS_APP_KEY;
-  const appSecret = process.env.KIS_APP_SECRET;
-  if (!appKey || !appSecret) return null;
+type BaseRankings = {
+  kospiGainer: KisRankRow[];
+  kosdaqGainer: KisRankRow[];
+  kospiVolume: KisRankRow[];
+  kosdaqVolume: KisRankRow[];
+};
 
-  const token = await getKisAccessToken();
-  if (!token) return null;
-
+async function fetchBaseRankings(appKey: string, appSecret: string, token: string): Promise<BaseRankings | null> {
   // Run these one at a time rather than all four at once — production
   // showed an entire market (코스닥) silently dropping out when fired
   // concurrently, consistent with a per-second rate limit on these
@@ -222,11 +222,53 @@ export async function fetchKisMarketRanking(): Promise<{ gainer: KisRankRow[]; v
   const kospiVolume = await fetchVolumeRanking("0001", "코스피", appKey, appSecret, token);
   const kosdaqVolume = await fetchVolumeRanking("1001", "코스닥", appKey, appSecret, token);
 
-  const gainer = [...kospiGainer, ...kosdaqGainer];
-  const volume = [...kospiVolume, ...kosdaqVolume];
-  if (gainer.length === 0 && volume.length === 0) return null;
+  if (kospiGainer.length === 0 && kosdaqGainer.length === 0 && kospiVolume.length === 0 && kosdaqVolume.length === 0) {
+    return null;
+  }
+  return { kospiGainer, kosdaqGainer, kospiVolume, kosdaqVolume };
+}
 
+export async function fetchKisMarketRanking(): Promise<{ gainer: KisRankRow[]; volume: KisRankRow[] } | null> {
+  const appKey = process.env.KIS_APP_KEY;
+  const appSecret = process.env.KIS_APP_SECRET;
+  if (!appKey || !appSecret) return null;
+
+  const token = await getKisAccessToken();
+  if (!token) return null;
+
+  const base = await fetchBaseRankings(appKey, appSecret, token);
+  if (!base) return null;
+
+  const gainer = [...base.kospiGainer, ...base.kosdaqGainer];
+  const volume = [...base.kospiVolume, ...base.kosdaqVolume];
   await enrichWithKisQuote([...gainer, ...volume]);
-
   return { gainer, volume };
+}
+
+// A cheap, unenriched version of the above — used by the midday/close AI
+// briefings (lib/market-briefing.ts) to reference the market's actual
+// current state even when the last DB sync is hours old. Skips
+// enrichWithKisQuote (the ~80s per-stock throttled quote loop that full
+// sync needs for sector data) since the briefing prompt only needs
+// price/변동률/거래량, not a sector breakdown, from this live check-in.
+// topN is taken per-market (not from the blind concatenation) — otherwise
+// a small topN would silently drop KOSDAQ entirely, since KOSPI's rows
+// always come first in the combined list.
+export async function fetchKisLiveSnapshot(
+  topN = 10
+): Promise<{ gainer: KisRankRow[]; volume: KisRankRow[] } | null> {
+  const appKey = process.env.KIS_APP_KEY;
+  const appSecret = process.env.KIS_APP_SECRET;
+  if (!appKey || !appSecret) return null;
+
+  const token = await getKisAccessToken();
+  if (!token) return null;
+
+  const base = await fetchBaseRankings(appKey, appSecret, token);
+  if (!base) return null;
+
+  return {
+    gainer: [...base.kospiGainer.slice(0, topN), ...base.kosdaqGainer.slice(0, topN)],
+    volume: [...base.kospiVolume.slice(0, topN), ...base.kosdaqVolume.slice(0, topN)],
+  };
 }

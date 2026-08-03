@@ -2,6 +2,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/prisma";
 import { marketDataBlock, weeklyTrendBlock } from "@/lib/bro-context";
 import { getTelegramNewsSince } from "@/lib/telegram-news";
+import { fetchKisLiveSnapshot, type KisRankRow } from "@/lib/kis-ranking";
+import { fetchKisNewsForCodes, type KisNewsItem } from "@/lib/kis-news";
+import { formatChg } from "@/lib/format";
 
 export type BriefingSlot = "morning" | "midday" | "close";
 export const BRIEFING_SLOTS: BriefingSlot[] = ["morning", "midday", "close"];
@@ -15,14 +18,15 @@ const SLOT_INSTRUCTION: Record<BriefingSlot, string> = {
   morning:
     "지금은 장 시작 전 아침이야. 전일 마감 이후 들어온 텔레그램 제보를 중심으로, 오늘 장이 열리면 주목할 만한 포인트를 정리해줘.",
   midday:
-    "지금은 장중 중간 시점이야. 오늘 모닝 브리핑 이후 새로 들어온 텔레그램 제보를 중심으로 그 사이 뭐가 바뀌었는지 정리해줘.",
+    "지금은 장중 중간 시점이야. 실시간 랭킹과 한투 종합 시황/공시, 오늘 모닝 브리핑 이후 들어온 텔레그램 제보를 종합해서 그 사이 뭐가 바뀌었는지 정리해줘.",
   close:
-    "지금은 장마감 이후야. 전일 마감부터 오늘 마감까지 하루 전체 흐름과 그 사이 들어온 텔레그램 제보를 종합해서 오늘 하루를 정리해줘.",
+    "지금은 장마감 이후야. 전일 마감부터 오늘 마감까지 하루 전체 흐름 — 실시간 랭킹, 한투 종합 시황/공시, 그 사이 들어온 텔레그램 제보까지 종합해서 오늘 하루를 정리해줘.",
 };
 
 const SYSTEM_PROMPT_BASE = [
   "너는 한국 주식시장을 하루 세 번(모닝/중간/장마감) 정리하는 애널리스트야.",
-  "아래 데이터만 근거로 판단해. 데이터에 없는 건 추측하지 말고, 텔레그램 기사는 출처가 불확실한 제보로만 취급해.",
+  "아래 데이터만 근거로 판단해. 데이터에 없는 건 추측하지 마.",
+  "'한투(KIS) 종합 시황/공시'는 실제 뉴스 통신사(연합뉴스, 이데일리 등)가 작성한 정식 기사 제목이야 — 근거로 그대로 인용해도 돼. 반면 '텔레그램으로 전달받은 기사'는 사용자가 직접 전달해준 제보라 출처 검증이 안 됐으니, 사실처럼 단정짓지 말고 '~라는 제보가 있었어' 식으로 다뤄.",
   "투자 권유가 아니라 판단을 돕는 분석이라는 점을 유지해. 다른 설명 없이 아래 JSON 형식으로만 답해:",
   '{"summary": "이번 브리핑의 핵심을 3-4문장으로 — 왜 이런 흐름인지 근거 포함", "sectorNote": "지금 가장 주목되는 섹터·테마가 왜 강한지/약한지 2-3문장", "candidates": "앞으로 관심 가질 만한 종목·섹터 2-3개와 근거, 확정적 추천이 아니라 관찰 포인트로"}',
 ];
@@ -63,6 +67,60 @@ async function windowStart(slot: BriefingSlot, date: string, now: Date): Promise
   return new Date(now.getTime() - 24 * 60 * 60 * 1000);
 }
 
+const LIVE_TOP_N = 8;
+const NEWS_CODE_COUNT = 8;
+
+function formatLiveSnapshotBlock(snapshot: { gainer: KisRankRow[]; volume: KisRankRow[] } | null): string {
+  if (!snapshot) return "";
+  const lines = ["[지금 이 순간 실시간 랭킹 (한투 KIS)]"];
+  if (snapshot.gainer.length) {
+    lines.push(
+      "실시간 급상승: " +
+        snapshot.gainer
+          .slice(0, LIVE_TOP_N)
+          .map((r) => `${r.name} ${formatChg(r.changePct)}`)
+          .join(", ") +
+        "."
+    );
+  }
+  if (snapshot.volume.length) {
+    lines.push(
+      "실시간 거래량 상위: " +
+        snapshot.volume
+          .slice(0, LIVE_TOP_N)
+          .map((r) => `${r.name}(${r.code}) ${formatChg(r.changePct)}`)
+          .join(", ") +
+        "."
+    );
+  }
+  return lines.join("\n");
+}
+
+// The day's most notable movers right now — used to scope which stocks get
+// a KIS news-title lookup (that endpoint is only useful per-code, see
+// lib/kis-news.ts), not to display directly.
+function pickTopCodes(snapshot: { gainer: KisRankRow[]; volume: KisRankRow[] } | null, n: number): string[] {
+  if (!snapshot) return [];
+  const byCode = new Map<string, KisRankRow>();
+  for (const r of [...snapshot.gainer, ...snapshot.volume]) {
+    if (!byCode.has(r.code)) byCode.set(r.code, r);
+  }
+  return [...byCode.values()]
+    .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct))
+    .slice(0, n)
+    .map((r) => r.code);
+}
+
+function formatKisNewsBlock(items: KisNewsItem[]): string {
+  if (items.length === 0) return "";
+  const lines = ["[한투(KIS) 종합 시황/공시 — 오늘 주요 변동 종목 관련]"];
+  for (const it of items) {
+    const time = it.time.length === 6 ? `${it.time.slice(0, 2)}:${it.time.slice(2, 4)}` : it.time;
+    lines.push(`- (${time}${it.source ? `, ${it.source}` : ""}${it.stockName ? `, ${it.stockName}` : ""}) ${it.title}`);
+  }
+  return lines.join("\n");
+}
+
 function formatTelegramBlock(items: Awaited<ReturnType<typeof getTelegramNewsSince>>): string {
   if (items.length === 0) return "[이 구간에 전달된 텔레그램 기사 없음]";
   const lines = ["[이 브리핑 구간에 전달된 텔레그램 기사]"];
@@ -82,14 +140,30 @@ export async function generateBriefing(slot: BriefingSlot, date: string): Promis
 
   const now = new Date();
   const since = await windowStart(slot, date, now);
+  const wantsLiveData = slot === "midday" || slot === "close";
 
-  const [marketBlock, weeklyBlock, tgItems] = await Promise.all([
+  const [marketBlock, weeklyBlock, tgItems, liveSnapshot] = await Promise.all([
     marketDataBlock(),
     weeklyTrendBlock(),
     getTelegramNewsSince(since, 30),
+    wantsLiveData ? fetchKisLiveSnapshot(LIVE_TOP_N) : Promise.resolve(null),
   ]);
 
-  const userPrompt = [marketBlock, weeklyBlock, formatTelegramBlock(tgItems)].filter(Boolean).join("\n\n");
+  // KIS's news-title endpoint is only meaningful scoped to a specific code
+  // (verified empirically — blank returns generic newswire, not market
+  // commentary), so this runs after the snapshot, not in the Promise.all
+  // above, since it depends on which codes the snapshot surfaced.
+  const kisNews = wantsLiveData ? await fetchKisNewsForCodes(pickTopCodes(liveSnapshot, NEWS_CODE_COUNT)) : [];
+
+  const userPrompt = [
+    marketBlock,
+    weeklyBlock,
+    formatLiveSnapshotBlock(liveSnapshot),
+    formatKisNewsBlock(kisNews),
+    formatTelegramBlock(tgItems),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const systemPrompt = [...SYSTEM_PROMPT_BASE, SLOT_INSTRUCTION[slot]].join("\n");
 
   const client = new Anthropic();
