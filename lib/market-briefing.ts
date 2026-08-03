@@ -27,11 +27,17 @@ const SYSTEM_PROMPT_BASE = [
   "너는 한국 주식시장을 하루 세 번(모닝/중간/장마감) 정리하는 애널리스트야.",
   "아래 데이터만 근거로 판단해. 데이터에 없는 건 추측하지 마.",
   "'한투(KIS) 종합 시황/공시'는 실제 뉴스 통신사(연합뉴스, 이데일리 등)가 작성한 정식 기사 제목이야 — 근거로 그대로 인용해도 돼. 반면 '텔레그램으로 전달받은 기사'는 사용자가 직접 전달해준 제보라 출처 검증이 안 됐으니, 사실처럼 단정짓지 말고 '~라는 제보가 있었어' 식으로 다뤄.",
-  "투자 권유가 아니라 판단을 돕는 분석이라는 점을 유지해. 다른 설명 없이 아래 JSON 형식으로만 답해:",
-  '{"summary": "이번 브리핑의 핵심을 3-4문장으로 — 왜 이런 흐름인지 근거 포함", "sectorNote": "지금 가장 주목되는 섹터·테마가 왜 강한지/약한지 2-3문장", "candidates": "앞으로 관심 가질 만한 종목·섹터 2-3개와 근거, 확정적 추천이 아니라 관찰 포인트로"}',
+  "투자 권유가 아니라 판단을 돕는 분석이라는 점을 유지해.",
+  "sectorNote와 candidates는 한눈에 훑어볼 수 있게 짧고 구조화된 항목으로 써 — 긴 문단으로 풀어쓰지 마. 각 항목의 reason/note는 한 문장, 길어도 두 문장 이내로.",
+  "다른 설명 없이 아래 JSON 형식으로만 답해:",
+  '{"summary": "이번 브리핑의 핵심을 3-4문장으로 — 왜 이런 흐름인지 근거 포함", ' +
+    '"sectorNote": {"theme": "지금 가장 주목되는 섹터·테마명 (예: 전기·전자, 로봇 테마)", "note": "왜 강한지/약한지 한 문장, 길어도 두 문장"}, ' +
+    '"candidates": [{"name": "종목명 또는 테마명", "reason": "관찰 근거 한 문장, 길어도 두 문장"}] (배열, 2~3개, 확정적 추천이 아니라 관찰 포인트로)}',
 ];
 
-type BriefingJson = { summary: string; sectorNote?: string; candidates?: string };
+type SectorNoteJson = { theme?: string; note: string };
+type CandidateItem = { name?: string; reason: string };
+type BriefingJson = { summary: string; sectorNote?: SectorNoteJson; candidates?: CandidateItem[] };
 
 function parseBriefing(text: string): BriefingJson | null {
   const match = text.match(/\{[\s\S]*\}/);
@@ -39,7 +45,23 @@ function parseBriefing(text: string): BriefingJson | null {
   try {
     const parsed = JSON.parse(match[0]);
     if (typeof parsed.summary !== "string" || !parsed.summary.trim()) return null;
-    return parsed;
+
+    let sectorNote: SectorNoteJson | undefined;
+    if (parsed.sectorNote && typeof parsed.sectorNote === "object" && typeof parsed.sectorNote.note === "string") {
+      sectorNote = {
+        theme: typeof parsed.sectorNote.theme === "string" ? parsed.sectorNote.theme : undefined,
+        note: parsed.sectorNote.note,
+      };
+    }
+
+    let candidates: CandidateItem[] | undefined;
+    if (Array.isArray(parsed.candidates)) {
+      candidates = parsed.candidates
+        .filter((c: unknown): c is CandidateItem => !!c && typeof c === "object" && typeof (c as CandidateItem).reason === "string")
+        .map((c: CandidateItem) => ({ name: typeof c.name === "string" ? c.name : undefined, reason: c.reason }));
+    }
+
+    return { summary: parsed.summary, sectorNote, candidates };
   } catch {
     return null;
   }
@@ -169,7 +191,15 @@ export async function generateBriefing(slot: BriefingSlot, date: string): Promis
   const client = new Anthropic();
   const response = await client.messages.create({
     model: "claude-sonnet-5",
-    max_tokens: 1500,
+    // Sonnet 5 runs adaptive thinking by default, and its token spend counts
+    // against max_tokens same as visible output — a real request here spent
+    // 1002 tokens thinking and got cut off mid-JSON with the old 1500 cap.
+    // This task is straightforward synthesis of the data already handed to
+    // it, not multi-step reasoning, so low effort curbs that without
+    // disabling thinking outright (which has its own failure modes). Kept
+    // max_tokens well above what low-effort thinking + this JSON shape needs.
+    max_tokens: 2500,
+    output_config: { effort: "low" },
     system: systemPrompt,
     messages: [{ role: "user", content: userPrompt }],
   });
@@ -182,10 +212,17 @@ export async function generateBriefing(slot: BriefingSlot, date: string): Promis
   const parsed = parseBriefing(text);
   if (!parsed) return;
 
+  // sectorNote/candidates are stored as JSON text in what are still plain
+  // String columns — parsed back out in components/market/ai-briefing.tsx,
+  // which also falls back to treating older rows as plain text if JSON.parse
+  // fails (they predate this structured format).
+  const sectorNote = parsed.sectorNote ? JSON.stringify(parsed.sectorNote) : undefined;
+  const candidates = parsed.candidates ? JSON.stringify(parsed.candidates) : undefined;
+
   await prisma.marketBriefing.upsert({
     where: { date_slot: { date, slot } },
-    create: { date, slot, summary: parsed.summary, sectorNote: parsed.sectorNote, candidates: parsed.candidates },
-    update: { summary: parsed.summary, sectorNote: parsed.sectorNote, candidates: parsed.candidates },
+    create: { date, slot, summary: parsed.summary, sectorNote, candidates },
+    update: { summary: parsed.summary, sectorNote, candidates },
   });
 }
 
@@ -195,4 +232,31 @@ export async function getBriefing(date: string, slot: BriefingSlot) {
 
 export async function getBriefingSlotsForDate(date: string) {
   return prisma.marketBriefing.findMany({ where: { date }, orderBy: { createdAt: "asc" } });
+}
+
+// sectorNote/candidates are JSON-encoded text in the DB (see generateBriefing)
+// but older rows predate that and stored plain prose — these parse either,
+// falling back to treating the raw string as a single legacy block.
+export function parseSectorNote(raw: string | null): SectorNoteJson | null {
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw);
+    if (p && typeof p.note === "string") return { theme: typeof p.theme === "string" ? p.theme : undefined, note: p.note };
+  } catch {
+    // legacy plain-text row
+  }
+  return { note: raw };
+}
+
+export function parseCandidates(raw: string | null): CandidateItem[] {
+  if (!raw) return [];
+  try {
+    const p = JSON.parse(raw);
+    if (Array.isArray(p)) {
+      return p.filter((c): c is CandidateItem => !!c && typeof c.reason === "string");
+    }
+  } catch {
+    // legacy plain-text row
+  }
+  return [{ reason: raw }];
 }

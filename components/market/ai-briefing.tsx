@@ -1,5 +1,12 @@
 import Link from "next/link";
-import { getBriefingSlotsForDate, BRIEFING_SLOTS, SLOT_TITLE, type BriefingSlot } from "@/lib/market-briefing";
+import {
+  getBriefingSlotsForDate,
+  parseSectorNote,
+  parseCandidates,
+  BRIEFING_SLOTS,
+  SLOT_TITLE,
+  type BriefingSlot,
+} from "@/lib/market-briefing";
 import { todayISO } from "@/lib/dates";
 
 const noteBoxStyle: React.CSSProperties = {
@@ -7,6 +14,32 @@ const noteBoxStyle: React.CSSProperties = {
   background: "var(--panel)",
   border: "1px solid var(--border)",
   borderRadius: 10,
+};
+
+const themeBadgeStyle: React.CSSProperties = {
+  display: "inline-block",
+  background: "var(--accent-soft)",
+  color: "var(--accent)",
+  fontSize: 12,
+  fontWeight: 700,
+  padding: "3px 9px",
+  borderRadius: 6,
+  marginBottom: 8,
+};
+
+const candidateNumStyle: React.CSSProperties = {
+  flexShrink: 0,
+  width: 18,
+  height: 18,
+  borderRadius: "50%",
+  background: "var(--accent-soft)",
+  color: "var(--accent)",
+  fontSize: 10.5,
+  fontWeight: 800,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  marginTop: 1,
 };
 
 function tabStyle(active: boolean): React.CSSProperties {
@@ -110,18 +143,38 @@ export async function AiBriefing({ date, slot }: { date: string; slot?: string }
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        {active.sectorNote && (
-          <div style={noteBoxStyle}>
-            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>지금 이 섹터·테마가 주목되는 이유</div>
-            <div style={{ fontSize: 13, color: "var(--faint)", lineHeight: 1.6 }}>{active.sectorNote}</div>
-          </div>
-        )}
-        {active.candidates && (
-          <div style={noteBoxStyle}>
-            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>다음 관찰 포인트</div>
-            <div style={{ fontSize: 13, color: "var(--faint)", lineHeight: 1.6 }}>{active.candidates}</div>
-          </div>
-        )}
+        {(() => {
+          const note = parseSectorNote(active.sectorNote);
+          if (!note) return null;
+          return (
+            <div style={noteBoxStyle}>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>지금 이 섹터·테마가 주목되는 이유</div>
+              {note.theme && <span style={themeBadgeStyle}>{note.theme}</span>}
+              <div style={{ fontSize: 13, color: "var(--faint)", lineHeight: 1.6 }}>{note.note}</div>
+            </div>
+          );
+        })()}
+
+        {(() => {
+          const items = parseCandidates(active.candidates);
+          if (items.length === 0) return null;
+          return (
+            <div style={noteBoxStyle}>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>다음 관찰 포인트</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                {items.map((it, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                    <span style={candidateNumStyle}>{i + 1}</span>
+                    <div style={{ fontSize: 13, lineHeight: 1.55 }}>
+                      {it.name && <span style={{ fontWeight: 700, marginRight: 5 }}>{it.name}</span>}
+                      <span style={{ color: "var(--faint)" }}>{it.reason}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </section>
   );
