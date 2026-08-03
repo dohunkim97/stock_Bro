@@ -8,6 +8,8 @@ import {
   type BriefingSlot,
 } from "@/lib/market-briefing";
 import { todayISO } from "@/lib/dates";
+import { SectorContributors } from "./sector-contributors";
+import type { SectorEntry } from "@/lib/sector-aggregation";
 
 const noteBoxStyle: React.CSSProperties = {
   padding: "14px 16px",
@@ -54,7 +56,15 @@ function tabStyle(active: boolean): React.CSSProperties {
   };
 }
 
-export async function AiBriefing({ date, slot }: { date: string; slot?: string }) {
+export async function AiBriefing({
+  date,
+  slot,
+  contributors = [],
+}: {
+  date: string;
+  slot?: string;
+  contributors?: SectorEntry[];
+}) {
   const rows = await getBriefingSlotsForDate(date);
 
   if (rows.length === 0) {
@@ -150,7 +160,8 @@ export async function AiBriefing({ date, slot }: { date: string; slot?: string }
             <div style={noteBoxStyle}>
               <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>지금 이 섹터·테마가 주목되는 이유</div>
               {note.theme && <span style={themeBadgeStyle}>{note.theme}</span>}
-              <div style={{ fontSize: 13, color: "var(--faint)", lineHeight: 1.6 }}>{note.note}</div>
+              <div style={{ fontSize: 13.5, color: "var(--text)", lineHeight: 1.65 }}>{note.note}</div>
+              <SectorContributors contributors={contributors} sectorLabel={note.theme ?? "관련 종목"} />
             </div>
           );
         })()}
@@ -165,9 +176,9 @@ export async function AiBriefing({ date, slot }: { date: string; slot?: string }
                 {items.map((it, i) => (
                   <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                     <span style={candidateNumStyle}>{i + 1}</span>
-                    <div style={{ fontSize: 13, lineHeight: 1.55 }}>
+                    <div style={{ fontSize: 13.5, lineHeight: 1.55 }}>
                       {it.name && <span style={{ fontWeight: 700, marginRight: 5 }}>{it.name}</span>}
-                      <span style={{ color: "var(--faint)" }}>{it.reason}</span>
+                      <span style={{ color: "var(--text)" }}>{it.reason}</span>
                     </div>
                   </div>
                 ))}

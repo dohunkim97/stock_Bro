@@ -60,7 +60,7 @@ export async function DayView({
         <ExcelUploadButton date={date} />
       </div>
 
-      <AiBriefing date={date} slot={briefingSlot} />
+      <AiBriefing date={date} slot={briefingSlot} contributors={agg.contributors} />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
         <StockTable
