@@ -52,6 +52,7 @@ model DailyEntry {
   reserveRatio  String?
   industry      String?
   revenue       String?
+  issue         String?
   createdAt DateTime @default(now())
 
   @@index([date, listType])

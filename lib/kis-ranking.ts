@@ -11,6 +11,7 @@
 
 import { getKisAccessToken } from "@/lib/kis-token";
 import { fetchKisQuote } from "@/lib/kis-quote";
+import { fetchKisNewsForCodes } from "@/lib/kis-news";
 import { isPreferredStock } from "@/lib/stock-filters";
 
 const FLUCTUATION_URL = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/ranking/fluctuation";
@@ -30,6 +31,7 @@ export type KisRankRow = {
   marketCap: number;
   sharesOutstanding: number;
   sector?: string;
+  issue?: string;
 };
 
 async function kisRankingGet(
@@ -178,6 +180,13 @@ async function fetchVolumeRanking(
 // classification (전기·전자/화학/건설/제약 등) — broad, but always populated,
 // unlike the data.go.kr financial-enrichment path which frequently comes
 // back blank and falls through to "기타".
+//
+// Also pulls a real KIS news headline per code (fetchKisNewsForCodes — the
+// same 종합 시황/공시 endpoint the AI briefings use) so each day's ranking
+// tables can show *why* a stock moved, not just that it did. This rides
+// inside the same per-code batch as the quote lookup (Promise.all of both
+// per code, not a second sequential pass) so it adds latency roughly equal
+// to whichever of the two calls is slower per code, not their sum.
 async function enrichWithKisQuote(rows: KisRankRow[]): Promise<void> {
   const byCode = new Map<string, KisRankRow[]>();
   for (const r of rows) {
@@ -192,13 +201,18 @@ async function enrichWithKisQuote(rows: KisRankRow[]): Promise<void> {
     const batch = codes.slice(i, i + BACKFILL_CONCURRENCY);
     await Promise.all(
       batch.map(async (code) => {
-        const q = await fetchKisQuote(code);
-        if (!q) return;
-        for (const r of byCode.get(code) ?? []) {
-          r.sector = q.sector;
-          if (!r.sharesOutstanding) r.sharesOutstanding = q.sharesOutstanding;
-          if (!r.marketCap) r.marketCap = q.marketCap;
-          if (!r.tradingValue) r.tradingValue = q.tradingValue;
+        const [q, news] = await Promise.all([fetchKisQuote(code), fetchKisNewsForCodes([code])]);
+        const targets = byCode.get(code) ?? [];
+        if (q) {
+          for (const r of targets) {
+            r.sector = q.sector;
+            if (!r.sharesOutstanding) r.sharesOutstanding = q.sharesOutstanding;
+            if (!r.marketCap) r.marketCap = q.marketCap;
+            if (!r.tradingValue) r.tradingValue = q.tradingValue;
+          }
+        }
+        if (news[0]) {
+          for (const r of targets) r.issue = news[0].title;
         }
       })
     );

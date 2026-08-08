@@ -21,6 +21,7 @@ type RawKrxRow = {
   marketCap: number;
   sharesOutstanding: number;
   sector?: string;
+  issue?: string;
 };
 
 function formatShares(value: number): string {
@@ -124,6 +125,10 @@ function toUploadRows(rows: RawKrxRow[], ratios: Map<string, FinancialRatios>): 
       // financial-enrichment path's more granular KSIC name (fin?.industry),
       // which is best-effort and frequently blank, falling back to "기타".
       sector: r.sector ?? fin?.industry,
+      // Only ever set on the KIS live path (tryKisRankingForToday) — the
+      // data.go.kr backfill path for past dates has no per-stock news
+      // lookup, so older/backfilled entries just show no issue line.
+      issue: r.issue,
     };
   });
 }

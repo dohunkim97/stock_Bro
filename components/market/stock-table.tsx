@@ -48,55 +48,76 @@ function Row({ s, cols, expanded }: { s: DailyEntry; cols: string; expanded: boo
       className="hover-row"
       onClick={clickable ? () => router.push(`/stock?code=${s.code}`) : undefined}
       style={{
-        display: "grid",
-        gridTemplateColumns: cols,
-        gap: 0,
-        padding: "12px 18px",
-        alignItems: "center",
         borderBottom: "1px solid var(--border)",
-        fontSize: 13.5,
         cursor: clickable ? "pointer" : "default",
       }}
     >
-      <span style={{ fontFamily: "var(--mono)", color: "var(--faint)", fontSize: 12 }}>{s.rank}</span>
-      <span>
-        <span style={{ fontWeight: 600 }}>{s.name}</span>{" "}
-        <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)", marginLeft: 5 }}>
-          {s.code ?? "-"}
-        </span>
-      </span>
-      <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontWeight: 500 }}>{s.price}</span>
-      <span
+      <div
         style={{
-          textAlign: "right",
-          fontFamily: "var(--mono)",
-          fontWeight: 600,
-          color: chgColorVar(s.changePct),
+          display: "grid",
+          gridTemplateColumns: cols,
+          gap: 0,
+          padding: s.issue ? "12px 18px 4px" : "12px 18px",
+          alignItems: "center",
+          fontSize: 13.5,
         }}
       >
-        {formatChg(s.changePct)}
-      </span>
-      <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12, color: "var(--dim)" }}>
-        {s.volume ?? "-"}
-      </span>
-      <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12, color: "var(--dim)" }}>
-        {s.tradingValue ?? "-"}
-      </span>
-      {expanded && (
-        <>
-          <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12, color: "var(--dim)" }}>
-            {s.marketCap ?? "-"}
+        <span style={{ fontFamily: "var(--mono)", color: "var(--faint)", fontSize: 12 }}>{s.rank}</span>
+        <span>
+          <span style={{ fontWeight: 600 }}>{s.name}</span>{" "}
+          <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)", marginLeft: 5 }}>
+            {s.code ?? "-"}
           </span>
-          <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.per ?? "-"}</span>
-          <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.pbr ?? "-"}</span>
-          <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.roe ?? "-"}</span>
-          <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.debtRatio ?? "-"}</span>
-          <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.reserveRatio ?? "-"}</span>
-        </>
+        </span>
+        <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontWeight: 500 }}>{s.price}</span>
+        <span
+          style={{
+            textAlign: "right",
+            fontFamily: "var(--mono)",
+            fontWeight: 600,
+            color: chgColorVar(s.changePct),
+          }}
+        >
+          {formatChg(s.changePct)}
+        </span>
+        <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12, color: "var(--dim)" }}>
+          {s.volume ?? "-"}
+        </span>
+        <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12, color: "var(--dim)" }}>
+          {s.tradingValue ?? "-"}
+        </span>
+        {expanded && (
+          <>
+            <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12, color: "var(--dim)" }}>
+              {s.marketCap ?? "-"}
+            </span>
+            <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.per ?? "-"}</span>
+            <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.pbr ?? "-"}</span>
+            <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.roe ?? "-"}</span>
+            <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.debtRatio ?? "-"}</span>
+            <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.reserveRatio ?? "-"}</span>
+          </>
+        )}
+        <span onClick={(e) => e.stopPropagation()}>
+          <DeleteEntryButton id={s.id} />
+        </span>
+      </div>
+      {s.issue && (
+        <div
+          style={{
+            padding: "0 18px 12px",
+            fontSize: 12,
+            color: "var(--dim)",
+            lineHeight: 1.4,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={s.issue}
+        >
+          📰 {s.issue}
+        </div>
       )}
-      <span onClick={(e) => e.stopPropagation()}>
-        <DeleteEntryButton id={s.id} />
-      </span>
     </div>
   );
 }
