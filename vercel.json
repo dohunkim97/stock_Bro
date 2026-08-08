@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/daily-briefing?slot=close",
       "schedule": "40 6 * * 1-5"
+    },
+    {
+      "path": "/api/cron/weekly-prediction",
+      "schedule": "10 7 * * 5"
     }
   ]
 }

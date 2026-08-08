@@ -3,8 +3,14 @@ import { aggregateSectors } from "@/lib/sector-aggregation";
 import { applyThemes } from "@/lib/theme-lookup";
 import { rankMostMentioned } from "@/lib/mention-ranking";
 import { formatChg } from "@/lib/format";
-import { currentWeekKey, weekInfoFromKey } from "@/lib/week";
+import { currentWeekKey, prevWeekKey, weekInfoFromKey } from "@/lib/week";
 import { getRecentTelegramNews } from "@/lib/telegram-news";
+import {
+  getLatestPrediction,
+  getScoredPredictionHistory,
+  parsePredictionSectors,
+  parsePredictionCandidates,
+} from "@/lib/prediction-scoring";
 import { prisma } from "@/lib/prisma";
 
 // Exported so lib/market-briefing.ts (the daily cron-generated AI summary)
@@ -93,6 +99,92 @@ export async function weeklyTrendBlock(): Promise<string> {
   return lines.join("\n");
 }
 
+// "이전에 상승했던 이력" — this week plus the few weeks before it, so a
+// forward-looking question ("다음주 뭐가 강할까") has real week-over-week
+// momentum to reason from, not just a single week's snapshot. Exported for
+// lib/weekly-prediction.ts, which needs the same history.
+export async function recentWeeksHistoryBlock(weeksBack = 4): Promise<string> {
+  const lines: string[] = [`[최근 ${weeksBack}주 섹터·언급 흐름 — 최신 주부터]`];
+  let key = currentWeekKey();
+  let any = false;
+
+  for (let i = 0; i < weeksBack; i++) {
+    const info = weekInfoFromKey(key);
+    const entries = await getEntriesInRange(info.startISO, info.endISO);
+    if (entries.length > 0) {
+      any = true;
+      const agg = aggregateSectors(
+        await applyThemes(
+          entries.map((e) => ({ name: e.name, code: e.code, sector: e.sector, changePct: e.changePct }))
+        )
+      );
+      const mentions = rankMostMentioned(entries, 5);
+      lines.push(
+        `${info.label}: 주도 섹터=${agg.hotSector ?? "-"}` +
+          (mentions.length
+            ? `, 많이 언급된 종목=${mentions.map((m) => `${m.name}(${m.count}회,${formatChg(m.avgChangePct)})`).join(", ")}`
+            : "")
+      );
+    }
+    key = prevWeekKey(key);
+  }
+
+  return any ? lines.join("\n") : "";
+}
+
+// "새로운 이슈" — real per-stock news headlines already captured during
+// daily sync (DailyEntry.issue, see lib/kis-ranking.ts), independent of
+// whatever's currently in the day/week rollups above. Deduped by stock
+// name since the same headline often shows up on both the gainer and
+// volume lists for a stock.
+export async function recentIssuesBlock(limit = 20): Promise<string> {
+  const rows = await prisma.dailyEntry.findMany({
+    where: { issue: { not: null } },
+    orderBy: { createdAt: "desc" },
+    take: limit * 2,
+  });
+  const seen = new Set<string>();
+  const deduped = rows.filter((r) => (seen.has(r.name) ? false : (seen.add(r.name), true))).slice(0, limit);
+  if (deduped.length === 0) return "";
+
+  const lines = ["[최근 종목별 실제 뉴스 이슈]"];
+  for (const r of deduped) lines.push(`- ${r.name}: ${r.issue}`);
+  return lines.join("\n");
+}
+
+// The standing "다음 주 뭐가 강할까" answer (generated weekly, see
+// lib/weekly-prediction.ts) plus how its past calls actually turned out —
+// so "다음주 어떤 섹터가 강할까?" has a real, already-reasoned answer to
+// draw on instead of improvising from scratch each time, and the track
+// record keeps the answer honest about how reliable it's actually been.
+export async function predictionBlock(): Promise<string> {
+  const [latest, history] = await Promise.all([getLatestPrediction(), getScoredPredictionHistory(4)]);
+  if (!latest) return "";
+
+  const sectors = parsePredictionSectors(latest.sectors);
+  const candidates = parsePredictionCandidates(latest.candidates);
+  const info = weekInfoFromKey(latest.forWeekKey);
+
+  const lines = [`[Golgoo의 다음 주 예측 · ${info.label} 대상]`, latest.summary];
+  if (sectors.length) {
+    lines.push("예측 섹터: " + sectors.map((s) => `${s.name}(${s.reasoning})`).join(" / "));
+  }
+  if (candidates.length) {
+    lines.push("예측 종목: " + candidates.map((c) => `${c.name}(${c.reasoning})`).join(" / "));
+  }
+
+  if (history.length) {
+    lines.push("", "[과거 예측 적중 이력]");
+    for (const h of history) {
+      const sectorPct = h.sectorHitRate !== null ? `${Math.round(h.sectorHitRate * 100)}%` : "-";
+      const candPct = h.candidateHitRate !== null ? `${Math.round(h.candidateHitRate * 100)}%` : "-";
+      lines.push(`${h.label}: 섹터 적중 ${sectorPct}, 종목 적중 ${candPct}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
 export async function telegramBlock(): Promise<string> {
   const items = await getRecentTelegramNews(8);
   if (items.length === 0) return "";
@@ -108,9 +200,12 @@ export async function telegramBlock(): Promise<string> {
 }
 
 export async function buildSystemPrompt(): Promise<string> {
-  const [marketBlock, weeklyBlock, tgBlock] = await Promise.all([
+  const [marketBlock, weeklyBlock, historyBlock, issuesBlock, predBlock, tgBlock] = await Promise.all([
     marketDataBlock(),
     weeklyTrendBlock(),
+    recentWeeksHistoryBlock(3),
+    recentIssuesBlock(15),
+    predictionBlock(),
     telegramBlock(),
   ]);
 
@@ -118,10 +213,14 @@ export async function buildSystemPrompt(): Promise<string> {
     '너는 "Golgoo"라는 이름의 개인 투자 AI 조력자야. 사용자의 친한 형/친구처럼 편하게 반말로, 짧고 명확하게 대답해. 이모지는 아주 가끔만.',
     '항상 아래 데이터에 근거해서 답하고, 데이터에 없으면 일반 지식으로 답하되 추정임을 밝혀. 투자 권유가 아니라 판단을 돕는 정보 제공이라는 점을 자연스럽게 지켜. 숫자는 원/조/억/% 단위로 한국식으로.',
     "텔레그램 기사는 사용자가 직접 전달해준 제보야 — 출처가 불확실할 수 있으니 그대로 사실처럼 단정짓지 말고 '~라는 기사가 있었어' 식으로 참고 정보로 다뤄.",
+    "'다음주 어떤 섹터/종목이 강할까' 같은 질문을 받으면, 아래 [Golgoo의 다음 주 예측] 데이터가 있으면 그걸 기반으로 답하고 (그 예측을 만든 근거도 같이 설명해). 없으면 최근 몇 주 흐름 + 최근 이슈 + 텔레그램 제보를 종합해서 직접 판단해. 과거 예측 적중 이력이 있으면 '지난 예측은 몇 % 맞았어' 식으로 정직하게 같이 알려줘 — 감추지 마.",
     "답변은 3~5문장 이내로 간결하게. 음성으로도 읽히니 표/마크다운 기호는 쓰지 마.",
     "",
     marketBlock,
     ...(weeklyBlock ? ["", weeklyBlock] : []),
+    ...(historyBlock ? ["", historyBlock] : []),
+    ...(issuesBlock ? ["", issuesBlock] : []),
+    ...(predBlock ? ["", predBlock] : []),
     ...(tgBlock ? ["", tgBlock] : []),
   ].join("\n");
 }

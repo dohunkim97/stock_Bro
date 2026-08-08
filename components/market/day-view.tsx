@@ -5,6 +5,7 @@ import { TelegramNewsPanel } from "./telegram-news";
 import { WeeklySectorPanel } from "./weekly-sector-panel";
 import { AutoRefresh } from "./auto-refresh";
 import { AiBriefing } from "./ai-briefing";
+import { WeeklyPredictionPanel } from "./weekly-prediction-panel";
 import { aggregateSectors } from "@/lib/sector-aggregation";
 import { applyThemes } from "@/lib/theme-lookup";
 import { rankMostMentioned } from "@/lib/mention-ranking";
@@ -55,6 +56,8 @@ export async function DayView({
       {date === todayISO() && <AutoRefresh />}
 
       <AiBriefing date={date} slot={briefingSlot} contributors={agg.contributors} />
+
+      <WeeklyPredictionPanel />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
         <StockTable
