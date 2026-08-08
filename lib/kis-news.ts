@@ -3,6 +3,25 @@ import { getKisAccessToken } from "@/lib/kis-token";
 const NEWS_TITLE_URL = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/news-title";
 const PER_REQUEST_TIMEOUT_MS = 8000;
 
+// Corporate-action/regulatory notices and auto-generated exchange
+// statistics — technically tagged to the stock (some even legitimately as
+// iscd1, e.g. "today's top mover in this ranking"), but not an explanation
+// of why it moved. Two families: (1) corporate filings (전환사채, 소유주식수
+// 변동 등), (2) auto-generated ranking/roundup/technical-indicator wire
+// copy (~상위종목, 증시요약, VI 발동, 가격제한폭 등) — verified these leak
+// through the iscd1-primary-subject filter when the stock happens to be
+// that ranking's top entry.
+const NOISE_TITLE_PATTERN =
+  /조회공시|매매거래정지|불성실공시|투자주의|투자유의|투자경고|투자위험|관리종목|대차거래|공매도|대량보유|지분보고|전환사채|전환가액|만기전사채|신주인수권|주식소각|자기주식|최대주주\s*변경|주식병합|주식분할|액면분할|단기과열|소유주식수\s*변동|추가상장|상위\s*\d*\s*종목|갱신\s*상위|하락률\s*상위|상승률\s*상위|거래량\s*상위|거래대금\s*상위|거래량\s*(증가|급증|감소)|순매수\s*상위|순매도\s*상위|증시요약|기술적\s*분석|특징주\s*[A-Z★\*]|VI\s*발동|변동성완화장치|가격제한폭|프로그램\s*매매|외국계\s*순매[수도]|외국인\s*순매[수도]|오후장|오전장|정오\s*시황|마감\s*시황|장중\s*시황|시장\s*흐름|매수우위|매도우위|코스[피닥]\s*은|테마동향/;
+
+// A title listing several stocks with "+N.NN%"/"-N.NN%" next to each (e.g.
+// "삼아알미늄 +9.35%, 대양금속 +5.41%, 포스코엠텍 +5.02%...") is a ticker-tape
+// snippet, not an article about the one stock we filtered it in for.
+function isTickerTapeList(title: string): boolean {
+  const matches = title.match(/[+-]\d+(\.\d+)?%/g);
+  return !!matches && matches.length >= 2;
+}
+
 export type KisNewsItem = {
   title: string;
   date: string; // YYYYMMDD
@@ -57,6 +76,14 @@ async function fetchKisNewsTitleForCode(code: string, limit: number): Promise<Ki
     const rows: Record<string, unknown>[] = Array.isArray(output) ? output : output ? [output] : [];
 
     return rows
+      // KIS returns items where the queried code appears anywhere in
+      // iscd1-5, not just ones actually about it — a lot of what comes
+      // back is multi-stock roundup/ranking wire copy ("코스닥 하락률 상위
+      // 20종목") whose real subject (iscd1) is some other stock entirely.
+      // Requiring iscd1 to match keeps only articles primarily about this
+      // code — verified empirically (roundup titles consistently failed
+      // this check; genuine per-stock items consistently passed it).
+      .filter((o) => String(o.iscd1 ?? "").trim() === code)
       .map((o) => ({
         title: String(o.hts_pbnt_titl_cntt ?? "").trim(),
         date: String(o.data_dt ?? ""),
@@ -64,7 +91,7 @@ async function fetchKisNewsTitleForCode(code: string, limit: number): Promise<Ki
         source: String(o.dorg ?? "").trim() || undefined,
         stockName: String(o.kor_isnm1 ?? "").trim() || undefined,
       }))
-      .filter((n) => n.title)
+      .filter((n) => n.title && !NOISE_TITLE_PATTERN.test(n.title) && !isTickerTapeList(n.title))
       .slice(0, limit);
   } catch {
     return [];
