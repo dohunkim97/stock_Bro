@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { chgColorVar, chgArrow, formatChg } from "@/lib/format";
 import { StockPicker } from "@/components/stock/stock-picker";
+import { PriceChart } from "@/components/stock/price-chart";
 import { DetailSections } from "@/components/stock/detail-sections";
 import { WatchlistButton } from "@/components/stock/watchlist-button";
 import { isWatched } from "@/lib/watchlist";
@@ -155,6 +156,10 @@ export default async function StockPage({
             )}
           </div>
         </div>
+      </div>
+
+      <div style={{ marginBottom: 20 }}>
+        <PriceChart key={cur.code} code={cur.code} />
       </div>
 
       <DetailSections
