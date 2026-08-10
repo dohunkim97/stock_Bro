@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AddEntryForm } from "./add-entry-form";
-import { DeleteEntryButton } from "./delete-entry-button";
 import { Modal } from "@/components/ui/modal";
 import { chgColorVar, formatChg } from "@/lib/format";
 import { SORT_OPTIONS, sortEntries } from "@/lib/sort";
@@ -15,8 +14,8 @@ const MARKETS = ["코스피", "코스닥"] as const;
 
 const COLLAPSED_LABELS = ["#", "종목", "현재가", "등락률", "거래량", "거래대금"];
 const EXPANDED_LABELS = [...COLLAPSED_LABELS, "시가총액", "PER", "PBR", "ROE", "부채비율", "유보율"];
-const COLLAPSED_COLS = "26px 1fr 84px 76px 92px 100px 18px";
-const EXPANDED_COLS = "26px 1fr 84px 76px 92px 100px 84px 60px 60px 64px 76px 84px 18px";
+const COLLAPSED_COLS = "26px 1fr 84px 76px 92px 100px";
+const EXPANDED_COLS = "26px 1fr 84px 76px 92px 100px 84px 60px 60px 64px 76px 84px";
 
 const panelStyle: React.CSSProperties = {
   background: "var(--panel)",
@@ -98,9 +97,6 @@ function Row({ s, cols, expanded }: { s: DailyEntry; cols: string; expanded: boo
             <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12 }}>{s.reserveRatio ?? "-"}</span>
           </>
         )}
-        <span onClick={(e) => e.stopPropagation()}>
-          <DeleteEntryButton id={s.id} />
-        </span>
       </div>
       {s.issue && (
         <div
@@ -286,7 +282,6 @@ export function StockTable({
                 {l}
               </span>
             ))}
-            <span />
           </div>
 
           {visible.length === 0 && (
@@ -332,7 +327,6 @@ export function StockTable({
                   {l}
                 </span>
               ))}
-              <span />
             </div>
             {sorted.map((s) => (
               <Row key={s.id} s={s} cols={EXPANDED_COLS} expanded />

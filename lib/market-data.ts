@@ -154,18 +154,3 @@ export async function replaceDayEntries(
     ...(rows.length ? [prisma.dailyEntry.createMany({ data: rows })] : []),
   ]);
 }
-
-export async function deleteEntry(id: string) {
-  const entry = await prisma.dailyEntry.delete({ where: { id } });
-  const remaining = await prisma.dailyEntry.findMany({
-    where: { date: entry.date, listType: entry.listType },
-    orderBy: { rank: "asc" },
-  });
-  await Promise.all(
-    remaining.map((e, i) =>
-      e.rank === i + 1
-        ? Promise.resolve()
-        : prisma.dailyEntry.update({ where: { id: e.id }, data: { rank: i + 1 } })
-    )
-  );
-}
