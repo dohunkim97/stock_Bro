@@ -102,6 +102,57 @@ export async function addEntry(input: {
   });
 }
 
+// Registers every stock seen in a sync into StockMaster — without this,
+// only the ~30 curated seed stocks (plus whichever ones a user happened to
+// open individually, triggering lib/krx-quote.ts's live refresh) were ever
+// searchable from the stock detail picker, even though DailyEntry has been
+// tracking far more of them every day via automated sync. Best-effort: a
+// single row failing (e.g. a rare name/code collision) shouldn't break the
+// sync that's actually storing the ranking data.
+async function registerStocksInMaster(rows: UploadRow[]) {
+  const byCode = new Map<string, UploadRow>();
+  for (const r of rows) {
+    const code = r.code?.trim();
+    if (code) byCode.set(code, r); // later rows (gainer after volume) win on dupes, fine either way
+  }
+  if (byCode.size === 0) return;
+
+  await Promise.all(
+    [...byCode.values()].map((r) =>
+      prisma.stockMaster
+        .upsert({
+          where: { code: r.code!.trim() },
+          create: {
+            code: r.code!.trim(),
+            name: r.name.trim(),
+            market: r.market.trim() || "-",
+            sector: r.sector?.trim() || "기타",
+            price: r.price.trim(),
+            changePct: r.changePct,
+            marketCap: r.marketCap?.trim() || undefined,
+            per: r.per?.trim() || undefined,
+            pbr: r.pbr?.trim() || undefined,
+            roe: r.roe?.trim() || undefined,
+            debtRatio: r.debtRatio?.trim() || undefined,
+            revenue: r.revenue?.trim() || undefined,
+            industry: r.industry?.trim() || undefined,
+          },
+          // Keep price/changePct current on every sync, but don't touch the
+          // richer fields (per/pbr/roe/...) here — a live single-stock
+          // refresh (lib/krx-quote.ts) often knows those better than a daily
+          // ranking snapshot does, so this should never blank them out.
+          update: {
+            name: r.name.trim(),
+            market: r.market.trim() || undefined,
+            price: r.price.trim(),
+            changePct: r.changePct,
+          },
+        })
+        .catch(() => null)
+    )
+  );
+}
+
 // Replaces the day's entries wholesale from an uploaded spreadsheet — the
 // upload is treated as the authoritative record for that date, not a merge.
 //
@@ -153,4 +204,6 @@ export async function replaceDayEntries(
     prisma.dailyEntry.deleteMany({ where: { date } }),
     ...(rows.length ? [prisma.dailyEntry.createMany({ data: rows })] : []),
   ]);
+
+  await registerStocksInMaster([...volumeRows, ...gainerRows]);
 }
