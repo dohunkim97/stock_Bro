@@ -1,8 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/prisma";
 import { recentWeeksHistoryBlock, recentIssuesBlock, telegramBlock } from "@/lib/bro-context";
-import { getScoredPredictionHistory } from "@/lib/prediction-scoring";
+import { getScoredPredictionHistory, parsePredictionCandidates, type CandidatePrediction } from "@/lib/prediction-scoring";
 import { currentWeekKey, nextWeekKey } from "@/lib/week";
+import { fetchKisQuote } from "@/lib/kis-quote";
+import { resolveStock } from "@/lib/market-data";
 
 const SYSTEM_PROMPT = [
   "너는 한국 주식시장의 다음 주 흐름을 예상하는 애널리스트야.",
@@ -54,11 +56,27 @@ async function pastAccuracyBlock(): Promise<string> {
   return lines.join("\n");
 }
 
-// Runs once a week (Friday close, see app/api/cron/weekly-prediction) —
-// generates a prediction FOR the upcoming week (not the one ending today),
-// using this week's momentum, real per-stock news, Telegram tips, and its
-// own past accuracy as input. Upserts by forWeekKey so a retried cron run
-// just overwrites that week's prediction rather than duplicating it.
+// Snapshots today's live price as the baseline a candidate's "예상 시점 대비
+// 상승률" tracker measures from. Only ever called for a candidate the first
+// time it appears under a given forWeekKey — see the priorByName lookup in
+// generateWeeklyPrediction, which carries an existing baseline forward on
+// every later regeneration instead of re-snapshotting it.
+async function withBaseline(c: { name: string; reasoning: string; code?: string }): Promise<CandidatePrediction> {
+  let code = c.code;
+  if (!code) {
+    const resolved = await resolveStock(c.name);
+    code = resolved?.code;
+  }
+  const quote = code ? await fetchKisQuote(code) : null;
+  return { ...c, code, basePrice: quote?.price, firstSeenAt: new Date().toISOString() };
+}
+
+// Runs daily on weekdays (see app/api/cron/weekly-prediction), always
+// targeting the upcoming week (not the one ending today) so it keeps
+// refining the same forWeekKey row as fresh news/Telegram sources come in
+// through the week, rather than only writing once on Friday. Upserts by
+// forWeekKey so a retried cron run just overwrites that week's prediction
+// rather than duplicating it.
 export async function generateWeeklyPrediction(): Promise<void> {
   if (!process.env.ANTHROPIC_API_KEY) return;
 
@@ -92,12 +110,32 @@ export async function generateWeeklyPrediction(): Promise<void> {
   if (!parsed) return;
 
   const sectors = JSON.stringify(parsed.sectors.filter(isSectorLike));
-  const candidates = JSON.stringify(
-    parsed.candidates.filter(isSectorLike).map((c) => ({
-      ...c,
-      code: typeof (c as RawItem).code === "string" ? (c as RawItem).code : undefined,
-    }))
+
+  // Same-week regenerations should keep tracking each candidate's
+  // performance from when it was FIRST predicted, not reset to "0%" every
+  // time fresh sources trigger a rerun — so look up whatever baseline this
+  // forWeekKey already had and carry it forward by name.
+  const existing = await prisma.weeklyPrediction.findUnique({ where: { forWeekKey } });
+  const priorByName = new Map(
+    existing ? parsePredictionCandidates(existing.candidates).map((c) => [c.name, c] as const) : []
   );
+
+  const rawCandidates = parsed.candidates.filter(isSectorLike).map((c) => ({
+    name: c.name,
+    reasoning: c.reasoning,
+    code: typeof (c as RawItem).code === "string" ? ((c as RawItem).code as string) : undefined,
+  }));
+
+  const candidateList: CandidatePrediction[] = await Promise.all(
+    rawCandidates.map((c) => {
+      const prior = priorByName.get(c.name);
+      if (prior?.basePrice !== undefined) {
+        return Promise.resolve({ ...c, code: c.code ?? prior.code, basePrice: prior.basePrice, firstSeenAt: prior.firstSeenAt });
+      }
+      return withBaseline(c);
+    })
+  );
+  const candidates = JSON.stringify(candidateList);
 
   await prisma.weeklyPrediction.upsert({
     where: { forWeekKey },

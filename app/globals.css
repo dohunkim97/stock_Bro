@@ -101,3 +101,20 @@ input {
   border-color: var(--accent) !important;
   color: var(--text) !important;
 }
+
+/* Used by the clickable prediction-history <details> rows in
+   components/bro/prediction-panel.tsx — hides the default disclosure
+   triangle so the row can define its own open/closed indicator. */
+.no-marker summary {
+  list-style: none;
+}
+.no-marker summary::-webkit-details-marker {
+  display: none;
+}
+.no-marker .chevron {
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+.no-marker[open] .chevron {
+  transform: rotate(90deg);
+}

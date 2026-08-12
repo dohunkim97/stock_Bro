@@ -139,7 +139,7 @@ export function BroChat() {
   }
 
   return (
-    <main style={{ maxWidth: 820, margin: "0 auto", padding: "26px 24px 60px" }}>
+    <div>
       <section
         style={{
           background: "var(--panel)",
@@ -388,7 +388,7 @@ export function BroChat() {
           </button>
         ))}
       </div>
-    </main>
+    </div>
   );
 }
 

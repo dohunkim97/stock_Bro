@@ -3,9 +3,10 @@ import { generateWeeklyPrediction } from "@/lib/weekly-prediction";
 
 export const maxDuration = 60;
 
-// Fires once a week, Friday close (see vercel.json) — after the day's
-// close briefing/sync so this week's data is fully in before generating
-// a prediction FOR next week.
+// Fires daily on weekdays, after close (see vercel.json) — always targets
+// the upcoming week and upserts by forWeekKey, so this keeps refining the
+// SAME prediction as fresh sources (news issues, Telegram tips) accumulate
+// through the week, rather than only writing once on Friday.
 export async function GET(req: NextRequest) {
   const auth = req.headers.get("authorization");
   if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
