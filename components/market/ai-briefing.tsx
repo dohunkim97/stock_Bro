@@ -9,6 +9,7 @@ import {
 } from "@/lib/market-briefing";
 import { todayISO } from "@/lib/dates";
 import { SectorContributors } from "./sector-contributors";
+import { renderBold } from "@/components/ui/rich-text";
 import type { SectorEntry } from "@/lib/sector-aggregation";
 
 const noteBoxStyle: React.CSSProperties = {
@@ -149,7 +150,7 @@ export async function AiBriefing({
       </div>
 
       <p style={{ margin: "0 0 18px", fontSize: 14.5, lineHeight: 1.75, color: "var(--text)", maxWidth: 900 }}>
-        {active.summary}
+        {renderBold(active.summary)}
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -160,7 +161,7 @@ export async function AiBriefing({
             <div style={noteBoxStyle}>
               <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>지금 이 섹터·테마가 주목되는 이유</div>
               {note.theme && <span style={themeBadgeStyle}>{note.theme}</span>}
-              <div style={{ fontSize: 13.5, color: "var(--text)", lineHeight: 1.65 }}>{note.note}</div>
+              <div style={{ fontSize: 13.5, color: "var(--text)", lineHeight: 1.65 }}>{renderBold(note.note)}</div>
               <SectorContributors contributors={contributors} sectorLabel={note.theme ?? "관련 종목"} />
             </div>
           );
@@ -178,7 +179,7 @@ export async function AiBriefing({
                     <span style={candidateNumStyle}>{i + 1}</span>
                     <div style={{ fontSize: 13.5, lineHeight: 1.55 }}>
                       {it.name && <span style={{ fontWeight: 700, marginRight: 5 }}>{it.name}</span>}
-                      <span style={{ color: "var(--text)" }}>{it.reason}</span>
+                      <span style={{ color: "var(--text)" }}>{renderBold(it.reason)}</span>
                     </div>
                   </div>
                 ))}

@@ -6,6 +6,7 @@ import {
   parsePredictionCandidates,
 } from "@/lib/prediction-scoring";
 import { weekInfoFromKey } from "@/lib/week";
+import { renderBold } from "@/components/ui/rich-text";
 
 const panelStyle: React.CSSProperties = {
   background: "linear-gradient(135deg, var(--accent-soft), transparent 60%)",
@@ -69,7 +70,7 @@ export async function WeeklyPredictionPanel() {
       </div>
 
       <p style={{ margin: "0 0 18px", fontSize: 14.5, lineHeight: 1.75, color: "var(--text)", maxWidth: 900 }}>
-        {latest.summary}
+        {renderBold(latest.summary)}
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -80,7 +81,7 @@ export async function WeeklyPredictionPanel() {
               {sectors.map((s) => (
                 <div key={s.name} style={{ fontSize: 13, lineHeight: 1.55 }}>
                   <span style={{ fontWeight: 700, marginRight: 5 }}>{s.name}</span>
-                  <span style={{ color: "var(--text)" }}>{s.reasoning}</span>
+                  <span style={{ color: "var(--text)" }}>{renderBold(s.reasoning)}</span>
                 </div>
               ))}
             </div>
@@ -99,7 +100,7 @@ export async function WeeklyPredictionPanel() {
                   style={{ fontSize: 13, lineHeight: 1.55, display: "block" }}
                 >
                   <span style={{ fontWeight: 700, marginRight: 5 }}>{c.name}</span>
-                  <span style={{ color: "var(--text)" }}>{c.reasoning}</span>
+                  <span style={{ color: "var(--text)" }}>{renderBold(c.reasoning)}</span>
                 </Link>
               ))}
             </div>
