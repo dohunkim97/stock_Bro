@@ -75,12 +75,18 @@ export function PriceChart({ code }: { code: string }) {
         const textColor = cssVar("--dim", "#8a92a3");
         const borderColor = cssVar("--border2", "rgba(255,255,255,0.12)");
 
+        // lightweight-charts v5 doesn't default to the container's actual
+        // clientWidth on its own — without an explicit width or autoSize,
+        // it creates its canvases at 0 width (confirmed via a real headless
+        // render: canvases existed but measured 0px wide). autoSize wires up
+        // a ResizeObserver on the container so it fills the same 100%-width,
+        // 360px-tall box the outer div already reserves.
         const chart = createChart(containerRef.current, {
           layout: { background: { color: "transparent" }, textColor },
           grid: { vertLines: { color: borderColor }, horzLines: { color: borderColor } },
           timeScale: { borderColor, timeVisible: false },
           rightPriceScale: { borderColor },
-          height: 360,
+          autoSize: true,
         });
         chartRef.current = chart;
 
