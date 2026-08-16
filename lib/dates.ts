@@ -65,6 +65,18 @@ export function nextBusinessDay(iso: string): string {
   return toISO(d);
 }
 
+// The date /market should default to when no ?date= is in the URL — today
+// itself on a trading day, or the most recent completed trading day when
+// today is a weekend/holiday (there's no synced data for a day that hasn't
+// traded yet, so landing there would just show an empty page). The prev/next
+// arrows in the date nav already skip weekends via prevBusinessDay/
+// nextBusinessDay; this covers the one path that didn't — the initial
+// landing date.
+export function latestBusinessDay(): string {
+  const today = todayISO();
+  return isMarketClosed(fromISO(today)) ? prevBusinessDay(today) : today;
+}
+
 const MARKET_OPEN_MINUTES = 9 * 60; // 09:00
 const MARKET_CLOSE_MINUTES = 15 * 60 + 30; // 15:30
 

@@ -3,7 +3,7 @@ import { DayView } from "@/components/market/day-view";
 import { ReportView } from "@/components/market/report-view";
 import { getDayEntries, getEntriesInRange } from "@/lib/market-data";
 import { getWatchlist } from "@/lib/watchlist";
-import { todayISO } from "@/lib/dates";
+import { latestBusinessDay } from "@/lib/dates";
 import { currentWeekKey, weekInfoFromKey } from "@/lib/week";
 import { weekReport, monthReport } from "@/lib/reports-data";
 
@@ -14,7 +14,7 @@ export default async function MarketPage({
 }) {
   const params = await searchParams;
   const period = params.period === "week" || params.period === "month" ? params.period : "day";
-  const date = params.date || todayISO();
+  const date = params.date || latestBusinessDay();
   const sectorWeek = params.sectorWeek || currentWeekKey();
 
   return (
