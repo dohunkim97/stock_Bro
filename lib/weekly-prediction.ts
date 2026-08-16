@@ -14,7 +14,7 @@ const SYSTEM_PROMPT = [
   "과거 예측 적중 이력이 있다면 반드시 참고해 — 어떤 유형의 근거가 잘 맞았는지, 안 맞았는지를 이번 예측에 반영해.",
   "확정적 보장이 아니라 데이터에 근거한 관찰이라는 점을 유지해. 데이터에 없는 건 추측하지 마.",
   "다른 설명 없이 아래 JSON 형식으로만 답해:",
-  '{"summary": "다음 주 전망 핵심을 3-4문장으로", "sectors": [{"name": "섹터/테마명", "reasoning": "근거 한 문장"}] (2-3개), "candidates": [{"name": "종목명", "code": "종목코드(알면, 모르면 생략)", "reasoning": "근거 한 문장"}] (3-5개)}',
+  '{"summary": "다음 주 전망 핵심을 3-4문장으로", "sectors": [{"name": "섹터/테마명", "reasoning": "근거 한 문장"}] (2-3개), "candidates": [{"name": "정확한 종목명", "reasoning": "근거 한 문장"}] (3-5개)}',
 ].join("\n");
 
 type RawItem = Record<string, unknown>;
@@ -61,12 +61,19 @@ async function pastAccuracyBlock(): Promise<string> {
 // time it appears under a given forWeekKey — see the priorByName lookup in
 // generateWeeklyPrediction, which carries an existing baseline forward on
 // every later regeneration instead of re-snapshotting it.
-async function withBaseline(c: { name: string; reasoning: string; code?: string }): Promise<CandidatePrediction> {
-  let code = c.code;
-  if (!code) {
-    const resolved = await resolveStock(c.name);
-    code = resolved?.code;
-  }
+//
+// The code always comes from resolveStock(name) — our own DB, grounded in
+// real synced ranking data — never from whatever code the LLM itself might
+// output. Confirmed live that this matters: asked to self-report a code,
+// the model hallucinated one for "SK이터닉스" (a real code, just for a
+// completely different company) on one run and an invalid one on the next,
+// while resolveStock found the correct code every time. A wrong code isn't
+// just a missing feature — fetchKisQuote happily returns a real quote for
+// whatever stock that code actually belongs to, silently tracking the wrong
+// company's price under the right one's name.
+async function withBaseline(c: { name: string; reasoning: string }): Promise<CandidatePrediction> {
+  const resolved = await resolveStock(c.name);
+  const code = resolved?.code;
   const quote = code ? await fetchKisQuote(code) : null;
   return { ...c, code, basePrice: quote?.price, firstSeenAt: new Date().toISOString() };
 }
@@ -123,14 +130,13 @@ export async function generateWeeklyPrediction(): Promise<void> {
   const rawCandidates = parsed.candidates.filter(isSectorLike).map((c) => ({
     name: c.name,
     reasoning: c.reasoning,
-    code: typeof (c as RawItem).code === "string" ? ((c as RawItem).code as string) : undefined,
   }));
 
   const candidateList: CandidatePrediction[] = await Promise.all(
     rawCandidates.map((c) => {
       const prior = priorByName.get(c.name);
       if (prior?.basePrice !== undefined) {
-        return Promise.resolve({ ...c, code: c.code ?? prior.code, basePrice: prior.basePrice, firstSeenAt: prior.firstSeenAt });
+        return Promise.resolve({ ...c, code: prior.code, basePrice: prior.basePrice, firstSeenAt: prior.firstSeenAt });
       }
       return withBaseline(c);
     })

@@ -42,7 +42,9 @@ export function BroChat() {
   ]);
   const [sending, setSending] = useState(false);
   const [listening, setListening] = useState(false);
-  const [voiceOn, setVoiceOn] = useState(true);
+  // No visible toggle anymore (removed for a cleaner header) — replies are
+  // always read aloud, matching the always-on default this had before.
+  const voiceOn = true;
 
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -129,15 +131,6 @@ export function BroChat() {
     }
   }
 
-  function toggleVoice() {
-    if (voiceOn) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {}
-    }
-    setVoiceOn((v) => !v);
-  }
-
   return (
     <div>
       <section
@@ -176,45 +169,7 @@ export function BroChat() {
           >
             G
           </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: 14.5 }}>
-              Golgoo{" "}
-              <span
-                style={{
-                  fontFamily: "var(--mono)",
-                  fontSize: 10,
-                  color: "var(--dim)",
-                  fontWeight: 400,
-                  marginLeft: 4,
-                }}
-              >
-                투자 AI · 음성 대화
-              </span>
-            </div>
-            <div style={{ fontSize: 11, color: "var(--dim)" }}>
-              오늘 입력한 종목·시장 데이터를 기반으로 대화해요
-            </div>
-          </div>
-          <button
-            onClick={toggleVoice}
-            title="음성 답변 켜기/끄기"
-            style={{
-              border: "1px solid var(--border)",
-              background: voiceOn ? "var(--accent-soft)" : "var(--panel2)",
-              color: voiceOn ? "var(--accent)" : "var(--faint)",
-              cursor: "pointer",
-              height: 34,
-              padding: "0 12px",
-              borderRadius: 9,
-              fontSize: 12,
-              fontWeight: 600,
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            🔊 {voiceOn ? "음성 ON" : "음성 OFF"}
-          </button>
+          <div style={{ flex: 1, fontWeight: 700, fontSize: 14.5 }}>Golgoo</div>
         </div>
 
         <div

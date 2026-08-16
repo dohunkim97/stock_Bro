@@ -236,6 +236,39 @@ export async function getBriefingSlotsForDate(date: string) {
   return prisma.marketBriefing.findMany({ where: { date }, orderBy: { createdAt: "asc" } });
 }
 
+export type BriefingDay = {
+  date: string;
+  slots: Awaited<ReturnType<typeof getBriefingSlotsForDate>>;
+};
+
+// The "일간 리포트" archive on /bro — one entry per day that had at least
+// one briefing, most recent first, each carrying whichever of its
+// morning/중간/장마감 slots actually ran (a day rarely has all three if it's
+// still in progress, or predates one of the slots being added). No new LLM
+// synthesis here — just groups what's already stored so a day's three
+// briefings can be browsed together instead of one slot at a time.
+export async function getRecentBriefingDays(limit = 14): Promise<BriefingDay[]> {
+  const rows = await prisma.marketBriefing.findMany({
+    orderBy: { date: "desc" },
+    take: limit * BRIEFING_SLOTS.length,
+  });
+
+  const byDate = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const list = byDate.get(r.date);
+    if (list) list.push(r);
+    else byDate.set(r.date, [r]);
+  }
+
+  return [...byDate.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .slice(0, limit)
+    .map(([date, slots]) => ({
+      date,
+      slots: slots.sort((a, b) => BRIEFING_SLOTS.indexOf(a.slot as BriefingSlot) - BRIEFING_SLOTS.indexOf(b.slot as BriefingSlot)),
+    }));
+}
+
 // sectorNote/candidates are JSON-encoded text in the DB (see generateBriefing)
 // but older rows predate that and stored plain prose — these parse either,
 // falling back to treating the raw string as a single legacy block.

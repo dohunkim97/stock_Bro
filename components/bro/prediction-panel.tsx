@@ -173,7 +173,7 @@ export async function PredictionPanel() {
 
       {history.length > 0 && (
         <div>
-          <div style={sectionTitleStyle}>지난 예측 기록</div>
+          <div style={sectionTitleStyle}>🗄️ 기록보관소 · 예상리포트</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {history.map((h) => (
               <details key={h.forWeekKey} className="no-marker" style={{ ...boxStyle, padding: 0 }}>
