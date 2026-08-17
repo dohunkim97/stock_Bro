@@ -8,7 +8,7 @@ import { useId } from "react";
 // waits). A duck waddles across the ground and lays a golden egg partway
 // through, echoing the golden-egg mark in the header logo — decorative
 // only, exists so the wait feels alive instead of frozen.
-export function DuckLoader({ label = "불러오는 중…" }: { label?: string }) {
+export function DuckLoader({ label = "골구로 불러오는중..!" }: { label?: string }) {
   const eggGradId = useId();
 
   return (
