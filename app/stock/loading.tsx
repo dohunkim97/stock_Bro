@@ -38,7 +38,7 @@ export default function StockLoading() {
       </div>
 
       <div style={{ ...cardStyle, height: 360, marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <DuckLoader label="시세를 불러오는 중…" />
+        <DuckLoader />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>

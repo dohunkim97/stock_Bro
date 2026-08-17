@@ -16,7 +16,7 @@ export default function BroLoading() {
           justifyContent: "center",
         }}
       >
-        <DuckLoader label="골고루가 예측 종목을 불러오는 중…" />
+        <DuckLoader />
       </div>
     </main>
   );
