@@ -11,7 +11,7 @@ export function AddEntryForm({
   showVolumeField,
 }: {
   date: string;
-  listType: "volume" | "gainer";
+  listType: "volume" | "gainer" | "loser";
   accentVar: string;
   accentSoftVar: string;
   showVolumeField: boolean;
@@ -61,8 +61,8 @@ export function AddEntryForm({
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: 8,
-        padding: "14px 18px",
+        gap: 6,
+        padding: "9px 18px",
         background: "var(--panel2)",
       }}
     >
@@ -105,9 +105,9 @@ export function AddEntryForm({
             color: accentVar,
             border: `1px solid ${accentVar}`,
             borderRadius: 8,
-            padding: "9px 15px",
+            padding: "6px 13px",
             fontWeight: 700,
-            fontSize: 13,
+            fontSize: 12,
             cursor: pending ? "default" : "pointer",
             whiteSpace: "nowrap",
             opacity: pending ? 0.6 : 1,
@@ -128,8 +128,8 @@ const inputStyle: React.CSSProperties = {
   border: "1px solid var(--border)",
   color: "var(--text)",
   borderRadius: 8,
-  padding: "9px 12px",
+  padding: "6px 10px",
   fontFamily: "var(--sans)",
-  fontSize: 13,
+  fontSize: 12,
   outline: "none",
 };

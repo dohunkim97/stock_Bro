@@ -10,7 +10,7 @@ import { isPreferredStock } from "@/lib/stock-filters";
 const API_BASE =
   "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getStockPriceInfo";
 
-type RawKrxRow = {
+export type RawKrxRow = {
   name: string;
   code: string;
   market: string;
@@ -37,7 +37,7 @@ function normalizeMarket(raw: unknown): string {
   return String(raw ?? "");
 }
 
-async function fetchAllRows(basDt: string, serviceKey: string): Promise<Record<string, unknown>[]> {
+export async function fetchAllRows(basDt: string, serviceKey: string): Promise<Record<string, unknown>[]> {
   const rows: Record<string, unknown>[] = [];
   let pageNo = 1;
   const numOfRows = 1000;
@@ -73,7 +73,7 @@ async function fetchAllRows(basDt: string, serviceKey: string): Promise<Record<s
   return rows;
 }
 
-function parseRow(item: Record<string, unknown>): RawKrxRow | null {
+export function parseRow(item: Record<string, unknown>): RawKrxRow | null {
   const name = String(item.itmsNm ?? "").trim();
   const codeRaw = String(item.srtnCd ?? "").trim();
   const code = codeRaw.replace(/[^0-9]/g, "").slice(-6).padStart(6, "0");
@@ -98,6 +98,10 @@ function parseRow(item: Record<string, unknown>): RawKrxRow | null {
 
 function topN(rows: RawKrxRow[], by: (r: RawKrxRow) => number, n: number): RawKrxRow[] {
   return [...rows].sort((a, b) => by(b) - by(a)).slice(0, n);
+}
+
+function bottomN(rows: RawKrxRow[], by: (r: RawKrxRow) => number, n: number): RawKrxRow[] {
+  return [...rows].sort((a, b) => by(a) - by(b)).slice(0, n);
 }
 
 function toUploadRows(rows: RawKrxRow[], ratios: Map<string, FinancialRatios>): UploadRow[] {
@@ -139,7 +143,7 @@ function toUploadRows(rows: RawKrxRow[], ratios: Map<string, FinancialRatios>): 
 // and also the fallback if KIS is unavailable for any reason.
 async function tryKisRankingForToday(
   basDt: string
-): Promise<{ volume: UploadRow[]; gainer: UploadRow[]; rawCount: number } | null> {
+): Promise<{ volume: UploadRow[]; gainer: UploadRow[]; loser: UploadRow[]; rawCount: number } | null> {
   if (basDt !== toYYYYMMDD(todayISO())) return null;
 
   const ranking = await fetchKisMarketRanking();
@@ -148,9 +152,10 @@ async function tryKisRankingForToday(
   const SYNC_TOP_N = 30;
   const volumeTop = ranking.volume.slice(0, SYNC_TOP_N * 2);
   const gainerTop = ranking.gainer.slice(0, SYNC_TOP_N * 2);
+  const loserTop = ranking.loser.slice(0, SYNC_TOP_N * 2);
 
   const ratios = await fetchFinancialRatiosByCode(
-    [...volumeTop, ...gainerTop].map((r) => ({
+    [...volumeTop, ...gainerTop, ...loserTop].map((r) => ({
       code: r.code,
       price: r.price,
       sharesOutstanding: r.sharesOutstanding,
@@ -161,13 +166,14 @@ async function tryKisRankingForToday(
   return {
     volume: toUploadRows(volumeTop, ratios),
     gainer: toUploadRows(gainerTop, ratios),
-    rawCount: volumeTop.length + gainerTop.length,
+    loser: toUploadRows(loserTop, ratios),
+    rawCount: volumeTop.length + gainerTop.length + loserTop.length,
   };
 }
 
 export async function fetchKrxDayRanking(
   basDt: string
-): Promise<{ volume: UploadRow[]; gainer: UploadRow[]; rawCount: number }> {
+): Promise<{ volume: UploadRow[]; gainer: UploadRow[]; loser: UploadRow[]; rawCount: number }> {
   const live = await tryKisRankingForToday(basDt);
   if (live) return live;
 
@@ -193,6 +199,10 @@ export async function fetchKrxDayRanking(
     ...topN(kospi, (r) => r.changePct, SYNC_TOP_N),
     ...topN(kosdaq, (r) => r.changePct, SYNC_TOP_N),
   ];
+  const loserTop = [
+    ...bottomN(kospi, (r) => r.changePct, SYNC_TOP_N),
+    ...bottomN(kosdaq, (r) => r.changePct, SYNC_TOP_N),
+  ];
 
   // Financial ratios (PER/PBR/ROE/부채비율) are a best-effort enrichment on
   // top of the core ranking — if data.go.kr's financial APIs are slow, rate
@@ -200,7 +210,7 @@ export async function fetchKrxDayRanking(
   // rather than failing the whole sync. Budget is capped well under the
   // route's 60s maxDuration so there's always room left for the DB write.
   const ratios = await fetchFinancialRatiosByCode(
-    [...volumeTop, ...gainerTop].map((r) => ({
+    [...volumeTop, ...gainerTop, ...loserTop].map((r) => ({
       code: r.code,
       price: r.price,
       sharesOutstanding: r.sharesOutstanding,
@@ -211,6 +221,7 @@ export async function fetchKrxDayRanking(
   return {
     volume: toUploadRows(volumeTop, ratios),
     gainer: toUploadRows(gainerTop, ratios),
+    loser: toUploadRows(loserTop, ratios),
     rawCount: rows.length,
   };
 }

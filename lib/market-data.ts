@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { STORAGE_CAP } from "@/lib/constants";
 
-export type ListType = "volume" | "gainer";
+export type ListType = "volume" | "gainer" | "loser";
 export { STORAGE_CAP };
 
 export type UploadRow = {
@@ -37,7 +37,7 @@ export async function resolveStock(name: string) {
 }
 
 export async function getDayEntries(date: string) {
-  const [volume, gainer] = await Promise.all([
+  const [volume, gainer, loser] = await Promise.all([
     prisma.dailyEntry.findMany({
       where: { date, listType: "volume" },
       orderBy: { rank: "asc" },
@@ -46,8 +46,12 @@ export async function getDayEntries(date: string) {
       where: { date, listType: "gainer" },
       orderBy: { rank: "asc" },
     }),
+    prisma.dailyEntry.findMany({
+      where: { date, listType: "loser" },
+      orderBy: { rank: "asc" },
+    }),
   ]);
-  return { volume, gainer };
+  return { volume, gainer, loser };
 }
 
 // Falls back to the most recent ranking snapshot for a code that isn't in
@@ -161,11 +165,12 @@ async function registerStocksInMaster(rows: UploadRow[]) {
 // list, per-row lookups blow past Prisma's interactive-transaction timeout.
 export async function replaceDayEntries(
   date: string,
-  data: { volume: UploadRow[]; gainer: UploadRow[] }
+  data: { volume: UploadRow[]; gainer: UploadRow[]; loser: UploadRow[] }
 ) {
   const volumeRows = data.volume.slice(0, STORAGE_CAP);
   const gainerRows = data.gainer.slice(0, STORAGE_CAP);
-  const names = [...new Set([...volumeRows, ...gainerRows].map((r) => r.name.trim()))];
+  const loserRows = data.loser.slice(0, STORAGE_CAP);
+  const names = [...new Set([...volumeRows, ...gainerRows, ...loserRows].map((r) => r.name.trim()))];
   const stocks = names.length
     ? await prisma.stockMaster.findMany({ where: { name: { in: names } } })
     : [];
@@ -198,12 +203,16 @@ export async function replaceDayEntries(
       };
     });
 
-  const rows = [...build(volumeRows, "volume"), ...build(gainerRows, "gainer")];
+  const rows = [
+    ...build(volumeRows, "volume"),
+    ...build(gainerRows, "gainer"),
+    ...build(loserRows, "loser"),
+  ];
 
   await prisma.$transaction([
     prisma.dailyEntry.deleteMany({ where: { date } }),
     ...(rows.length ? [prisma.dailyEntry.createMany({ data: rows })] : []),
   ]);
 
-  await registerStocksInMaster([...volumeRows, ...gainerRows]);
+  await registerStocksInMaster([...volumeRows, ...gainerRows, ...loserRows]);
 }

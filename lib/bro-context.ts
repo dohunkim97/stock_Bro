@@ -25,10 +25,10 @@ export async function marketDataBlock(): Promise<string> {
   }
 
   const date = latest.date;
-  const { volume, gainer } = await getDayEntries(date);
+  const { volume, gainer, loser } = await getDayEntries(date);
   const agg = aggregateSectors(
     await applyThemes(
-      [...volume, ...gainer].map((e) => ({
+      [...volume, ...gainer, ...loser].map((e) => ({
         name: e.name,
         code: e.code,
         sector: e.sector,
@@ -59,6 +59,17 @@ export async function marketDataBlock(): Promise<string> {
           .map((g) => `${g.name} ${formatChg(g.changePct)}`)
           .join(", ") +
         (gainer.length > 10 ? ` 외 ${gainer.length - 10}종목` : "") +
+        "."
+    );
+  }
+  if (loser.length) {
+    lines.push(
+      "급락: " +
+        loser
+          .slice(0, 10)
+          .map((l) => `${l.name} ${formatChg(l.changePct)}`)
+          .join(", ") +
+        (loser.length > 10 ? ` 외 ${loser.length - 10}종목` : "") +
         "."
     );
   }

@@ -123,6 +123,7 @@ export type YearlyFinancials = {
   operatingProfit: number;
   netIncome: number;
   debtRatio: number;
+  totalEquity: number;
 };
 
 async function fetchYearFinancials(
@@ -150,9 +151,10 @@ async function fetchYearFinancials(
   const operatingProfit = Number(picked.enpBzopPft);
   const netIncome = Number(picked.enpCrtmNpf);
   const debtRatio = Number(picked.fnclDebtRto);
+  const totalEquity = Number(picked.enpTcptAmt);
   if (!Number.isFinite(revenue) || !Number.isFinite(netIncome)) return null;
 
-  return { year, revenue, operatingProfit, netIncome, debtRatio };
+  return { year, revenue, operatingProfit, netIncome, debtRatio, totalEquity };
 }
 
 // Unlike fetchFinancialSummary (which stops at the first year with data —

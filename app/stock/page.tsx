@@ -162,15 +162,7 @@ export default async function StockPage({
         <PriceChart key={cur.code} code={cur.code} />
       </div>
 
-      <DetailSections
-        stockName={cur.name}
-        code={cur.code}
-        market={cur.market}
-        marketCap={cur.marketCap}
-        per={cur.per}
-        pbr={cur.pbr}
-        debtRatio={cur.debtRatio}
-      />
+      <DetailSections stockName={cur.name} code={cur.code} market={cur.market} />
     </main>
   );
 }

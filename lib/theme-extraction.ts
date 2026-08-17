@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { prisma } from "@/lib/prisma";
 
 export type ThemeExtraction = { name: string; theme: string };
 
@@ -10,14 +11,14 @@ const SYSTEM_PROMPT = [
   '다른 설명 없이 JSON 배열만 답해. 형식: [{"name": "종목명", "theme": "테마"}]. 추출할 게 하나도 없으면 [].',
 ].join("\n");
 
-export async function extractThemes(text: string): Promise<ThemeExtraction[]> {
+export async function extractThemes(text: string, maxTokens = 300): Promise<ThemeExtraction[]> {
   if (!process.env.ANTHROPIC_API_KEY || !text.trim()) return [];
 
   try {
     const client = new Anthropic();
     const response = await client.messages.create({
       model: "claude-sonnet-5",
-      max_tokens: 300,
+      max_tokens: maxTokens,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: text }],
     });
@@ -45,5 +46,25 @@ export async function extractThemes(text: string): Promise<ThemeExtraction[]> {
       .map((p) => ({ name: p.name.trim(), theme: p.theme.trim() }));
   } catch {
     return [];
+  }
+}
+
+// Shared across every source that feeds this pipeline (Telegram, KIS/Naver
+// news auto-extraction). ETF holdings (lib/kis-etf-holdings.ts) are real
+// fund allocations, not a guess — an LLM's read of a headline shouldn't be
+// allowed to overwrite one, so this skips any name already tagged from that
+// source. ETF sync itself upserts unconditionally and isn't routed through
+// here, so it always wins the other direction (a later ETF sync still
+// upgrades a news-guessed tag).
+export async function saveThemes(themes: ThemeExtraction[], source: string): Promise<void> {
+  for (const t of themes) {
+    const existing = await prisma.stockTheme.findUnique({ where: { name: t.name } });
+    if (existing?.source?.startsWith("ETF 구성종목")) continue;
+
+    await prisma.stockTheme.upsert({
+      where: { name: t.name },
+      create: { name: t.name, theme: t.theme, source },
+      update: { theme: t.theme, source },
+    });
   }
 }

@@ -77,12 +77,14 @@ async function kisRankingGet(
 
 // 등락률순위 — gives price/체결/등락률/거래량 but not 거래대금 or 상장주식수,
 // so market cap and PER/PBR inputs get backfilled separately below.
+// sortCls "0" = 상승률순 (gainers), "1" = 하락률순 (losers).
 async function fetchFluctuationRanking(
   marketCode: "0001" | "1001",
   market: string,
   appKey: string,
   appSecret: string,
-  token: string
+  token: string,
+  sortCls: "0" | "1" = "0"
 ): Promise<KisRankRow[]> {
   const rows = await kisRankingGet(
     FLUCTUATION_URL,
@@ -90,7 +92,7 @@ async function fetchFluctuationRanking(
       fid_cond_mrkt_div_code: "J",
       fid_cond_scr_div_code: "20170",
       fid_input_iscd: marketCode,
-      fid_rank_sort_cls_code: "0",
+      fid_rank_sort_cls_code: sortCls,
       fid_input_cnt_1: "0",
       fid_prc_cls_code: "0",
       fid_input_price_1: "",
@@ -222,27 +224,39 @@ async function enrichWithKisQuote(rows: KisRankRow[]): Promise<void> {
 type BaseRankings = {
   kospiGainer: KisRankRow[];
   kosdaqGainer: KisRankRow[];
+  kospiLoser: KisRankRow[];
+  kosdaqLoser: KisRankRow[];
   kospiVolume: KisRankRow[];
   kosdaqVolume: KisRankRow[];
 };
 
 async function fetchBaseRankings(appKey: string, appSecret: string, token: string): Promise<BaseRankings | null> {
-  // Run these one at a time rather than all four at once — production
-  // showed an entire market (코스닥) silently dropping out when fired
-  // concurrently, consistent with a per-second rate limit on these
-  // particular endpoints.
-  const kospiGainer = await fetchFluctuationRanking("0001", "코스피", appKey, appSecret, token);
-  const kosdaqGainer = await fetchFluctuationRanking("1001", "코스닥", appKey, appSecret, token);
+  // Run these one at a time rather than all at once — production showed an
+  // entire market (코스닥) silently dropping out when fired concurrently,
+  // consistent with a per-second rate limit on these particular endpoints.
+  const kospiGainer = await fetchFluctuationRanking("0001", "코스피", appKey, appSecret, token, "0");
+  const kosdaqGainer = await fetchFluctuationRanking("1001", "코스닥", appKey, appSecret, token, "0");
+  const kospiLoser = await fetchFluctuationRanking("0001", "코스피", appKey, appSecret, token, "1");
+  const kosdaqLoser = await fetchFluctuationRanking("1001", "코스닥", appKey, appSecret, token, "1");
   const kospiVolume = await fetchVolumeRanking("0001", "코스피", appKey, appSecret, token);
   const kosdaqVolume = await fetchVolumeRanking("1001", "코스닥", appKey, appSecret, token);
 
-  if (kospiGainer.length === 0 && kosdaqGainer.length === 0 && kospiVolume.length === 0 && kosdaqVolume.length === 0) {
+  if (
+    kospiGainer.length === 0 &&
+    kosdaqGainer.length === 0 &&
+    kospiLoser.length === 0 &&
+    kosdaqLoser.length === 0 &&
+    kospiVolume.length === 0 &&
+    kosdaqVolume.length === 0
+  ) {
     return null;
   }
-  return { kospiGainer, kosdaqGainer, kospiVolume, kosdaqVolume };
+  return { kospiGainer, kosdaqGainer, kospiLoser, kosdaqLoser, kospiVolume, kosdaqVolume };
 }
 
-export async function fetchKisMarketRanking(): Promise<{ gainer: KisRankRow[]; volume: KisRankRow[] } | null> {
+export async function fetchKisMarketRanking(): Promise<
+  { gainer: KisRankRow[]; loser: KisRankRow[]; volume: KisRankRow[] } | null
+> {
   const appKey = process.env.KIS_APP_KEY;
   const appSecret = process.env.KIS_APP_SECRET;
   if (!appKey || !appSecret) return null;
@@ -254,9 +268,10 @@ export async function fetchKisMarketRanking(): Promise<{ gainer: KisRankRow[]; v
   if (!base) return null;
 
   const gainer = [...base.kospiGainer, ...base.kosdaqGainer];
+  const loser = [...base.kospiLoser, ...base.kosdaqLoser];
   const volume = [...base.kospiVolume, ...base.kosdaqVolume];
-  await enrichWithKisQuote([...gainer, ...volume]);
-  return { gainer, volume };
+  await enrichWithKisQuote([...gainer, ...loser, ...volume]);
+  return { gainer, loser, volume };
 }
 
 // A cheap, unenriched version of the above — used by the midday/close AI

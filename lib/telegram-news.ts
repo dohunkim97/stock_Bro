@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { extractThemes } from "@/lib/theme-extraction";
+import { extractThemes, saveThemes } from "@/lib/theme-extraction";
 
 const URL_RE = /https?:\/\/\S+/;
 
@@ -65,13 +65,7 @@ export async function saveTelegramMessage(update: TelegramUpdate): Promise<void>
   try {
     const themes = await extractThemes(created.text);
     const source = created.text.split("\n")[0].slice(0, 200);
-    for (const t of themes) {
-      await prisma.stockTheme.upsert({
-        where: { name: t.name },
-        create: { name: t.name, theme: t.theme, source },
-        update: { theme: t.theme, source },
-      });
-    }
+    await saveThemes(themes, source);
   } catch {
     // Theme extraction is best-effort — a failure here shouldn't undo the
     // fact that the article itself was already saved successfully above.
