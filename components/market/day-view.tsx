@@ -1,43 +1,45 @@
-import Link from "next/link";
 import { StockTable } from "./stock-table";
 import { WatchlistNews } from "./watchlist-news";
 import { TelegramNewsPanel } from "./telegram-news";
-import { WeeklySectorPanel } from "./weekly-sector-panel";
 import { AutoRefresh } from "./auto-refresh";
 import { AiBriefing } from "./ai-briefing";
-import { WeeklyPredictionPanel } from "./weekly-prediction-panel";
+import { SectorLeadersPanel } from "./sector-leaders-panel";
+import { MoneyFlowPanel } from "./money-flow-panel";
+import { MoneyFlowStocksPanel } from "./money-flow-stocks-panel";
+import { ThemeNetFlowPanel } from "./theme-net-flow-panel";
+import { ThemeNetFlowStocksPanel } from "./theme-net-flow-stocks-panel";
+import { MoneyFlowTakePanel } from "./money-flow-take-panel";
 import { aggregateSectors } from "@/lib/sector-aggregation";
-import { applyThemes } from "@/lib/theme-lookup";
-import { rankMostMentioned } from "@/lib/mention-ranking";
-import { prevWeekKey, nextWeekKey, type WeekInfo } from "@/lib/week";
+import { applyThemes, onlyThemed } from "@/lib/theme-lookup";
+import { rankSectorPerformance, dedupeByStock } from "@/lib/sector-performance";
+import { rankMoneyFlowByDay, rankMoneyFlowStocks, rankThemeNetFlow } from "@/lib/money-flow";
+import type { WeekInfo } from "@/lib/week";
 import { todayISO } from "@/lib/dates";
-import type { DailyEntry, Watchlist } from "@/app/generated/prisma/client";
-
-const weekNavBtnStyle: React.CSSProperties = {
-  border: "1px solid var(--border)",
-  background: "var(--panel)",
-  color: "var(--dim)",
-  fontSize: 12,
-  fontWeight: 600,
-  padding: "6px 11px",
-  borderRadius: 8,
-};
+import type { DailyEntry, Watchlist, ThemeDailyFlow, ThemeNetFlow } from "@/app/generated/prisma/client";
 
 export async function DayView({
   date,
   briefingSlot,
   volumeEntries,
   gainerEntries,
+  loserEntries,
   weekInfo,
   weekEntries,
+  moneyFlowDays,
+  moneyFlowEntries,
+  netFlowEntries,
   watchlist,
 }: {
   date: string;
   briefingSlot?: string;
   volumeEntries: DailyEntry[];
   gainerEntries: DailyEntry[];
+  loserEntries: DailyEntry[];
   weekInfo: WeekInfo;
   weekEntries: DailyEntry[];
+  moneyFlowDays: string[];
+  moneyFlowEntries: ThemeDailyFlow[];
+  netFlowEntries: ThemeNetFlow[];
   watchlist: Watchlist[];
 }) {
   const combined = await applyThemes(
@@ -49,114 +51,115 @@ export async function DayView({
     }))
   );
   const agg = aggregateSectors(combined);
-  const mentions = rankMostMentioned(weekEntries, 50);
+
+  // ThemeDailyFlow already carries the theme (as `theme`, mapped to `sector`
+  // for lib/money-flow.ts's shared input shape) and is unique per
+  // (date, code) — no re-tagging or same-day dedup needed here, unlike the
+  // old ranking-derived path.
+  const moneyFlowThemedEntries = moneyFlowEntries.map((e) => ({
+    date: e.date,
+    name: e.name,
+    code: e.code as string | null,
+    sector: e.theme,
+    changePct: e.changePct,
+    tradingValue: e.tradingValue as string | null,
+    marketCap: e.marketCap,
+  }));
+  const moneyFlowThemes = rankMoneyFlowByDay(moneyFlowThemedEntries, moneyFlowDays);
+  const moneyFlowStockGroups = rankMoneyFlowStocks(moneyFlowThemedEntries, moneyFlowDays, 6, 6);
+
+  const netFlowRank = rankThemeNetFlow(
+    netFlowEntries.map((e) => ({
+      date: e.date,
+      name: e.name,
+      code: e.code,
+      theme: e.theme,
+      foreignNet: e.foreignNet,
+      institutionNet: e.institutionNet,
+    })),
+    5,
+    6
+  );
+
+  const todayEntries = dedupeByStock(
+    [...gainerEntries, ...loserEntries, ...volumeEntries].map((e) => ({
+      name: e.name,
+      code: e.code,
+      sector: e.sector,
+      changePct: e.changePct,
+    }))
+  );
+  const sectorLeaders = rankSectorPerformance(todayEntries);
+  const themeLeaders = rankSectorPerformance(await onlyThemed(todayEntries));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       {date === todayISO() && <AutoRefresh />}
 
-      <AiBriefing date={date} slot={briefingSlot} contributors={agg.contributors} />
-
-      <WeeklyPredictionPanel />
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
-        <StockTable
-          date={date}
-          listType="gainer"
-          title="급상승 종목"
-          badgeText="상승 TOP"
-          badgeColor="var(--up)"
-          accentVar="var(--up)"
-          accentSoftVar="var(--up-soft)"
-          entries={gainerEntries}
-          showVolumeField={false}
-        />
-
-        <StockTable
-          date={date}
-          listType="volume"
-          title="거래량 상위"
-          badgeText="거래 TOP"
-          badgeColor="var(--dim)"
-          accentVar="var(--accent)"
-          accentSoftVar="var(--accent-soft)"
-          entries={volumeEntries}
-          showVolumeField
-        />
-      </div>
-
-      {/* 주요 섹터 결과 (최근 N일) */}
-      <section
-        style={{
-          background: "linear-gradient(180deg, var(--panel2), var(--panel))",
-          border: "1px solid var(--border2)",
-          borderRadius: 16,
-          padding: 24,
-          position: "relative",
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            position: "absolute",
-            top: -40,
-            right: -20,
-            width: 220,
-            height: 220,
-            background: "radial-gradient(circle, var(--accent-soft), transparent 70%)",
-            pointerEvents: "none",
-          }}
-        />
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
-          <span
-            style={{
-              fontFamily: "var(--mono)",
-              fontSize: 11,
-              color: "var(--accent)",
-              letterSpacing: "0.14em",
-              textTransform: "uppercase",
-            }}
-          >
-            ▲ Weekly Hot Sector · {weekInfo.label}
-          </span>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <Link
-              href={`/market?period=day&date=${date}&sectorWeek=${prevWeekKey(weekInfo.key)}`}
-              style={weekNavBtnStyle}
-            >
-              ‹ 이전 주
-            </Link>
-            <Link
-              href={`/market?period=day&date=${date}&sectorWeek=${nextWeekKey(weekInfo.key)}`}
-              style={weekNavBtnStyle}
-            >
-              다음 주 ›
-            </Link>
+      {/* 왼쪽: TOP종목. 오른쪽: 업종/테마 상위 + 오늘 브리핑 — 오른쪽 전체 높이를 TOP종목과 맞춤 */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.15fr", gap: 20, alignItems: "stretch" }}>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 7, letterSpacing: "-0.01em" }}>
+            TOP종목
           </div>
+          <StockTable
+            date={date}
+            tabs={[
+              {
+                key: "gainer",
+                label: "급상승 종목",
+                badgeText: "상승 TOP",
+                badgeColor: "var(--up)",
+                accentVar: "var(--up)",
+                accentSoftVar: "var(--up-soft)",
+                entries: gainerEntries,
+                showVolumeField: false,
+              },
+              {
+                key: "loser",
+                label: "급락 종목",
+                badgeText: "하락 TOP",
+                badgeColor: "var(--down)",
+                accentVar: "var(--down)",
+                accentSoftVar: "var(--down-soft)",
+                entries: loserEntries,
+                showVolumeField: false,
+              },
+              {
+                key: "volume",
+                label: "거래량 상위",
+                badgeText: "거래 TOP",
+                badgeColor: "var(--dim)",
+                accentVar: "var(--accent)",
+                accentSoftVar: "var(--accent-soft)",
+                entries: volumeEntries,
+                showVolumeField: true,
+              },
+            ]}
+          />
         </div>
 
-        {!agg.hasData ? (
-          <div style={{ padding: "12px 0", color: "var(--dim)", fontSize: 14 }}>
-            {weekInfo.label}에는 입력된 종목이 없어요. 상승 TOP·거래 TOP에 종목을 입력하면 주요
-            섹터가 여기 나타나요.
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "stretch" }}>
+            <SectorLeadersPanel compact groups={[{ title: "업종상위", items: sectorLeaders }]} />
+            <SectorLeadersPanel compact groups={[{ title: "테마상위", items: themeLeaders }]} />
           </div>
-        ) : (
-          <>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 14, marginBottom: 22, flexWrap: "wrap" }}>
-              <h2 style={{ margin: 0, fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em" }}>
-                {weekInfo.label} 시장이 주목한 섹터는{" "}
-                <span style={{ color: "var(--accent)" }}>{agg.hotSector}</span>
-              </h2>
-              <span style={{ fontFamily: "var(--mono)", fontSize: 13, color: "var(--dim)" }}>
-                랭킹 등장 {agg.totalCount}건 중{" "}
-                <b style={{ color: "var(--text)" }}>{agg.hotSectorCount}건</b> 포함
-              </span>
-            </div>
+          <AiBriefing date={date} slot={briefingSlot} contributors={agg.contributors} />
+        </div>
+      </div>
 
-            <WeeklySectorPanel agg={agg} mentions={mentions} />
-          </>
-        )}
-      </section>
+      {/* 자금 흐름 2x2 — [시장 관심 상위 테마|테마별 종목] 위, [순매수·순매도 상위|그 종목] 아래.
+          종목 칸(오른쪽)에 더 많은 종목을 보여주기 위해 왼쪽(데이터 표)보다 넓게 배분.
+          alignItems: stretch로 각 행 안의 두 칸 높이를 서로 맞춤. */}
+      <div style={{ display: "grid", gridTemplateColumns: "0.8fr 1.2fr", gap: 20, alignItems: "stretch" }}>
+        <MoneyFlowPanel days={moneyFlowDays} themes={moneyFlowThemes} />
+        <MoneyFlowStocksPanel themes={moneyFlowStockGroups} />
+        <ThemeNetFlowPanel days={moneyFlowDays.length} buying={netFlowRank.buying} selling={netFlowRank.selling} />
+        <ThemeNetFlowStocksPanel buying={netFlowRank.buying} selling={netFlowRank.selling} />
+      </div>
+
+      {/* 위 자금 흐름 데이터를 종합한 AI의 투자 방향 의견 */}
+      <MoneyFlowTakePanel />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
         <WatchlistNews items={watchlist} />

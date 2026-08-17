@@ -5,7 +5,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { date, listType, name, price, changePct, volume } = body ?? {};
 
-  if (!date || (listType !== "volume" && listType !== "gainer")) {
+  if (!date || (listType !== "volume" && listType !== "gainer" && listType !== "loser")) {
     return NextResponse.json({ error: "잘못된 요청이에요" }, { status: 400 });
   }
   if (typeof name !== "string" || !name.trim()) {

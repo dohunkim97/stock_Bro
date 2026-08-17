@@ -30,8 +30,8 @@ function selectStyle(): React.CSSProperties {
     border: "1px solid var(--border)",
     color: "var(--text)",
     borderRadius: 8,
-    padding: "6px 10px",
-    fontSize: 12,
+    padding: "4px 8px",
+    fontSize: 11,
     fontFamily: "var(--sans)",
     outline: "none",
     cursor: "pointer",
@@ -56,15 +56,19 @@ function Row({ s, cols, expanded }: { s: DailyEntry; cols: string; expanded: boo
           display: "grid",
           gridTemplateColumns: cols,
           gap: 0,
-          padding: s.issue ? "12px 18px 4px" : "12px 18px",
+          padding: expanded
+            ? s.issue ? "12px 18px 4px" : "12px 18px"
+            : s.issue ? "7px 18px 2px" : "7px 18px",
           alignItems: "center",
-          fontSize: 13.5,
+          fontSize: expanded ? 13.5 : 12.5,
         }}
       >
-        <span style={{ fontFamily: "var(--mono)", color: "var(--faint)", fontSize: 12 }}>{s.rank}</span>
+        <span style={{ fontFamily: "var(--mono)", color: "var(--faint)", fontSize: expanded ? 12 : 11 }}>
+          {s.rank}
+        </span>
         <span>
           <span style={{ fontWeight: 600 }}>{s.name}</span>{" "}
-          <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)", marginLeft: 5 }}>
+          <span style={{ fontFamily: "var(--mono)", fontSize: expanded ? 11 : 10, color: "var(--faint)", marginLeft: 5 }}>
             {s.code ?? "-"}
           </span>
         </span>
@@ -79,10 +83,10 @@ function Row({ s, cols, expanded }: { s: DailyEntry; cols: string; expanded: boo
         >
           {formatChg(s.changePct)}
         </span>
-        <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12, color: "var(--dim)" }}>
+        <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: expanded ? 12 : 11, color: "var(--dim)" }}>
           {s.volume ?? "-"}
         </span>
-        <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 12, color: "var(--dim)" }}>
+        <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: expanded ? 12 : 11, color: "var(--dim)" }}>
           {s.tradingValue ?? "-"}
         </span>
         {expanded && (
@@ -101,8 +105,8 @@ function Row({ s, cols, expanded }: { s: DailyEntry; cols: string; expanded: boo
       {s.issue && (
         <div
           style={{
-            padding: "0 18px 12px",
-            fontSize: 12,
+            padding: expanded ? "0 18px 12px" : "0 18px 7px",
+            fontSize: expanded ? 12 : 11,
             color: "var(--dim)",
             lineHeight: 1.4,
             overflow: "hidden",
@@ -154,9 +158,9 @@ function MarketSortControls({
               style={{
                 border: "none",
                 cursor: "pointer",
-                fontSize: 12,
+                fontSize: 11,
                 fontWeight: 600,
-                padding: "6px 11px",
+                padding: "4px 9px",
                 borderRadius: 6,
                 background: active ? accentVar : "transparent",
                 color: active ? "#0a0d13" : "var(--dim)",
@@ -178,27 +182,22 @@ function MarketSortControls({
   );
 }
 
-export function StockTable({
-  date,
-  listType,
-  title,
-  badgeText,
-  badgeColor,
-  accentVar,
-  accentSoftVar,
-  entries,
-  showVolumeField,
-}: {
-  date: string;
-  listType: "volume" | "gainer";
-  title: string;
+export type RankingTab = {
+  key: "volume" | "gainer" | "loser";
+  label: string;
   badgeText: string;
   badgeColor: string;
   accentVar: string;
   accentSoftVar: string;
   entries: DailyEntry[];
   showVolumeField: boolean;
-}) {
+};
+
+export function StockTable({ date, tabs }: { date: string; tabs: RankingTab[] }) {
+  const [activeKey, setActiveKey] = useState(tabs[0].key);
+  const active = tabs.find((t) => t.key === activeKey) ?? tabs[0];
+  const { key: listType, badgeText, badgeColor, accentVar, accentSoftVar, entries, showVolumeField } = active;
+
   const [market, setMarket] = useState<(typeof MARKETS)[number]>("코스피");
   const [sortKey, setSortKey] = useState("rank");
   const [modalOpen, setModalOpen] = useState(false);
@@ -232,14 +231,36 @@ export function StockTable({
           alignItems: "center",
           justifyContent: "space-between",
           flexWrap: "wrap",
-          gap: 10,
-          padding: "16px 18px",
+          gap: 8,
+          padding: "11px 16px",
           borderBottom: "1px solid var(--border)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <span style={{ fontWeight: 700, fontSize: 15 }}>{title}</span>
-          <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: badgeColor }}>{badgeText}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {tabs.map((t) => {
+            const isActive = t.key === activeKey;
+            return (
+              <button
+                key={t.key}
+                onClick={() => setActiveKey(t.key)}
+                style={{
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  padding: "4px 8px",
+                  borderRadius: 7,
+                  background: isActive ? "var(--panel2)" : "transparent",
+                  color: isActive ? "var(--text)" : "var(--faint)",
+                }}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+          <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: badgeColor, marginLeft: 2 }}>
+            {badgeText}
+          </span>
         </div>
 
         {sorted.length > HOME_DISPLAY_COUNT && (
@@ -249,9 +270,9 @@ export function StockTable({
               background: "var(--panel2)",
               border: "1px solid var(--border)",
               borderRadius: 8,
-              padding: "7px 12px",
+              padding: "5px 10px",
               color: "var(--dim)",
-              fontSize: 12.5,
+              fontSize: 11.5,
               fontWeight: 600,
               cursor: "pointer",
             }}
@@ -270,8 +291,8 @@ export function StockTable({
               display: "grid",
               gridTemplateColumns: COLLAPSED_COLS,
               gap: 0,
-              padding: "9px 18px",
-              fontSize: 11,
+              padding: "6px 18px",
+              fontSize: 10.5,
               color: "var(--faint)",
               fontFamily: "var(--mono)",
               borderBottom: "1px solid var(--border)",
@@ -306,7 +327,7 @@ export function StockTable({
         />
       )}
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={`${title} · 전체 ${sorted.length}종목`}>
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={`${active.label} · 전체 ${sorted.length}종목`}>
         <div style={{ marginBottom: 14, display: "flex", justifyContent: "flex-end" }}>{controls}</div>
         <div style={{ overflowX: "auto" }}>
           <div style={{ minWidth: 920 }}>

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { formatDateLabel, nextBusinessDay, prevBusinessDay } from "@/lib/dates";
+import { MarketStockSearch, type SearchableStock } from "./market-stock-search";
 
 const PERIOD_TABS = [
   { key: "day", label: "일간" },
@@ -17,10 +18,12 @@ export function PeriodDateNav({
   period,
   date,
   sectorWeek,
+  stocks,
 }: {
   period: string;
   date: string;
   sectorWeek: string;
+  stocks: SearchableStock[];
 }) {
   const weekParam = `&sectorWeek=${sectorWeek}`;
   return (
@@ -67,6 +70,9 @@ export function PeriodDateNav({
           {periodSubLabel(period)}
         </span>
       </div>
+
+      <MarketStockSearch stocks={stocks} />
+
       <div
         style={{
           display: "flex",

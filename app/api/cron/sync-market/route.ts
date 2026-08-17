@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runMarketSync } from "@/lib/sync-runner";
 
-export const maxDuration = 90;
+export const maxDuration = 150;
 
 // Triggered by Vercel Cron (see vercel.json). Vercel automatically sends
 // `Authorization: Bearer $CRON_SECRET` when that env var is set — this

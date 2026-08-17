@@ -43,6 +43,10 @@ export function formatDateLabel(iso: string): string {
   return `${y}.${m}.${day} (${WEEKDAYS[d.getDay()]})`;
 }
 
+export function weekdayLabel(iso: string): string {
+  return WEEKDAYS[fromISO(iso).getDay()];
+}
+
 function isMarketClosed(d: Date): boolean {
   const w = d.getDay();
   if (w === 0 || w === 6) return true;
@@ -63,6 +67,21 @@ export function nextBusinessDay(iso: string): string {
     d.setDate(d.getDate() + 1);
   } while (isMarketClosed(d));
   return toISO(d);
+}
+
+// The last `count` business days up to and including `endIso`, oldest
+// first — e.g. for a rolling "최근 N거래일" table where the column set
+// shouldn't be pinned to calendar-week boundaries the way "8월 3주" is.
+export function recentBusinessDays(endIso: string, count: number): string[] {
+  const days: string[] = [];
+  let cursor = fromISO(endIso);
+  if (isMarketClosed(cursor)) cursor = fromISO(prevBusinessDay(endIso));
+  days.push(toISO(cursor));
+  while (days.length < count) {
+    cursor = fromISO(prevBusinessDay(toISO(cursor)));
+    days.push(toISO(cursor));
+  }
+  return days.reverse();
 }
 
 // The date /market should default to when no ?date= is in the URL — today

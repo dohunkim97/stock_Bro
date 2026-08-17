@@ -100,11 +100,59 @@ model MarketBriefing {
 // Overrides the broad KIS 업종 classification (e.g. "건설") wherever that
 // stock shows up, since KIS itself has no theme-level category. Keyed by
 // company name (not code) since extraction only ever sees a name in text.
+// code is backfilled after the fact (lib/theme-daily-flow.ts resolves it via
+// resolveStock) since LLM extraction and ETF holdings sources populate it
+// differently — ETF sync knows the code immediately, news-based extraction
+// doesn't until resolved.
 model StockTheme {
   name      String   @id
   theme     String
+  code      String?
   source    String?
   updatedAt DateTime @updatedAt
+}
+
+// One row per (day, themed stock)'s actual trading value — independent of
+// whether that stock happened to rank in that day's gainer/loser/volume TOP
+// lists. lib/money-flow.ts used to derive "테마별 거래대금" only from stocks
+// that showed up in DailyEntry (the ranking tables), which meant a themed
+// stock quietly falling out of the top rankings on a given day looked
+// identical to real money leaving the theme (a hard -100% cliff) — this
+// exists so the money-flow panels track real capital flow instead of
+// ranking visibility. Synced once per day (lib/sync-runner.ts) via a direct
+// per-stock quote lookup for every themed stock, not just ranked ones.
+model ThemeDailyFlow {
+  id           String   @id @default(cuid())
+  date         String
+  code         String
+  name         String
+  theme        String
+  tradingValue String
+  changePct    Float
+  marketCap    String?
+  createdAt    DateTime @default(now())
+
+  @@unique([date, code])
+}
+
+// 종목별 투자자매매동향(외국인+기관 순매수) rolled up to the theme level — the
+// "거래대금이 큰가"(ThemeDailyFlow, 시장 관심/활발함) 와는 다른 질문으로, "사는
+// 쪽이 파는 쪽보다 우세한가"를 직접 본다. lib/kis-investor-trend.ts의 종목별
+// 순매수 조회를 태깅된 종목 전체에 대해 한 번씩 돌려 저장한다 — 그 endpoint가
+// 호출 한 번에 최근 N거래일을 다 주기 때문에 ThemeDailyFlow처럼 날짜별로 따로
+// 조회할 필요가 없다.
+model ThemeNetFlow {
+  id             String   @id @default(cuid())
+  date           String
+  code           String
+  name           String
+  theme          String
+  foreignNet     Float
+  institutionNet Float
+  individualNet  Float
+  createdAt      DateTime @default(now())
+
+  @@unique([date, code])
 }
 
 // A "다음 주 강할 섹터/종목" forecast, generated once a week (Friday close,
@@ -121,6 +169,16 @@ model WeeklyPrediction {
   sectors    String
   candidates String
   createdAt  DateTime @default(now())
+}
+
+// A "지금 자금 흐름을 보면 어디에 선제적으로 관심 가질 만한지" personal take,
+// generated once per sync (see lib/money-flow-take.ts) from that day's money
+// flow table + rotation data. Keyed by the date it's FOR, one row per day.
+model MoneyFlowTake {
+  id        String   @id @default(cuid())
+  date      String   @unique
+  summary   String
+  createdAt DateTime @default(now())
 }
 
 // Articles forwarded from Telegram into the bot (see app/api/telegram/webhook).
