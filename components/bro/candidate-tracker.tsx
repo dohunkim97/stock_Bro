@@ -10,6 +10,8 @@ const panelStyle: React.CSSProperties = {
   border: "1px solid var(--border2)",
   borderRadius: 16,
   padding: 20,
+  height: "100%",
+  overflowY: "auto",
 };
 
 const boxStyle: React.CSSProperties = {

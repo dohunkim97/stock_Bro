@@ -5,6 +5,8 @@
 // click did nothing. This renders instantly on navigation so the URL
 // updates and the user gets feedback right away, then streams in over it.
 
+import { DuckLoader } from "@/components/ui/duck-loader";
+
 const bar = (width: string | number, height = 14): React.CSSProperties => ({
   width,
   height,
@@ -36,7 +38,7 @@ export default function StockLoading() {
       </div>
 
       <div style={{ ...cardStyle, height: 360, marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <span style={{ fontSize: 13, color: "var(--faint)" }}>종목 정보를 불러오는 중…</span>
+        <DuckLoader label="시세를 불러오는 중…" />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>

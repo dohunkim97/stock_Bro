@@ -48,3 +48,6 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# local Claude Code settings — machine-specific, not shared app code
+.claude/

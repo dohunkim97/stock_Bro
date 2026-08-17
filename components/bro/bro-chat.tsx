@@ -26,20 +26,8 @@ type WindowWithSpeech = Window &
     webkitSpeechRecognition?: new () => SpeechRecognitionLike;
   };
 
-const SUGGESTIONS = [
-  "오늘 주목 섹터 3줄 요약",
-  "어느 섹터를 사야할까?",
-  "PER 62배가 무슨 뜻이야?",
-  "반도체 말고 볼 섹터는?",
-];
-
 export function BroChat() {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: "assistant",
-      text: "안녕, 나 Golgoo야 👊 오늘 네가 입력한 종목이랑 시장 흐름 다 보고 있어. 궁금한 거 편하게 물어봐 — 🎙 버튼 누르면 말로 대화도 돼.",
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [listening, setListening] = useState(false);
   // No visible toggle anymore (removed for a cleaner header) — replies are
@@ -132,7 +120,7 @@ export function BroChat() {
   }
 
   return (
-    <div>
+    <div style={{ height: "100%" }}>
       <section
         style={{
           background: "var(--panel)",
@@ -140,7 +128,7 @@ export function BroChat() {
           borderRadius: 16,
           display: "flex",
           flexDirection: "column",
-          height: 660,
+          height: "100%",
           overflow: "hidden",
         }}
       >
@@ -321,28 +309,6 @@ export function BroChat() {
           </button>
         </div>
       </section>
-
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
-        {SUGGESTIONS.map((q) => (
-          <button
-            key={q}
-            onClick={() => send(q)}
-            className="chip"
-            style={{
-              background: "var(--panel)",
-              border: "1px solid var(--border)",
-              color: "var(--dim)",
-              borderRadius: 20,
-              padding: "8px 14px",
-              fontSize: 12.5,
-              fontFamily: "var(--sans)",
-              cursor: "pointer",
-            }}
-          >
-            {q}
-          </button>
-        ))}
-      </div>
     </div>
   );
 }

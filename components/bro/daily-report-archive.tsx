@@ -13,7 +13,8 @@ const panelStyle: React.CSSProperties = {
   border: "1px solid var(--border)",
   borderRadius: 16,
   padding: 20,
-  marginTop: 20,
+  height: "100%",
+  overflowY: "auto",
 };
 
 const rowStyle: React.CSSProperties = {
