@@ -118,3 +118,133 @@ input {
 .no-marker[open] .chevron {
   transform: rotate(90deg);
 }
+
+/* components/ui/duck-loader.tsx — duck waddles left-to-right and lays a
+   golden egg partway across, on a 3.6s loop. Positions are percentages of
+   .duck-loader-track's own width so it scales with its container. */
+.duck-loader-track {
+  position: relative;
+  width: 100%;
+  max-width: 340px;
+  height: 76px;
+  overflow: hidden;
+}
+
+.duck-loader-ground {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  height: 1px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--border2) 0,
+    var(--border2) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+}
+
+.duck-loader-egg {
+  position: absolute;
+  left: 44%;
+  bottom: 8px;
+  transform: translate(-50%, 0);
+  animation: duck-egg-appear 3.6s ease-in-out infinite;
+}
+
+.duck-loader-duck {
+  position: absolute;
+  bottom: 6px;
+  animation: duck-walk 3.6s ease-in-out infinite;
+}
+
+.duck-loader-bob {
+  animation: duck-waddle 0.5s ease-in-out infinite;
+  transform-origin: 50% 100%;
+}
+
+.duck-loader-foot-back,
+.duck-loader-foot-front {
+  animation: duck-step 0.5s ease-in-out infinite;
+  transform-origin: 50% 0%;
+}
+.duck-loader-foot-front {
+  animation-delay: 0.25s;
+}
+
+@keyframes duck-walk {
+  0% {
+    left: -18%;
+  }
+  38% {
+    left: 44%;
+  }
+  60% {
+    left: 44%;
+  }
+  100% {
+    left: 112%;
+  }
+}
+
+@keyframes duck-waddle {
+  0%,
+  100% {
+    transform: rotate(-3deg) translateY(0);
+  }
+  50% {
+    transform: rotate(3deg) translateY(-1.5px);
+  }
+}
+
+@keyframes duck-step {
+  0%,
+  100% {
+    transform: scaleY(1);
+  }
+  50% {
+    transform: scaleY(0.75);
+  }
+}
+
+@keyframes duck-egg-appear {
+  0%,
+  40% {
+    opacity: 0;
+    transform: translate(-50%, 6px) scale(0.15);
+  }
+  48% {
+    opacity: 1;
+    transform: translate(-50%, -3px) scale(1.2);
+  }
+  55% {
+    transform: translate(-50%, 0) scale(0.92);
+  }
+  62%,
+  92% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .duck-loader-egg,
+  .duck-loader-duck,
+  .duck-loader-bob,
+  .duck-loader-foot-back,
+  .duck-loader-foot-front {
+    animation: none;
+  }
+  .duck-loader-duck {
+    left: 44%;
+  }
+  .duck-loader-egg {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
