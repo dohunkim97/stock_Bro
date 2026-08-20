@@ -181,6 +181,21 @@ model MoneyFlowTake {
   createdAt DateTime @default(now())
 }
 
+// Golgoo chat turns, persisted so past conversations can be browsed in the
+// 기록보관소 archive's 대화기록 tab (see lib/chat-history.ts). Grouped by
+// calendar date for that archive, the same way MarketBriefing/
+// WeeklyPrediction's own archives already group by day/week — no separate
+// "session" concept, just every message stamped with the day it was sent.
+model ChatMessage {
+  id        String   @id @default(cuid())
+  date      String
+  role      String
+  text      String
+  createdAt DateTime @default(now())
+
+  @@index([date])
+}
+
 // Articles forwarded from Telegram into the bot (see app/api/telegram/webhook).
 // messageId is unique per chat, not globally — Telegram also retries webhook
 // deliveries on timeout, so the composite unique key makes storage idempotent.

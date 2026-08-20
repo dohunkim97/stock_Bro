@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { buildSystemPrompt } from "@/lib/bro-context";
+import { saveChatTurn } from "@/lib/chat-history";
+import { todayISO } from "@/lib/dates";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -30,6 +32,16 @@ export async function POST(req: NextRequest) {
         .filter((b): b is Anthropic.TextBlock => b.type === "text")
         .map((b) => b.text)
         .join("\n");
+
+      // The client always sends its full running history with exactly one
+      // new user turn appended — save just that turn, not the whole array,
+      // so a saved conversation isn't duplicated on every subsequent call.
+      // Awaited (not fire-and-forget): a serverless function can be frozen
+      // right after the response is sent, which would silently drop an
+      // un-awaited write.
+      const lastUser = [...messages].reverse().find((m) => m.role === "user");
+      if (lastUser) await saveChatTurn(todayISO(), lastUser.content, text);
+
       return NextResponse.json({ reply: text });
     } catch (e) {
       lastErr = e;

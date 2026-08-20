@@ -62,7 +62,7 @@ const blockLabelStyle: React.CSSProperties = {
 // 이번 주 Golgoo 예상 리포트 — CandidateTracker(4번, 예상종목 라이브 위젯)의
 // 근거가 되는 전체 글: 이번 주 요약 + 섹터별 예상 근거 + 종목별 예상 근거.
 // 라이브 시세 조회는 하지 않는 순수 텍스트라 CandidateTracker보다 훨씬
-// 가볍다 — 기록보관소(PredictionArchive, 지난 주들의 채점 결과)와는 별개로
+// 가볍다 — 기록보관소(ArchiveHub의 예상리포트 탭, 지난 주들의 채점 결과)와는 별개로
 // "이번 주" 예측 한 건만 보여준다.
 export async function PredictionReport() {
   const latest = await getLatestPrediction();
