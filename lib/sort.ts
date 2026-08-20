@@ -20,6 +20,10 @@ export type SortOption = {
 
 export const SORT_OPTIONS: SortOption[] = [
   { key: "rank", label: "기본순", getValue: (e) => -e.rank },
+  // getValue is unused for "name" — sortEntries special-cases it with
+  // localeCompare so it sorts 가나다순 (ascending) instead of the numeric
+  // descending order every other option uses.
+  { key: "name", label: "가나다순", getValue: () => 0 },
   { key: "price", label: "현재가순", getValue: (e) => parseLeadingNumber(e.price) },
   { key: "changePct", label: "등락률순", getValue: (e) => e.changePct },
   { key: "volume", label: "거래량순", getValue: (e) => parseLeadingNumber(e.volume) },
@@ -33,6 +37,9 @@ export const SORT_OPTIONS: SortOption[] = [
 ];
 
 export function sortEntries(entries: DailyEntry[], sortKey: string): DailyEntry[] {
+  if (sortKey === "name") {
+    return [...entries].sort((a, b) => a.name.localeCompare(b.name, "ko"));
+  }
   const option = SORT_OPTIONS.find((o) => o.key === sortKey) ?? SORT_OPTIONS[0];
   return [...entries].sort((a, b) => option.getValue(b) - option.getValue(a));
 }
