@@ -307,7 +307,7 @@ export function StockTable({ date, tabs }: { date: string; tabs: RankingTab[] })
               return (
                 <button
                   key={i}
-                  onClick={() => setSortKey(c.sortKey!)}
+                  onClick={() => setSortKey(active ? "rank" : c.sortKey!)}
                   style={{
                     background: "none",
                     border: "none",
