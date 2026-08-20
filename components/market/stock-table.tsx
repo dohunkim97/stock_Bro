@@ -3,19 +3,19 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AddEntryForm } from "./add-entry-form";
-import { Modal } from "@/components/ui/modal";
 import { chgColorVar, formatChg } from "@/lib/format";
 import { SORT_OPTIONS, sortEntries } from "@/lib/sort";
 import { STORAGE_CAP } from "@/lib/constants";
 import type { DailyEntry } from "@/app/generated/prisma/client";
 
-const HOME_DISPLAY_COUNT = 10;
+// 예전엔 위 10개만 보여주고 "더보기"를 눌러야 전체 목록을 모달로 봤는데,
+// 지금은 이 칸 안에서 바로 스크롤해서 전체 종목을 다 볼 수 있게 바꿨다 —
+// LIST_MAX_HEIGHT는 대략 10줄 높이라 기본적으로 보이는 범위는 그대로다.
+const LIST_MAX_HEIGHT = 420;
 const MARKETS = ["코스피", "코스닥"] as const;
 
 const COLLAPSED_LABELS = ["#", "종목", "현재가", "등락률", "거래량", "거래대금"];
-const EXPANDED_LABELS = [...COLLAPSED_LABELS, "시가총액", "PER", "PBR", "ROE", "부채비율", "유보율"];
 const COLLAPSED_COLS = "26px 1fr 84px 76px 92px 100px";
-const EXPANDED_COLS = "26px 1fr 84px 76px 92px 100px 84px 60px 60px 64px 76px 84px";
 
 const panelStyle: React.CSSProperties = {
   background: "var(--panel)",
@@ -200,7 +200,6 @@ export function StockTable({ date, tabs }: { date: string; tabs: RankingTab[] })
 
   const [market, setMarket] = useState<(typeof MARKETS)[number]>("코스피");
   const [sortKey, setSortKey] = useState("rank");
-  const [modalOpen, setModalOpen] = useState(false);
 
   const marketCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -210,7 +209,6 @@ export function StockTable({ date, tabs }: { date: string; tabs: RankingTab[] })
 
   const filtered = useMemo(() => entries.filter((e) => e.market === market), [entries, market]);
   const sorted = useMemo(() => sortEntries(filtered, sortKey), [filtered, sortKey]);
-  const visible = sorted.slice(0, HOME_DISPLAY_COUNT);
 
   const controls = (
     <MarketSortControls
@@ -263,22 +261,10 @@ export function StockTable({ date, tabs }: { date: string; tabs: RankingTab[] })
           </span>
         </div>
 
-        {sorted.length > HOME_DISPLAY_COUNT && (
-          <button
-            onClick={() => setModalOpen(true)}
-            style={{
-              background: "var(--panel2)",
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-              padding: "5px 10px",
-              color: "var(--dim)",
-              fontSize: 11.5,
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            더보기 (전체 {sorted.length}종목)
-          </button>
+        {sorted.length > 0 && (
+          <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--faint)" }}>
+            전체 {sorted.length}종목 — 스크롤해서 더 보기
+          </span>
         )}
 
         {controls}
@@ -305,15 +291,17 @@ export function StockTable({ date, tabs }: { date: string; tabs: RankingTab[] })
             ))}
           </div>
 
-          {visible.length === 0 && (
+          {sorted.length === 0 && (
             <div style={{ padding: "22px 18px", textAlign: "center", fontSize: 13, color: "var(--faint)" }}>
               {market}에 입력된 종목이 없어요
             </div>
           )}
 
-          {visible.map((s) => (
-            <Row key={s.id} s={s} cols={COLLAPSED_COLS} expanded={false} />
-          ))}
+          <div style={{ maxHeight: LIST_MAX_HEIGHT, overflowY: "auto" }}>
+            {sorted.map((s) => (
+              <Row key={s.id} s={s} cols={COLLAPSED_COLS} expanded={false} />
+            ))}
+          </div>
         </div>
       </div>
 
@@ -326,35 +314,6 @@ export function StockTable({ date, tabs }: { date: string; tabs: RankingTab[] })
           showVolumeField={showVolumeField}
         />
       )}
-
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={`${active.label} · 전체 ${sorted.length}종목`}>
-        <div style={{ marginBottom: 14, display: "flex", justifyContent: "flex-end" }}>{controls}</div>
-        <div style={{ overflowX: "auto" }}>
-          <div style={{ minWidth: 920 }}>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: EXPANDED_COLS,
-                gap: 0,
-                padding: "9px 18px",
-                fontSize: 11,
-                color: "var(--faint)",
-                fontFamily: "var(--mono)",
-                borderBottom: "1px solid var(--border)",
-              }}
-            >
-              {EXPANDED_LABELS.map((l, i) => (
-                <span key={i} style={i >= 2 ? { textAlign: "right" } : undefined}>
-                  {l}
-                </span>
-              ))}
-            </div>
-            {sorted.map((s) => (
-              <Row key={s.id} s={s} cols={EXPANDED_COLS} expanded />
-            ))}
-          </div>
-        </div>
-      </Modal>
     </section>
   );
 }
