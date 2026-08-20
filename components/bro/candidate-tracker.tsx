@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getLatestPrediction, parsePredictionCandidates } from "@/lib/prediction-scoring";
 import { weekInfoFromKey } from "@/lib/week";
 import { renderBold } from "@/components/ui/rich-text";
-import { fetchKisQuote } from "@/lib/kis-quote";
+import { getDailyChangeSeries } from "@/lib/candidate-tracking";
 import { chgColorVar, formatChg } from "@/lib/format";
 
 const panelStyle: React.CSSProperties = {
@@ -46,10 +46,12 @@ export async function CandidateTracker() {
   const candidates = parsePredictionCandidates(latest.candidates);
   const info = weekInfoFromKey(latest.forWeekKey);
 
-  // Only ever 3-5 candidates, so a live quote per code is cheap — this is
-  // what "예상 시점 대비 상승률" is measured against, not a stored/stale value.
-  const liveQuotes = await Promise.all(
-    candidates.map((c) => (c.code ? fetchKisQuote(c.code) : Promise.resolve(null)))
+  // Only ever 3-5 candidates, so a daily-chart fetch per code is cheap —
+  // this is what "예상 시점 대비 상승률" is measured against, day by day.
+  const series = await Promise.all(
+    candidates.map((c) =>
+      c.code && c.basePrice ? getDailyChangeSeries(c.code, c.basePrice, c.firstSeenAt ?? "") : Promise.resolve([])
+    )
   );
 
   return (
@@ -87,9 +89,8 @@ export async function CandidateTracker() {
       {candidates.length > 0 ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {candidates.map((c, i) => {
-            const q = liveQuotes[i];
-            const changeSincePredicted =
-              c.basePrice && c.basePrice > 0 && q ? ((q.price - c.basePrice) / c.basePrice) * 100 : null;
+            const days = series[i];
+            const latestPoint = days.length > 0 ? days[days.length - 1] : null;
             return (
               <Link
                 key={c.name}
@@ -99,16 +100,16 @@ export async function CandidateTracker() {
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
                   <span style={{ fontWeight: 700, fontSize: 13, color: "var(--text)" }}>{c.name}</span>
-                  {changeSincePredicted !== null ? (
+                  {latestPoint ? (
                     <span
                       style={{
                         fontFamily: "var(--mono)",
                         fontSize: 13,
                         fontWeight: 700,
-                        color: chgColorVar(changeSincePredicted),
+                        color: chgColorVar(latestPoint.changePct),
                       }}
                     >
-                      {formatChg(changeSincePredicted)}
+                      {formatChg(latestPoint.changePct)}
                     </span>
                   ) : (
                     <span style={{ fontSize: 10.5, color: "var(--faint)" }}>추적 불가</span>
@@ -117,9 +118,30 @@ export async function CandidateTracker() {
                 <div style={{ fontSize: 11.5, color: "var(--dim)", marginTop: 4, lineHeight: 1.5 }}>
                   {renderBold(c.reasoning)}
                 </div>
+                {days.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8 }}>
+                    {days.map((p) => (
+                      <span
+                        key={p.date}
+                        title={p.date}
+                        style={{
+                          fontSize: 10,
+                          fontFamily: "var(--mono)",
+                          fontWeight: 600,
+                          padding: "3px 7px",
+                          borderRadius: 6,
+                          background: "var(--panel2)",
+                          color: chgColorVar(p.changePct),
+                        }}
+                      >
+                        {p.dayIndex}일차 {formatChg(p.changePct)}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {c.firstSeenAt && (
                   <div style={{ fontSize: 10, color: "var(--faint)", marginTop: 6, fontFamily: "var(--mono)" }}>
-                    {dateLabel(c.firstSeenAt)} 예상 시점 대비
+                    {dateLabel(c.firstSeenAt)} 예상 · 종가 기준 누적
                   </div>
                 )}
               </Link>
