@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Modal } from "@/components/ui/modal";
 
 export type ArchiveRow = {
   key: string;
@@ -48,10 +49,11 @@ function tabStyle(active: boolean): React.CSSProperties {
 
 // 기록보관소 — one shared shell for three archives (예상리포트/일간리포트/
 // 대화기록) that all read the same way: a flat date|요약 row you click to
-// expand into the full detail. Data for all three tabs is fetched once
+// open in a modal, full width and roomier than the narrow archive column
+// itself ever could be. Data for all three tabs is fetched once
 // server-side (see ArchiveHub) and handed in as pre-rendered rows — this
-// component only owns which tab is showing, so switching tabs is instant
-// and never re-fetches.
+// component only owns which tab is showing and which row's modal is open,
+// so switching tabs is instant and never re-fetches.
 export function ArchiveHubClient({
   predictions,
   dailyReports,
@@ -62,7 +64,9 @@ export function ArchiveHubClient({
   chats: ArchiveRow[];
 }) {
   const [tab, setTab] = useState<TabKey>("predictions");
+  const [openRow, setOpenRow] = useState<ArchiveRow | null>(null);
   const rows = tab === "predictions" ? predictions : tab === "daily" ? dailyReports : chats;
+  const activeTabLabel = TABS.find((t) => t.key === tab)!.label;
 
   return (
     <section style={panelStyle}>
@@ -82,54 +86,70 @@ export function ArchiveHubClient({
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {rows.map((r) => (
-            <details key={r.key} className="no-marker">
-              <summary style={{ cursor: "pointer", display: "flex", gap: 6, alignItems: "stretch" }}>
-                <div
-                  style={{
-                    flex: "0 0 84px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 5,
-                    padding: "8px 9px",
-                    background: "var(--panel2)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 8,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    fontFamily: "var(--mono)",
-                    color: "var(--text)",
-                  }}
-                >
-                  <span className="chevron" style={{ fontSize: 8, color: "var(--faint)", flexShrink: 0 }}>
-                    ▶
-                  </span>
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.date}</span>
-                </div>
-                <div
-                  title={r.summary}
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    padding: "8px 11px",
-                    background: "var(--panel2)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 8,
-                    fontSize: 11.5,
-                    color: "var(--text)",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {r.summary || "-"}
-                  {r.meta && <span style={{ color: "var(--faint)", marginLeft: 8, fontSize: 10 }}>· {r.meta}</span>}
-                </div>
-              </summary>
-              <div style={{ padding: "10px 4px 4px", marginLeft: 90 }}>{r.detail}</div>
-            </details>
+            <button
+              key={r.key}
+              onClick={() => setOpenRow(r)}
+              className="hover-accent-border"
+              style={{
+                display: "flex",
+                gap: 6,
+                alignItems: "stretch",
+                background: "none",
+                border: "none",
+                padding: 0,
+                textAlign: "left",
+                cursor: "pointer",
+                font: "inherit",
+                color: "inherit",
+              }}
+            >
+              <div
+                style={{
+                  flex: "0 0 84px",
+                  display: "flex",
+                  alignItems: "center",
+                  padding: "8px 9px",
+                  background: "var(--panel2)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  fontFamily: "var(--mono)",
+                  color: "var(--text)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {r.date}
+              </div>
+              <div
+                title={r.summary}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  padding: "8px 11px",
+                  background: "var(--panel2)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  fontSize: 11.5,
+                  color: "var(--text)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {r.summary || "-"}
+                {r.meta && <span style={{ color: "var(--faint)", marginLeft: 8, fontSize: 10 }}>· {r.meta}</span>}
+              </div>
+            </button>
           ))}
         </div>
       )}
+
+      <Modal open={openRow !== null} onClose={() => setOpenRow(null)} title={openRow ? `${openRow.date} · ${activeTabLabel}` : ""}>
+        {openRow?.detail}
+      </Modal>
     </section>
   );
 }
