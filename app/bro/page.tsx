@@ -4,6 +4,7 @@ import { PredictionReport } from "@/components/bro/prediction-report";
 import { DailyReportArchive } from "@/components/bro/daily-report-archive";
 import { SplitPane } from "@/components/bro/split-pane";
 import { ReportChatPanel } from "@/components/bro/report-chat-panel";
+import { AutoRefresh } from "@/components/market/auto-refresh";
 
 // CandidateTracker does a handful of live KIS quote lookups (one per
 // predicted candidate) on every render — cheap individually, but give this
@@ -39,6 +40,12 @@ const BOARD_HEIGHT = `calc(100vh - ${HEADER_HEIGHT + MAIN_PADDING_TOP + MAIN_PAD
 export default function BroPage() {
   return (
     <main style={{ maxWidth: 1220, margin: "0 auto", padding: "26px 24px 60px" }}>
+      {/* CandidateTracker's % is only as fresh as the last render — without
+          this, an open tab sits on whatever price it first loaded with
+          until the user manually reloads, which looks exactly like "the
+          percentage never changes" even though the underlying live KIS
+          quote genuinely is moving. */}
+      <AutoRefresh />
       <div style={{ display: "flex", alignItems: "stretch", height: BOARD_HEIGHT }}>
         <div style={{ flex: "0 0 70%", minWidth: 0, paddingRight: 12 }}>
           <ReportChatPanel report={<PredictionReport />} chat={<BroChat />} />
