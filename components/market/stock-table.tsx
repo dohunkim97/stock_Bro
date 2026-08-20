@@ -14,7 +14,17 @@ import type { DailyEntry } from "@/app/generated/prisma/client";
 const LIST_MAX_HEIGHT = 420;
 const MARKETS = ["코스피", "코스닥"] as const;
 
-const COLLAPSED_LABELS = ["#", "종목", "현재가", "등락률", "거래량", "거래대금"];
+// sortKey undefined ("#") means that column isn't clickable — everything
+// else maps straight onto lib/sort.ts's SORT_OPTIONS keys, "name" sorting
+// 가나다순(ascending) and every other column sorting highest-first.
+const COLLAPSED_COLUMNS: { label: string; sortKey?: string }[] = [
+  { label: "#" },
+  { label: "종목", sortKey: "name" },
+  { label: "현재가", sortKey: "price" },
+  { label: "등락률", sortKey: "changePct" },
+  { label: "거래량", sortKey: "volume" },
+  { label: "거래대금", sortKey: "tradingValue" },
+];
 const COLLAPSED_COLS = "26px 1fr 84px 76px 92px 100px";
 
 const panelStyle: React.CSSProperties = {
@@ -284,11 +294,42 @@ export function StockTable({ date, tabs }: { date: string; tabs: RankingTab[] })
               borderBottom: "1px solid var(--border)",
             }}
           >
-            {COLLAPSED_LABELS.map((l, i) => (
-              <span key={i} style={i >= 2 ? { textAlign: "right" } : undefined}>
-                {l}
-              </span>
-            ))}
+            {COLLAPSED_COLUMNS.map((c, i) => {
+              const active = !!c.sortKey && c.sortKey === sortKey;
+              const alignRight = i >= 2;
+              if (!c.sortKey) {
+                return (
+                  <span key={i} style={alignRight ? { textAlign: "right" } : undefined}>
+                    {c.label}
+                  </span>
+                );
+              }
+              return (
+                <button
+                  key={i}
+                  onClick={() => setSortKey(c.sortKey!)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    padding: 0,
+                    margin: 0,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    fontSize: "inherit",
+                    color: active ? "var(--text)" : "inherit",
+                    fontWeight: active ? 700 : 400,
+                    textAlign: alignRight ? "right" : "left",
+                    justifyContent: alignRight ? "flex-end" : "flex-start",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 3,
+                  }}
+                >
+                  {c.label}
+                  {active && <span style={{ fontSize: 8 }}>{c.sortKey === "name" ? "▲" : "▼"}</span>}
+                </button>
+              );
+            })}
           </div>
 
           {sorted.length === 0 && (
