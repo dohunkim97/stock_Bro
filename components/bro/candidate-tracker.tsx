@@ -49,9 +49,7 @@ export async function CandidateTracker() {
   // Only ever 3-5 candidates, so a daily-chart fetch per code is cheap —
   // this is what "예상 시점 대비 상승률" is measured against, day by day.
   const series = await Promise.all(
-    candidates.map((c) =>
-      c.code && c.basePrice ? getDailyChangeSeries(c.code, c.basePrice, c.firstSeenAt ?? "") : Promise.resolve([])
-    )
+    candidates.map((c) => (c.code && c.firstSeenAt ? getDailyChangeSeries(c.code, c.firstSeenAt) : Promise.resolve([])))
   );
 
   return (

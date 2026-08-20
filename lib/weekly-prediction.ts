@@ -3,8 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { recentWeeksHistoryBlock, recentIssuesBlock, telegramBlock } from "@/lib/bro-context";
 import { getScoredPredictionHistory, parsePredictionCandidates, type CandidatePrediction } from "@/lib/prediction-scoring";
 import { currentWeekKey, nextWeekKey } from "@/lib/week";
-import { fetchKisQuote } from "@/lib/kis-quote";
 import { resolveStock } from "@/lib/market-data";
+import { fetchKisCodeMaster, findInCodeMaster } from "@/lib/kis-code-master";
 
 const SYSTEM_PROMPT = [
   "너는 한국 주식시장의 다음 주 흐름을 예상하는 애널리스트야.",
@@ -56,26 +56,33 @@ async function pastAccuracyBlock(): Promise<string> {
   return lines.join("\n");
 }
 
-// Snapshots today's live price as the baseline a candidate's "예상 시점 대비
-// 상승률" tracker measures from. Only ever called for a candidate the first
-// time it appears under a given forWeekKey — see the priorByName lookup in
-// generateWeeklyPrediction, which carries an existing baseline forward on
-// every later regeneration instead of re-snapshotting it.
+// The code for a newly-appearing candidate always comes from resolveStock
+// (our own DB, grounded in real synced ranking data) or, failing that, the
+// KIS code-master fallback — never from whatever code the LLM itself might
+// output. Confirmed live that trusting the model matters: asked to
+// self-report a code, it hallucinated one for "SK이터닉스" (a real code,
+// just for a completely different company) on one run and an invalid one
+// on the next, while resolveStock found the correct code every time. A
+// wrong code isn't just a missing feature — fetchKisQuote/fetchKisChart
+// happily return real data for whatever stock that code actually belongs
+// to, silently tracking the wrong company's price under the right one's
+// name.
 //
-// The code always comes from resolveStock(name) — our own DB, grounded in
-// real synced ranking data — never from whatever code the LLM itself might
-// output. Confirmed live that this matters: asked to self-report a code,
-// the model hallucinated one for "SK이터닉스" (a real code, just for a
-// completely different company) on one run and an invalid one on the next,
-// while resolveStock found the correct code every time. A wrong code isn't
-// just a missing feature — fetchKisQuote happily returns a real quote for
-// whatever stock that code actually belongs to, silently tracking the wrong
-// company's price under the right one's name.
-async function withBaseline(c: { name: string; reasoning: string }): Promise<CandidatePrediction> {
-  const resolved = await resolveStock(c.name);
-  const code = resolved?.code;
-  const quote = code ? await fetchKisQuote(code) : null;
-  return { ...c, code, basePrice: quote?.price, firstSeenAt: new Date().toISOString() };
+// Resolves every genuinely-new candidate's local lookup exactly once (not
+// once for a "should we bother downloading the fallback" check and again
+// per-candidate), and only downloads the KIS code-master files (a ~200KB
+// fetch+parse) if at least one of them came up empty locally.
+async function resolveNewCandidateCodes(names: string[]): Promise<Map<string, string | undefined>> {
+  const local = await Promise.all(names.map((name) => resolveStock(name)));
+  const codeByName = new Map(names.map((name, i) => [name, local[i]?.code] as const));
+
+  if ([...codeByName.values()].every((code) => code)) return codeByName;
+
+  const codeMaster = await fetchKisCodeMaster();
+  for (const name of names) {
+    if (!codeByName.get(name)) codeByName.set(name, findInCodeMaster(codeMaster, name)?.code);
+  }
+  return codeByName;
 }
 
 // Runs daily on weekdays (see app/api/cron/weekly-prediction), always
@@ -132,15 +139,14 @@ export async function generateWeeklyPrediction(): Promise<void> {
     reasoning: c.reasoning,
   }));
 
-  const candidateList: CandidatePrediction[] = await Promise.all(
-    rawCandidates.map((c) => {
-      const prior = priorByName.get(c.name);
-      if (prior?.basePrice !== undefined) {
-        return Promise.resolve({ ...c, code: prior.code, basePrice: prior.basePrice, firstSeenAt: prior.firstSeenAt });
-      }
-      return withBaseline(c);
-    })
-  );
+  const newNames = rawCandidates.filter((c) => !priorByName.get(c.name)?.firstSeenAt).map((c) => c.name);
+  const newCodeByName = newNames.length > 0 ? await resolveNewCandidateCodes(newNames) : new Map();
+
+  const candidateList: CandidatePrediction[] = rawCandidates.map((c) => {
+    const prior = priorByName.get(c.name);
+    if (prior?.firstSeenAt) return { ...c, code: prior.code, firstSeenAt: prior.firstSeenAt };
+    return { ...c, code: newCodeByName.get(c.name), firstSeenAt: new Date().toISOString() };
+  });
   const candidates = JSON.stringify(candidateList);
 
   await prisma.weeklyPrediction.upsert({

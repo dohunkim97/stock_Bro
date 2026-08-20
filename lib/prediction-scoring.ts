@@ -12,17 +12,16 @@ import { weekInfoFromKey } from "@/lib/week";
 import { todayISO } from "@/lib/dates";
 
 export type SectorPrediction = { name: string; reasoning: string };
-// basePrice/firstSeenAt are injected server-side (not by the LLM) the first
-// time a candidate appears under a given forWeekKey, and carried forward on
-// every regeneration of that same week's prediction (see
-// lib/weekly-prediction.ts) — they anchor the "예상 시점 대비 상승률" tracker
-// to when the candidate was first predicted, not to whichever day the
-// report happened to last regenerate.
+// firstSeenAt is injected server-side (not by the LLM) the first time a
+// candidate appears under a given forWeekKey, and carried forward on every
+// regeneration of that same week's prediction (see lib/weekly-prediction.ts)
+// — it anchors the "예상 시점 대비 상승률" tracker (lib/candidate-tracking.ts,
+// day 1's own opening price) to when the candidate was first predicted, not
+// to whichever day the report happened to last regenerate.
 export type CandidatePrediction = {
   name: string;
   code?: string;
   reasoning: string;
-  basePrice?: number;
   firstSeenAt?: string; // ISO date
 };
 
@@ -52,7 +51,6 @@ export function parsePredictionCandidates(raw: string): CandidatePrediction[] {
           name: c.name,
           reasoning: c.reasoning,
           code: typeof r.code === "string" ? (r.code as string) : undefined,
-          basePrice: typeof r.basePrice === "number" ? (r.basePrice as number) : undefined,
           firstSeenAt: typeof r.firstSeenAt === "string" ? (r.firstSeenAt as string) : undefined,
         };
       });

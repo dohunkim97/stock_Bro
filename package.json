@@ -17,6 +17,7 @@
     "@anthropic-ai/sdk": "^0.110.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "iconv-lite": "^0.7.3",
     "lightweight-charts": "^5.2.0",
     "next": "16.2.10",
     "pg": "^8.22.0",
