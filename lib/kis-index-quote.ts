@@ -26,56 +26,6 @@ function toNumber(v: unknown): number {
   return Number.isFinite(n) ? n : NaN;
 }
 
-// Whether each market is currently in its trading session, purely from
-// KST weekday+time-of-day windows — deliberately does NOT know about
-// market holidays (KRX/US/HK closed days), since that needs its own
-// calendar data source per market. On a holiday this will say "On" for a
-// market that's actually closed; the price itself is still correct either
-// way (KIS just returns the last real close), only the on/off badge can be
-// briefly wrong. Computed from Asia/Seoul explicitly rather than the host's
-// own timezone, since Vercel's serverless functions run in UTC.
-type MarketKind = "krxDay" | "krxNightFutures" | "us" | "hk";
-
-function nowKst(): { day: number; minutes: number; month: number } {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Seoul",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    month: "numeric",
-    hourCycle: "h23",
-  }).formatToParts(new Date());
-  const get = (type: string) => parts.find((p) => p.type === type)!.value;
-  const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  return { day: dayMap[get("weekday")], minutes: Number(get("hour")) * 60 + Number(get("minute")), month: Number(get("month")) };
-}
-
-function isMarketLive(kind: MarketKind): boolean {
-  const { day, minutes, month } = nowKst();
-  const weekday = day >= 1 && day <= 5; // Mon-Fri
-  const isWeekdayEvening = day >= 1 && day <= 5;
-  const isWeekdayEarlyMorning = day >= 2 && day <= 6; // Tue-Sat = overnight tail of Mon-Fri evening starts
-
-  switch (kind) {
-    case "krxDay":
-      return weekday && minutes >= 9 * 60 && minutes <= 15 * 60 + 30;
-    case "krxNightFutures":
-      // 금 18:00 세션은 토 05:00까지 이어짐 — 시작 요일(월~금 저녁)과
-      // 이어지는 다음날 새벽(화~토)을 둘 다 봐야 한다.
-      return (isWeekdayEvening && minutes >= 18 * 60) || (isWeekdayEarlyMorning && minutes < 5 * 60);
-    case "us": {
-      // 3~11월은 대략 서머타임(EDT, UTC-4) 구간 — 정확한 전환일(3월 둘째
-      // 일요일/11월 첫째 일요일)까지는 안 보고 월 단위로만 근사한다.
-      const isDst = month >= 3 && month <= 11;
-      const openMin = isDst ? 22 * 60 + 30 : 23 * 60 + 30;
-      const closeMin = isDst ? 5 * 60 : 6 * 60;
-      return (isWeekdayEvening && minutes >= openMin) || (isWeekdayEarlyMorning && minutes < closeMin);
-    }
-    case "hk":
-      return weekday && ((minutes >= 10 * 60 + 30 && minutes < 13 * 60) || (minutes >= 14 * 60 && minutes < 17 * 60));
-  }
-}
-
 async function kisFetch(url: string, trId: string, params: Record<string, string>) {
   const appKey = process.env.KIS_APP_KEY;
   const appSecret = process.env.KIS_APP_SECRET;
@@ -100,6 +50,190 @@ async function kisFetch(url: string, trId: string, params: Record<string, string
   }
 }
 
+// ── 개장 여부 판정 ──────────────────────────────────────────────────────
+// 요일+시간대(항상 필요)에 더해, 공휴일까지 정확히 걸러낸다:
+//  - KRX(코스피/코스닥/코스피200/야간선물): KIS 국내휴장일조회 API로 실제 조회.
+//  - 미국(나스닥/다우산업): NYSE 공휴일을 규칙대로 계산(공휴일이 요일 기반
+//    규칙이라 알고리즘으로 항상 정확 — 부활절 기준 성금요일만 예외라 별도
+//    계산식을 쓴다).
+//  - 홍콩(홍콩H지수)만 예외로 남는다 — HKEX 휴장일 중 상당수가 음력 기준(춘절,
+//    단오 등)이라 별도 음력 캘린더 데이터 없이는 계산할 수 없다. 시간대만으로
+//    판정하므로 홍콩 공휴일엔 여전히 On으로 잘못 뜰 수 있다.
+type MarketKind = "krxDay" | "krxNightFutures" | "us" | "hk";
+
+function nowKst(): { y: number; m: number; d: number; weekday: number; minutes: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const get = (type: string) => parts.find((p) => p.type === type)!.value;
+  const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return {
+    y: Number(get("year")),
+    m: Number(get("month")),
+    d: Number(get("day")),
+    weekday: dayMap[get("weekday")],
+    minutes: Number(get("hour")) * 60 + Number(get("minute")),
+  };
+}
+
+function ymd(y: number, m: number, d: number): string {
+  return `${y}${String(m).padStart(2, "0")}${String(d).padStart(2, "0")}`;
+}
+
+function addDaysStr(y: number, m: number, d: number, delta: number): { y: number; m: number; d: number } {
+  const dt = new Date(Date.UTC(y, m - 1, d + delta));
+  return { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() };
+}
+
+// KIS의 국내휴장일조회(CTCA0903R)는 "가급적 1일 1회 호출" 요청 사항이 있어,
+// 실제 오늘 날짜 기준으로 하루에 한 번만 호출하도록 캐시한다. 한 번 조회하면
+// 기준일부터 ~10일치를 같이 돌려주므로, 그 기준일을 야간선물/미국장의
+// "전날" 케이스가 필요로 하는 가장 이른 날짜로 잡으면 오늘치까지 한 번에
+// 다 들어온다.
+let krxHolidayCache: { fetchedOnRealDay: string; days: Map<string, boolean> } = {
+  fetchedOnRealDay: "",
+  days: new Map(),
+};
+
+async function fetchKrxOpenDays(bassDt: string): Promise<Map<string, boolean>> {
+  const json = await kisFetch(
+    "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/chk-holiday",
+    "CTCA0903R",
+    { BASS_DT: bassDt, CTX_AREA_FK: "", CTX_AREA_NK: "" }
+  );
+  const rows: { bass_dt: string; opnd_yn: string }[] = Array.isArray(json?.output) ? json.output : [];
+  return new Map(rows.map((r) => [r.bass_dt, r.opnd_yn === "Y"]));
+}
+
+// 개장일이면 true, 휴장일이면 false, 조회 실패면 null(→ 요일/시간대 판단만
+// 신뢰하도록 기존 동작으로 대체).
+async function isKrxOpenDay(y: number, m: number, d: number): Promise<boolean | null> {
+  const dateStr = ymd(y, m, d);
+  if (krxHolidayCache.days.has(dateStr)) return krxHolidayCache.days.get(dateStr)!;
+
+  const real = nowKst();
+  const realToday = ymd(real.y, real.m, real.d);
+  if (krxHolidayCache.fetchedOnRealDay === realToday) return null; // 오늘 이미 시도했는데 이 날짜가 범위 밖이면 실패로 간주
+
+  const days = await fetchKrxOpenDays(dateStr);
+  if (days.size === 0) return null;
+  krxHolidayCache = { fetchedOnRealDay: realToday, days: new Map([...krxHolidayCache.days, ...days]) };
+  return krxHolidayCache.days.get(dateStr) ?? null;
+}
+
+function isUsMarketHoliday(y: number, m: number, d: number): boolean {
+  return usMarketHolidays(y).has(ymd(y, m, d));
+}
+
+let usHolidayCacheYear: number | null = null;
+let usHolidayCacheSet: Set<string> | null = null;
+
+function usMarketHolidays(year: number): Set<string> {
+  if (usHolidayCacheYear === year && usHolidayCacheSet) return usHolidayCacheSet;
+
+  const nthWeekday = (month: number, weekday: number, n: number): [number, number, number] => {
+    const first = new Date(Date.UTC(year, month - 1, 1));
+    const offset = (weekday - first.getUTCDay() + 7) % 7;
+    return [year, month, 1 + offset + (n - 1) * 7];
+  };
+  const lastWeekday = (month: number, weekday: number): [number, number, number] => {
+    const last = new Date(Date.UTC(year, month, 0));
+    const diff = (last.getUTCDay() - weekday + 7) % 7;
+    return [year, month, last.getUTCDate() - diff];
+  };
+  // Meeus/Jones/Butcher 그레고리력 부활절 계산 — 성금요일 = 부활절 이틀 전.
+  const easter = (): [number, number, number] => {
+    const a = year % 19;
+    const b = Math.floor(year / 100);
+    const c = year % 100;
+    const d2 = Math.floor(b / 4);
+    const e = b % 4;
+    const f = Math.floor((b + 8) / 25);
+    const g = Math.floor((b - f + 1) / 3);
+    const h = (19 * a + b - d2 - g + 15) % 30;
+    const i = Math.floor(c / 4);
+    const k = c % 4;
+    const l = (32 + 2 * e + 2 * i - h - k) % 7;
+    const mo = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * mo + 114) / 31);
+    const day = ((h + l - 7 * mo + 114) % 31) + 1;
+    return [year, month, day];
+  };
+  const observed = ([y, m, d]: [number, number, number]): [number, number, number] => {
+    const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    if (dow === 6) return [y, m, d - 1]; // 토요일 -> 금요일로 당김
+    if (dow === 0) return [y, m, d + 1]; // 일요일 -> 월요일로 미룸
+    return [y, m, d];
+  };
+  const minus = ([y, m, d]: [number, number, number], days: number): [number, number, number] => {
+    const dt = new Date(Date.UTC(y, m - 1, d - days));
+    return [dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate()];
+  };
+
+  const dates: [number, number, number][] = [
+    observed([year, 1, 1]), // New Year's Day
+    nthWeekday(1, 1, 3), // MLK Day - 1월 셋째 월요일
+    nthWeekday(2, 1, 3), // Presidents Day - 2월 셋째 월요일
+    minus(easter(), 2), // Good Friday
+    lastWeekday(5, 1), // Memorial Day - 5월 마지막 월요일
+    observed([year, 6, 19]), // Juneteenth
+    observed([year, 7, 4]), // Independence Day
+    nthWeekday(9, 1, 1), // Labor Day - 9월 첫째 월요일
+    nthWeekday(11, 4, 4), // Thanksgiving - 11월 넷째 목요일
+    observed([year, 12, 25]), // Christmas
+  ];
+
+  usHolidayCacheYear = year;
+  usHolidayCacheSet = new Set(dates.map(([y, m, d]) => ymd(y, m, d)));
+  return usHolidayCacheSet;
+}
+
+async function isMarketLive(kind: MarketKind): Promise<boolean> {
+  const { y, m, d, weekday, minutes } = nowKst();
+  const isWeekday = weekday >= 1 && weekday <= 5;
+  const isWeekdayEvening = weekday >= 1 && weekday <= 5;
+  const isWeekdayEarlyMorning = weekday >= 2 && weekday <= 6; // 월~금 저녁 세션이 이어지는 화~토 새벽
+
+  switch (kind) {
+    case "krxDay": {
+      if (!isWeekday || !(minutes >= 9 * 60 && minutes <= 15 * 60 + 30)) return false;
+      const open = await isKrxOpenDay(y, m, d);
+      return open ?? true; // 조회 실패 시 요일/시간대 판단만 신뢰
+    }
+    case "krxNightFutures": {
+      // 금 18:00 세션은 토 05:00까지 이어짐 — 이 세션이 "속한" 날짜는 항상
+      // 시작한 저녁의 KRX 개장일 여부로 판단한다(다음날 새벽이면 전날 날짜로).
+      const inWindow = (isWeekdayEvening && minutes >= 18 * 60) || (isWeekdayEarlyMorning && minutes < 5 * 60);
+      if (!inWindow) return false;
+      const belongsTo = isWeekdayEarlyMorning && minutes < 5 * 60 ? addDaysStr(y, m, d, -1) : { y, m, d };
+      const open = await isKrxOpenDay(belongsTo.y, belongsTo.m, belongsTo.d);
+      return open ?? true;
+    }
+    case "us": {
+      // 3~11월은 대략 서머타임(EDT, UTC-4) 구간 — 정확한 전환일(3월 둘째
+      // 일요일/11월 첫째 일요일)까지는 안 보고 월 단위로만 근사한다.
+      const isDst = m >= 3 && m <= 11;
+      const openMin = isDst ? 22 * 60 + 30 : 23 * 60 + 30;
+      const closeMin = isDst ? 5 * 60 : 6 * 60;
+      const inEvening = isWeekdayEvening && minutes >= openMin;
+      const inEarlyMorning = isWeekdayEarlyMorning && minutes < closeMin;
+      if (!inEvening && !inEarlyMorning) return false;
+      const belongsTo = inEarlyMorning ? addDaysStr(y, m, d, -1) : { y, m, d };
+      return !isUsMarketHoliday(belongsTo.y, belongsTo.m, belongsTo.d);
+    }
+    case "hk":
+      // 공휴일 미반영 — 위 파일 헤더 설명 참고.
+      return isWeekday && ((minutes >= 10 * 60 + 30 && minutes < 13 * 60) || (minutes >= 14 * 60 && minutes < 17 * 60));
+  }
+}
+
 // 국내지수(코스피/코스닥/코스피200) — 0001/1001/2001.
 async function fetchDomesticIndex(name: string, code: string): Promise<IndexQuote | null> {
   const json = await kisFetch(
@@ -110,7 +244,7 @@ async function fetchDomesticIndex(name: string, code: string): Promise<IndexQuot
   const o = json?.output ?? {};
   const price = toNumber(o.bstp_nmix_prpr);
   const changePct = toNumber(o.bstp_nmix_prdy_ctrt);
-  return Number.isFinite(price) && price > 0 ? { name, price, changePct, live: isMarketLive("krxDay") } : null;
+  return Number.isFinite(price) && price > 0 ? { name, price, changePct, live: await isMarketLive("krxDay") } : null;
 }
 
 // 해외지수 — 라이브 스냅샷(output1)이 비어있는 지수가 있어(다우 등), 일별
@@ -134,7 +268,7 @@ async function fetchOverseasIndex(name: string, code: string, kind: MarketKind):
   );
   if (!json) return null;
 
-  const live = isMarketLive(kind);
+  const live = await isMarketLive(kind);
   const o1 = json.output1 ?? {};
   const livePrice = toNumber(o1.ovrs_nmix_prpr);
   if (Number.isFinite(livePrice) && livePrice > 0) {
@@ -214,7 +348,7 @@ async function fetchKospi200NightFutures(): Promise<IndexQuote | null> {
   const price = toNumber(o.futs_prpr);
   const changePct = toNumber(o.futs_prdy_ctrt);
   return Number.isFinite(price) && price > 0
-    ? { name: "코스피200 야간선물", price, changePct, live: isMarketLive("krxNightFutures") }
+    ? { name: "코스피200 야간선물", price, changePct, live: await isMarketLive("krxNightFutures") }
     : null;
 }
 
