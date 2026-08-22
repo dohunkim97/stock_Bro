@@ -239,14 +239,6 @@ export async function PredictionReport() {
               <span style={badgeStyle}>3</span>
               <span style={blockLabelStyle}>종목 근거</span>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
-              {candidates.map((c) => (
-                <div key={c.name} style={{ fontSize: 12, lineHeight: 1.6 }}>
-                  <span style={{ fontWeight: 700, color: "var(--text)" }}>{c.name}</span>
-                  <span style={{ color: "var(--dim)" }}> — {renderBold(c.reasoning)}</span>
-                </div>
-              ))}
-            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {details.map((d) => (
                 <DetailCard key={d.name} d={d} />
