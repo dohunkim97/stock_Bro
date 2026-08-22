@@ -10,7 +10,7 @@ import { ThemeNetFlowPanel } from "./theme-net-flow-panel";
 import { ThemeNetFlowStocksPanel } from "./theme-net-flow-stocks-panel";
 import { MoneyFlowTakePanel } from "./money-flow-take-panel";
 import { aggregateSectors } from "@/lib/sector-aggregation";
-import { applyThemes, onlyThemed } from "@/lib/theme-lookup";
+import { applyThemes, onlyThemed, filterToCurrentTheme } from "@/lib/theme-lookup";
 import { rankSectorPerformance, dedupeByStock } from "@/lib/sector-performance";
 import { rankMoneyFlowByDay, rankMoneyFlowStocks, rankThemeNetFlow } from "@/lib/money-flow";
 import type { WeekInfo } from "@/lib/week";
@@ -54,17 +54,23 @@ export async function DayView({
 
   // ThemeDailyFlow already carries the theme (as `theme`, mapped to `sector`
   // for lib/money-flow.ts's shared input shape) and is unique per
-  // (date, code) — no re-tagging or same-day dedup needed here, unlike the
-  // old ranking-derived path.
-  const moneyFlowThemedEntries = moneyFlowEntries.map((e) => ({
-    date: e.date,
-    name: e.name,
-    code: e.code as string | null,
-    sector: e.theme,
-    changePct: e.changePct,
-    tradingValue: e.tradingValue as string | null,
-    marketCap: e.marketCap,
-  }));
+  // (date, code) — no same-day dedup needed here, unlike the old
+  // ranking-derived path. filterToCurrentTheme still matters: a stock's
+  // `theme` on each row is a snapshot from whenever that row synced, so a
+  // reclassified stock (e.g. moved from 로봇·휴머노이드 to 반도체) otherwise
+  // keeps showing up under its old theme too, with a stale changePct from
+  // whenever it was last synced under that label.
+  const moneyFlowThemedEntries = await filterToCurrentTheme(
+    moneyFlowEntries.map((e) => ({
+      date: e.date,
+      name: e.name,
+      code: e.code as string | null,
+      sector: e.theme,
+      changePct: e.changePct,
+      tradingValue: e.tradingValue as string | null,
+      marketCap: e.marketCap,
+    }))
+  );
   const moneyFlowThemes = rankMoneyFlowByDay(moneyFlowThemedEntries, moneyFlowDays);
   const moneyFlowStockGroups = rankMoneyFlowStocks(moneyFlowThemedEntries, moneyFlowDays, 6, 6);
 
@@ -103,7 +109,6 @@ export async function DayView({
             TOP종목
           </div>
           <StockTable
-            date={date}
             tabs={[
               {
                 key: "gainer",
@@ -111,9 +116,7 @@ export async function DayView({
                 badgeText: "상승 TOP",
                 badgeColor: "var(--up)",
                 accentVar: "var(--up)",
-                accentSoftVar: "var(--up-soft)",
                 entries: gainerEntries,
-                showVolumeField: false,
               },
               {
                 key: "loser",
@@ -121,9 +124,7 @@ export async function DayView({
                 badgeText: "하락 TOP",
                 badgeColor: "var(--down)",
                 accentVar: "var(--down)",
-                accentSoftVar: "var(--down-soft)",
                 entries: loserEntries,
-                showVolumeField: false,
               },
               {
                 key: "volume",
@@ -131,9 +132,7 @@ export async function DayView({
                 badgeText: "거래 TOP",
                 badgeColor: "var(--dim)",
                 accentVar: "var(--accent)",
-                accentSoftVar: "var(--accent-soft)",
                 entries: volumeEntries,
-                showVolumeField: true,
               },
             ]}
           />

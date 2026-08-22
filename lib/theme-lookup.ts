@@ -20,6 +20,32 @@ export async function applyThemes<T extends { name: string; sector: string }>(
   });
 }
 
+// ThemeDailyFlow/ThemeNetFlow rows carry a `theme` snapshot taken at sync
+// time, not a live join — so when a stock gets reclassified (e.g. from
+// 로봇·휴머노이드 to 반도체 as its ETF-holdings source changes), its older
+// rows keep showing up under the theme it no longer belongs to, with
+// whatever changePct/net figure was last synced under that stale label.
+// Drops any entry whose stored theme no longer matches the stock's current
+// StockTheme.theme so a reclassified stock only ever appears under its
+// current theme. Only filters on a proven mismatch — an entry for a code
+// with no current StockTheme row (e.g. removed entirely) is left alone
+// rather than guessed at.
+export async function filterToCurrentTheme<T extends { code: string | null; sector: string }>(
+  entries: T[]
+): Promise<T[]> {
+  const codes = [...new Set(entries.map((e) => e.code).filter((c): c is string => !!c))];
+  if (codes.length === 0) return entries;
+
+  const themes = await prisma.stockTheme.findMany({ where: { code: { in: codes } } });
+  const themeByCode = new Map(themes.map((t) => [t.code!, t.theme]));
+
+  return entries.filter((e) => {
+    if (!e.code) return true;
+    const current = themeByCode.get(e.code);
+    return current === undefined || current === e.sector;
+  });
+}
+
 // Like applyThemes, but drops everything that has no theme match instead of
 // falling back to the raw KRX sector — used for a "테마상위" ranking that
 // should only ever show real themes, not broad sector names standing in.

@@ -2,10 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AddEntryForm } from "./add-entry-form";
 import { chgColorVar, formatChg } from "@/lib/format";
 import { SORT_OPTIONS, sortEntries } from "@/lib/sort";
-import { STORAGE_CAP } from "@/lib/constants";
 import type { DailyEntry } from "@/app/generated/prisma/client";
 
 // 예전엔 위 10개만 보여주고 "더보기"를 눌러야 전체 목록을 모달로 봤는데,
@@ -198,15 +196,13 @@ export type RankingTab = {
   badgeText: string;
   badgeColor: string;
   accentVar: string;
-  accentSoftVar: string;
   entries: DailyEntry[];
-  showVolumeField: boolean;
 };
 
-export function StockTable({ date, tabs }: { date: string; tabs: RankingTab[] }) {
+export function StockTable({ tabs }: { tabs: RankingTab[] }) {
   const [activeKey, setActiveKey] = useState(tabs[0].key);
   const active = tabs.find((t) => t.key === activeKey) ?? tabs[0];
-  const { key: listType, badgeText, badgeColor, accentVar, accentSoftVar, entries, showVolumeField } = active;
+  const { badgeText, badgeColor, accentVar, entries } = active;
 
   const [market, setMarket] = useState<(typeof MARKETS)[number]>("코스피");
   const [sortKey, setSortKey] = useState("rank");
@@ -345,16 +341,6 @@ export function StockTable({ date, tabs }: { date: string; tabs: RankingTab[] })
           </div>
         </div>
       </div>
-
-      {entries.length < STORAGE_CAP && (
-        <AddEntryForm
-          date={date}
-          listType={listType}
-          accentVar={accentVar}
-          accentSoftVar={accentSoftVar}
-          showVolumeField={showVolumeField}
-        />
-      )}
     </section>
   );
 }
