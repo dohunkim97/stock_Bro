@@ -1,4 +1,5 @@
 import { StockTable } from "./stock-table";
+import { HeightMatchedRow } from "./height-matched-row";
 import { WatchlistNews } from "./watchlist-news";
 import { TelegramNewsPanel } from "./telegram-news";
 import { AutoRefresh } from "./auto-refresh";
@@ -107,9 +108,12 @@ export async function DayView({
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       {date === todayISO() && <AutoRefresh />}
 
-      {/* 왼쪽: TOP종목. 오른쪽: 업종/테마 상위 + 오늘 브리핑 — TOP종목 칸이 오른쪽(콘텐츠 기준) 높이에 맞춰 늘어남 */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.15fr", gap: 20, alignItems: "stretch" }}>
-        <div>
+      {/* 왼쪽: TOP종목. 오른쪽: 업종/테마 상위 + 오늘 브리핑 — TOP종목의 행 목록은 원래 오른쪽보다
+          훨씬 길어서, CSS의 stretch만으로는 왼쪽을 오른쪽 높이로 "줄일" 수 없다(stretch는 짧은 쪽을
+          늘리기만 함). HeightMatchedRow가 오른쪽의 실제 렌더링 높이를 측정해서 왼쪽에 그대로
+          씌우고, 넘치는 종목은 StockTable 내부에서 스크롤된다. */}
+      <HeightMatchedRow
+        left={
           <StockTable
             tabs={[
               {
@@ -138,16 +142,17 @@ export async function DayView({
               },
             ]}
           />
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "stretch" }}>
-            <SectorLeadersPanel compact groups={[{ title: "업종상위", items: sectorLeaders }]} />
-            <SectorLeadersPanel compact groups={[{ title: "테마상위", items: themeLeaders }]} />
-          </div>
-          <AiBriefing date={date} slot={briefingSlot} contributors={agg.contributors} />
-        </div>
-      </div>
+        }
+        right={
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "stretch" }}>
+              <SectorLeadersPanel compact groups={[{ title: "업종상위", items: sectorLeaders }]} />
+              <SectorLeadersPanel compact groups={[{ title: "테마상위", items: themeLeaders }]} />
+            </div>
+            <AiBriefing date={date} slot={briefingSlot} contributors={agg.contributors} />
+          </>
+        }
+      />
 
       {/* 자금 흐름 2x2 — [시장 관심 상위 테마|테마별 종목] 위, [순매수·순매도 상위|그 종목] 아래.
           종목 칸(오른쪽)에 더 많은 종목을 보여주기 위해 왼쪽(데이터 표)보다 넓게 배분.
