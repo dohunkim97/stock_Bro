@@ -29,9 +29,12 @@ export async function applyThemes<T extends { name: string; sector: string }>(
 // StockTheme.theme so a reclassified stock only ever appears under its
 // current theme. Only filters on a proven mismatch — an entry for a code
 // with no current StockTheme row (e.g. removed entirely) is left alone
-// rather than guessed at.
-export async function filterToCurrentTheme<T extends { code: string | null; sector: string }>(
-  entries: T[]
+// rather than guessed at. Takes a themeOf accessor rather than assuming a
+// field name since callers key their theme differently (`sector` for
+// lib/money-flow.ts's MoneyFlowInput, `theme` for its ThemeNetFlowInput).
+export async function filterToCurrentTheme<T extends { code: string | null }>(
+  entries: T[],
+  themeOf: (entry: T) => string
 ): Promise<T[]> {
   const codes = [...new Set(entries.map((e) => e.code).filter((c): c is string => !!c))];
   if (codes.length === 0) return entries;
@@ -42,7 +45,7 @@ export async function filterToCurrentTheme<T extends { code: string | null; sect
   return entries.filter((e) => {
     if (!e.code) return true;
     const current = themeByCode.get(e.code);
-    return current === undefined || current === e.sector;
+    return current === undefined || current === themeOf(e);
   });
 }
 

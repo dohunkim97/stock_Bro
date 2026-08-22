@@ -69,12 +69,17 @@ export async function DayView({
       changePct: e.changePct,
       tradingValue: e.tradingValue as string | null,
       marketCap: e.marketCap,
-    }))
+    })),
+    (e) => e.sector
   );
   const moneyFlowThemes = rankMoneyFlowByDay(moneyFlowThemedEntries, moneyFlowDays);
   const moneyFlowStockGroups = rankMoneyFlowStocks(moneyFlowThemedEntries, moneyFlowDays, 6, 6);
 
-  const netFlowRank = rankThemeNetFlow(
+  // Same staleness problem as moneyFlowThemedEntries above, for ThemeNetFlow
+  // (외국인+기관 순매수) instead of ThemeDailyFlow (거래대금/등락률) — a
+  // reclassified stock otherwise still shows up under its old theme's
+  // 순매수·순매도 panel with a stale net figure.
+  const netFlowThemedEntries = await filterToCurrentTheme(
     netFlowEntries.map((e) => ({
       date: e.date,
       name: e.name,
@@ -83,9 +88,9 @@ export async function DayView({
       foreignNet: e.foreignNet,
       institutionNet: e.institutionNet,
     })),
-    5,
-    6
+    (e) => e.theme
   );
+  const netFlowRank = rankThemeNetFlow(netFlowThemedEntries, 5, 6);
 
   const todayEntries = dedupeByStock(
     [...gainerEntries, ...loserEntries, ...volumeEntries].map((e) => ({

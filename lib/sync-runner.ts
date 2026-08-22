@@ -8,6 +8,7 @@ import { syncThemeDailyFlow, getThemeDailyFlowInRange } from "@/lib/theme-daily-
 import { syncThemeNetFlow, getThemeNetFlowInRange } from "@/lib/theme-net-flow";
 import { rankMoneyFlowByDay, rankThemeNetFlow } from "@/lib/money-flow";
 import { generateMoneyFlowTake } from "@/lib/money-flow-take";
+import { filterToCurrentTheme } from "@/lib/theme-lookup";
 
 // The KIS live-sync path already pulls one real news headline per stock
 // (lib/kis-ranking.ts, for the "📰 이슈" line on the ranking tables) — this
@@ -79,18 +80,27 @@ async function generateTodaysMoneyFlowTake(date: string): Promise<void> {
       getThemeDailyFlowInRange(days[0], date),
       getThemeNetFlowInRange(days[0], date),
     ]);
-    const themed = flowRows.map((r) => ({
-      date: r.date,
-      name: r.name,
-      code: r.code,
-      sector: r.theme,
-      changePct: r.changePct,
-      tradingValue: r.tradingValue,
-      marketCap: r.marketCap,
-    }));
+    // filterToCurrentTheme matters here too: a reclassified stock's older
+    // rows would otherwise still count toward its old theme's totals, which
+    // is exactly the stale-theme mismatch users see in the money-flow panels
+    // themselves (see components/market/day-view.tsx) — Golgoo's take should
+    // reason from the same current-theme-only view those panels show.
+    const themed = await filterToCurrentTheme(
+      flowRows.map((r) => ({
+        date: r.date,
+        name: r.name,
+        code: r.code,
+        sector: r.theme,
+        changePct: r.changePct,
+        tradingValue: r.tradingValue,
+        marketCap: r.marketCap,
+      })),
+      (e) => e.sector
+    );
+    const netRowsThemed = await filterToCurrentTheme(netRows, (e) => e.theme);
 
     const table = rankMoneyFlowByDay(themed, days);
-    const netFlow = rankThemeNetFlow(netRows);
+    const netFlow = rankThemeNetFlow(netRowsThemed);
     await generateMoneyFlowTake(date, days.length, table, netFlow);
   } catch {
     // best-effort
