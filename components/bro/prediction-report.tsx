@@ -1,6 +1,7 @@
 import { getLatestPrediction, parsePredictionCandidates, parsePredictionSectors } from "@/lib/prediction-scoring";
 import { weekInfoFromKey } from "@/lib/week";
 import { renderBold } from "@/components/ui/rich-text";
+import { CandidateDetailModal } from "@/components/bro/candidate-detail-modal";
 
 const panelStyle: React.CSSProperties = {
   background: "var(--panel)",
@@ -117,9 +118,9 @@ export async function PredictionReport() {
           <div style={blockStyle}>
             <div style={blockHeaderStyle}>
               <span style={badgeStyle}>3</span>
-              <span style={blockLabelStyle}>예상 종목 근거</span>
+              <span style={blockLabelStyle}>종목 근거</span>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
               {candidates.map((c) => (
                 <div key={c.name} style={{ fontSize: 12, lineHeight: 1.6 }}>
                   <span style={{ fontWeight: 700, color: "var(--text)" }}>{c.name}</span>
@@ -127,6 +128,7 @@ export async function PredictionReport() {
                 </div>
               ))}
             </div>
+            <CandidateDetailModal />
           </div>
         )}
       </div>
