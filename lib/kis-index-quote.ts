@@ -19,11 +19,61 @@ import { todayISO, toYYYYMMDD } from "@/lib/dates";
 
 const FETCH_TIMEOUT_MS = 8000;
 
-export type IndexQuote = { name: string; price: number; changePct: number };
+export type IndexQuote = { name: string; price: number; changePct: number; live: boolean };
 
 function toNumber(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : NaN;
+}
+
+// Whether each market is currently in its trading session, purely from
+// KST weekday+time-of-day windows — deliberately does NOT know about
+// market holidays (KRX/US/HK closed days), since that needs its own
+// calendar data source per market. On a holiday this will say "On" for a
+// market that's actually closed; the price itself is still correct either
+// way (KIS just returns the last real close), only the on/off badge can be
+// briefly wrong. Computed from Asia/Seoul explicitly rather than the host's
+// own timezone, since Vercel's serverless functions run in UTC.
+type MarketKind = "krxDay" | "krxNightFutures" | "us" | "hk";
+
+function nowKst(): { day: number; minutes: number; month: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Seoul",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "numeric",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const get = (type: string) => parts.find((p) => p.type === type)!.value;
+  const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return { day: dayMap[get("weekday")], minutes: Number(get("hour")) * 60 + Number(get("minute")), month: Number(get("month")) };
+}
+
+function isMarketLive(kind: MarketKind): boolean {
+  const { day, minutes, month } = nowKst();
+  const weekday = day >= 1 && day <= 5; // Mon-Fri
+  const isWeekdayEvening = day >= 1 && day <= 5;
+  const isWeekdayEarlyMorning = day >= 2 && day <= 6; // Tue-Sat = overnight tail of Mon-Fri evening starts
+
+  switch (kind) {
+    case "krxDay":
+      return weekday && minutes >= 9 * 60 && minutes <= 15 * 60 + 30;
+    case "krxNightFutures":
+      // 금 18:00 세션은 토 05:00까지 이어짐 — 시작 요일(월~금 저녁)과
+      // 이어지는 다음날 새벽(화~토)을 둘 다 봐야 한다.
+      return (isWeekdayEvening && minutes >= 18 * 60) || (isWeekdayEarlyMorning && minutes < 5 * 60);
+    case "us": {
+      // 3~11월은 대략 서머타임(EDT, UTC-4) 구간 — 정확한 전환일(3월 둘째
+      // 일요일/11월 첫째 일요일)까지는 안 보고 월 단위로만 근사한다.
+      const isDst = month >= 3 && month <= 11;
+      const openMin = isDst ? 22 * 60 + 30 : 23 * 60 + 30;
+      const closeMin = isDst ? 5 * 60 : 6 * 60;
+      return (isWeekdayEvening && minutes >= openMin) || (isWeekdayEarlyMorning && minutes < closeMin);
+    }
+    case "hk":
+      return weekday && ((minutes >= 10 * 60 + 30 && minutes < 13 * 60) || (minutes >= 14 * 60 && minutes < 17 * 60));
+  }
 }
 
 async function kisFetch(url: string, trId: string, params: Record<string, string>) {
@@ -60,12 +110,12 @@ async function fetchDomesticIndex(name: string, code: string): Promise<IndexQuot
   const o = json?.output ?? {};
   const price = toNumber(o.bstp_nmix_prpr);
   const changePct = toNumber(o.bstp_nmix_prdy_ctrt);
-  return Number.isFinite(price) && price > 0 ? { name, price, changePct } : null;
+  return Number.isFinite(price) && price > 0 ? { name, price, changePct, live: isMarketLive("krxDay") } : null;
 }
 
 // 해외지수 — 라이브 스냅샷(output1)이 비어있는 지수가 있어(다우 등), 일별
 // 시세(output2)의 최근 값으로도 계산할 수 있게 두 경로 다 시도한다.
-async function fetchOverseasIndex(name: string, code: string): Promise<IndexQuote | null> {
+async function fetchOverseasIndex(name: string, code: string, kind: MarketKind): Promise<IndexQuote | null> {
   const end = toYYYYMMDD(todayISO());
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - 14);
@@ -84,17 +134,18 @@ async function fetchOverseasIndex(name: string, code: string): Promise<IndexQuot
   );
   if (!json) return null;
 
+  const live = isMarketLive(kind);
   const o1 = json.output1 ?? {};
   const livePrice = toNumber(o1.ovrs_nmix_prpr);
   if (Number.isFinite(livePrice) && livePrice > 0) {
-    return { name, price: livePrice, changePct: toNumber(o1.prdy_ctrt) };
+    return { name, price: livePrice, changePct: toNumber(o1.prdy_ctrt), live };
   }
 
   const rows: { ovrs_nmix_prpr: string }[] = Array.isArray(json.output2) ? json.output2 : [];
   const latest = toNumber(rows[0]?.ovrs_nmix_prpr);
   const prev = toNumber(rows[1]?.ovrs_nmix_prpr);
   if (Number.isFinite(latest) && latest > 0 && Number.isFinite(prev) && prev > 0) {
-    return { name, price: latest, changePct: ((latest - prev) / prev) * 100 };
+    return { name, price: latest, changePct: ((latest - prev) / prev) * 100, live };
   }
   return null;
 }
@@ -162,7 +213,9 @@ async function fetchKospi200NightFutures(): Promise<IndexQuote | null> {
   const o = json?.output1 ?? {};
   const price = toNumber(o.futs_prpr);
   const changePct = toNumber(o.futs_prdy_ctrt);
-  return Number.isFinite(price) && price > 0 ? { name: "코스피200 야간선물", price, changePct } : null;
+  return Number.isFinite(price) && price > 0
+    ? { name: "코스피200 야간선물", price, changePct, live: isMarketLive("krxNightFutures") }
+    : null;
 }
 
 // best-effort per index — one feed being down (KIS rate limit, overseas
@@ -174,9 +227,9 @@ export async function getMarketIndexQuotes(): Promise<IndexQuote[]> {
     fetchDomesticIndex("코스닥", "1001"),
     fetchDomesticIndex("코스피200", "2001"),
     fetchKospi200NightFutures(),
-    fetchOverseasIndex("나스닥", "COMP"),
-    fetchOverseasIndex("다우산업", ".DJI"),
-    fetchOverseasIndex("홍콩H지수", "HSCE"),
+    fetchOverseasIndex("나스닥", "COMP", "us"),
+    fetchOverseasIndex("다우산업", ".DJI", "us"),
+    fetchOverseasIndex("홍콩H지수", "HSCE", "hk"),
   ]);
   return results.filter((r): r is IndexQuote => r !== null);
 }

@@ -151,7 +151,7 @@ export async function DayView({
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 0.85fr", gap: 16, alignItems: "stretch" }}>
               <SectorLeadersPanel compact groups={[{ title: "업종상위", items: sectorLeaders }]} />
               <SectorLeadersPanel compact groups={[{ title: "테마상위", items: themeLeaders }]} />
-              <IndexQuotePanel quotes={indexQuotes} />
+              <IndexQuotePanel initialQuotes={indexQuotes} />
             </div>
             <AiBriefing date={date} slot={briefingSlot} contributors={agg.contributors} />
           </>
