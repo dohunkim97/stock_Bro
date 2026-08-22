@@ -84,7 +84,7 @@ export async function EarningsAnalysis({ code }: { code: string }) {
   const rows = buildRows(history, quote?.price ?? 0, quote?.sharesOutstanding ?? 0);
 
   return (
-    <section style={panelStyle}>
+    <section style={{ ...panelStyle, height: "100%" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
         <span style={{ fontWeight: 700, fontSize: 14.5 }}>기업실적분석</span>
         <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--faint)" }}>연간 · IFRS 연결</span>

@@ -210,3 +210,14 @@ model TelegramNews {
 
   @@unique([chatId, messageId])
 }
+
+// A handful of short "이 회사가 실제로 뭘 파는가" keywords per stock (see
+// lib/company-keywords.ts), LLM-extracted from real news headlines — not
+// from StockMaster.sector/industry, which are broad KRX classifications, not
+// product-level. Cached per code and only re-extracted after REFRESH_DAYS so
+// 종목상세 doesn't re-run an LLM call on every single page view.
+model CompanyKeywords {
+  code      String   @id
+  keywords  String
+  updatedAt DateTime @updatedAt
+}

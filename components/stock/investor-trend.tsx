@@ -18,9 +18,17 @@ function colorFor(n: number): string {
 
 export async function InvestorTrend({ code }: { code: string }) {
   const rows = await fetchInvestorTrend(code, 10);
+  const totals = rows.reduce(
+    (acc, r) => ({
+      individual: acc.individual + r.individual,
+      foreign: acc.foreign + r.foreign,
+      institution: acc.institution + r.institution,
+    }),
+    { individual: 0, foreign: 0, institution: 0 }
+  );
 
   return (
-    <section style={panelStyle}>
+    <section style={{ ...panelStyle, height: "100%" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
         <span style={{ fontWeight: 700, fontSize: 14.5 }}>투자자별 매매동향</span>
         <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--faint)" }}>
@@ -44,12 +52,34 @@ export async function InvestorTrend({ code }: { code: string }) {
             {rows.map((r) => (
               <TrendRow key={r.date} row={r} />
             ))}
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                padding: "9px 0",
+                borderTop: "1px solid var(--border2)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {rows.length}일 누적
+            </div>
+            <div style={{ ...totalCellStyle, color: colorFor(totals.individual) }}>{signed(totals.individual)}</div>
+            <div style={{ ...totalCellStyle, color: colorFor(totals.foreign) }}>{signed(totals.foreign)}</div>
+            <div style={{ ...totalCellStyle, color: colorFor(totals.institution) }}>{signed(totals.institution)}</div>
           </div>
         </div>
       )}
     </section>
   );
 }
+
+const totalCellStyle: React.CSSProperties = {
+  fontSize: 12.5,
+  fontWeight: 700,
+  textAlign: "right",
+  padding: "9px 0",
+  borderTop: "1px solid var(--border2)",
+};
 
 function TrendRow({ row }: { row: InvestorTrendRow }) {
   const cellStyle: React.CSSProperties = {
