@@ -54,10 +54,11 @@ export async function InvestorTrend({ code }: { code: string }) {
             ))}
             <div
               style={{
-                fontSize: 11.5,
+                fontSize: 10,
                 fontWeight: 700,
                 padding: "9px 0",
                 borderTop: "1px solid var(--border2)",
+                whiteSpace: "nowrap",
               }}
             >
               {rows.length}일 누적

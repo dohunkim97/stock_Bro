@@ -5,6 +5,7 @@ import { TelegramNewsPanel } from "./telegram-news";
 import { AutoRefresh } from "./auto-refresh";
 import { AiBriefing } from "./ai-briefing";
 import { SectorLeadersPanel } from "./sector-leaders-panel";
+import { IndexQuotePanel } from "./index-quote-panel";
 import { MoneyFlowPanel } from "./money-flow-panel";
 import { MoneyFlowStocksPanel } from "./money-flow-stocks-panel";
 import { ThemeNetFlowPanel } from "./theme-net-flow-panel";
@@ -14,6 +15,7 @@ import { aggregateSectors } from "@/lib/sector-aggregation";
 import { applyThemes, onlyThemed, filterToCurrentTheme } from "@/lib/theme-lookup";
 import { rankSectorPerformance, dedupeByStock } from "@/lib/sector-performance";
 import { rankMoneyFlowByDay, rankMoneyFlowStocks, rankThemeNetFlow } from "@/lib/money-flow";
+import { getMarketIndexQuotes } from "@/lib/kis-index-quote";
 import type { WeekInfo } from "@/lib/week";
 import { todayISO } from "@/lib/dates";
 import type { DailyEntry, Watchlist, ThemeDailyFlow, ThemeNetFlow } from "@/app/generated/prisma/client";
@@ -103,6 +105,7 @@ export async function DayView({
   );
   const sectorLeaders = rankSectorPerformance(todayEntries);
   const themeLeaders = rankSectorPerformance(await onlyThemed(todayEntries));
+  const indexQuotes = await getMarketIndexQuotes();
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -145,9 +148,10 @@ export async function DayView({
         }
         right={
           <>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "stretch" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 0.85fr", gap: 16, alignItems: "stretch" }}>
               <SectorLeadersPanel compact groups={[{ title: "업종상위", items: sectorLeaders }]} />
               <SectorLeadersPanel compact groups={[{ title: "테마상위", items: themeLeaders }]} />
+              <IndexQuotePanel quotes={indexQuotes} />
             </div>
             <AiBriefing date={date} slot={briefingSlot} contributors={agg.contributors} />
           </>
