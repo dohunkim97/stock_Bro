@@ -107,12 +107,9 @@ export async function DayView({
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       {date === todayISO() && <AutoRefresh />}
 
-      {/* 왼쪽: TOP종목. 오른쪽: 업종/테마 상위 + 오늘 브리핑 — 오른쪽 전체 높이를 TOP종목과 맞춤 */}
+      {/* 왼쪽: TOP종목. 오른쪽: 업종/테마 상위 + 오늘 브리핑 — TOP종목 칸이 오른쪽(콘텐츠 기준) 높이에 맞춰 늘어남 */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1.15fr", gap: 20, alignItems: "stretch" }}>
         <div>
-          <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 7, letterSpacing: "-0.01em" }}>
-            TOP종목
-          </div>
           <StockTable
             tabs={[
               {

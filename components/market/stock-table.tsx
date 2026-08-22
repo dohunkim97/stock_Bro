@@ -8,8 +8,8 @@ import type { DailyEntry } from "@/app/generated/prisma/client";
 
 // 예전엔 위 10개만 보여주고 "더보기"를 눌러야 전체 목록을 모달로 봤는데,
 // 지금은 이 칸 안에서 바로 스크롤해서 전체 종목을 다 볼 수 있게 바꿨다 —
-// LIST_MAX_HEIGHT는 대략 10줄 높이라 기본적으로 보이는 범위는 그대로다.
-const LIST_MAX_HEIGHT = 420;
+// 목록 칸은 옆 사이드바(업종상위+테마상위+AI 브리핑) 높이에 맞춰 늘어나고,
+// 그 안에서 넘치는 종목은 스크롤된다.
 const MARKETS = ["코스피", "코스닥"] as const;
 
 // sortKey undefined ("#") means that column isn't clickable — everything
@@ -228,7 +228,11 @@ export function StockTable({ tabs }: { tabs: RankingTab[] }) {
   );
 
   return (
-    <section style={panelStyle}>
+    <section style={{ ...panelStyle, display: "flex", flexDirection: "column", height: "100%" }}>
+      <div style={{ fontWeight: 800, fontSize: 15, letterSpacing: "-0.01em", padding: "12px 16px 0" }}>
+        TOP종목
+      </div>
+
       <div
         style={{
           display: "flex",
@@ -276,8 +280,8 @@ export function StockTable({ tabs }: { tabs: RankingTab[] }) {
         {controls}
       </div>
 
-      <div style={{ overflowX: "auto" }}>
-        <div style={{ minWidth: 500 }}>
+      <div style={{ overflowX: "auto", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        <div style={{ minWidth: 500, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <div
             style={{
               display: "grid",
@@ -334,7 +338,7 @@ export function StockTable({ tabs }: { tabs: RankingTab[] }) {
             </div>
           )}
 
-          <div style={{ maxHeight: LIST_MAX_HEIGHT, overflowY: "auto" }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
             {sorted.map((s) => (
               <Row key={s.id} s={s} cols={COLLAPSED_COLS} expanded={false} />
             ))}
