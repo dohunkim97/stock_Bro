@@ -30,6 +30,36 @@ export type KisNewsItem = {
   stockName?: string;
 };
 
+// "우리기술투자 급등세 기록중" 같은, 이 종목이 움직이고 있다는 사실 자체만
+// 되풀이하는 자동생성성 캡션 — 왜 움직이는지에 대한 정보가 전혀 없다.
+// NOISE_TITLE_PATTERN(공시/집계성 기사)과 달리 이건 걸러내지 않고 "다른 후보가
+// 없을 때만 쓰는 최후의 수단"으로 격을 낮추는 용도라 exported해서 pickBestIssue
+// 쪽에서 순위를 매기는 데 쓴다. 다만 "…신고가 경신, 전일 외국인 대량 순매수"처럼
+// 쉼표 뒤에 진짜 이유가 붙어있으면 이 패턴에 걸려도 정보가 있는 걸로 쳐야 해서,
+// hasReasonClause와 같이 써야 한다 — 이 패턴 하나만으로 판단하지 말 것.
+const PRICE_ACTION_ONLY_PATTERN =
+  /(급등세|급락세|강세|약세|상한가|하한가|신고가|신저가|상승세|하락세|거래량\s*몰림)\s*(를\s*)?(기록|경신|지속|이어가|전환|보이)/;
+
+// 쉼표 뒤에 어느 정도 길이 있는 절이 더 있으면("…경신, 전일 외국인 대량
+// 순매수") 앞쪽에 가격움직임 단어가 섞여 있어도 이유가 담긴 기사로 본다 —
+// PRICE_ACTION_ONLY_PATTERN만으로 판단하면 이런 제목까지 오탐으로 걸러낸다.
+function hasReasonClause(title: string): boolean {
+  const parts = title
+    .split(/[,、]/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return parts.length > 1 && parts[parts.length - 1].length >= 6;
+}
+
+// 종목당 최대 3건까지 받아오는 후보 중, 가격 움직임만 되풀이하는 캡션 말고
+// "왜 움직였는지"가 담긴 기사(공시/이슈/테마 언급 등)를 우선한다 — 첫 번째로
+// 찾은 것을 그냥 쓰던 예전 방식은 정작 이유를 담은 기사가 2·3번째에 있어도
+// 놓쳤다.
+export function pickBestIssue(candidates: KisNewsItem[]): KisNewsItem | undefined {
+  const informative = candidates.find((n) => hasReasonClause(n.title) || !PRICE_ACTION_ONLY_PATTERN.test(n.title));
+  return informative ?? candidates[0];
+}
+
 // 종합 시황/공시(제목) — 국내주식-141, tr_id FHKST01011800.
 //
 // Called with FID_INPUT_ISCD blank ("전체"), this turns out to be a generic
