@@ -11,7 +11,7 @@
 
 import { getKisAccessToken } from "@/lib/kis-token";
 import { fetchKisQuote } from "@/lib/kis-quote";
-import { fetchKisNewsForCodes } from "@/lib/kis-news";
+import { fetchKisNewsForCodes, pickBestIssue } from "@/lib/kis-news";
 import { isPreferredStock } from "@/lib/stock-filters";
 
 const FLUCTUATION_URL = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/ranking/fluctuation";
@@ -213,8 +213,9 @@ async function enrichWithKisQuote(rows: KisRankRow[]): Promise<void> {
             if (!r.tradingValue) r.tradingValue = q.tradingValue;
           }
         }
-        if (news[0]) {
-          for (const r of targets) r.issue = news[0].title;
+        const best = pickBestIssue(news);
+        if (best) {
+          for (const r of targets) r.issue = best.title;
         }
       })
     );
