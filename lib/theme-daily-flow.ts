@@ -129,7 +129,7 @@ export async function backfillThemeDailyFlow(
           return {
             date,
             code: r!.code,
-            name: r!.name,
+            name: t.name,
             theme: t.theme,
             tradingValue: formatWon(r!.tradingValue),
             changePct: r!.changePct,
