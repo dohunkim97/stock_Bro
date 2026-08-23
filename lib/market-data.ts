@@ -75,37 +75,6 @@ export async function getEntriesInRange(startISO: string, endISO: string) {
   });
 }
 
-export async function addEntry(input: {
-  date: string;
-  listType: ListType;
-  name: string;
-  price: string;
-  changePct: number;
-  volume?: string;
-}) {
-  const count = await prisma.dailyEntry.count({
-    where: { date: input.date, listType: input.listType },
-  });
-  if (count >= STORAGE_CAP) {
-    throw new Error(`이미 ${STORAGE_CAP}종목이 입력되었어요`);
-  }
-  const stock = await resolveStock(input.name);
-  return prisma.dailyEntry.create({
-    data: {
-      date: input.date,
-      listType: input.listType,
-      rank: count + 1,
-      name: input.name.trim(),
-      code: stock?.code ?? null,
-      sector: stock?.sector ?? "기타",
-      market: stock?.market ?? null,
-      price: input.price.trim(),
-      changePct: input.changePct,
-      volume: input.volume?.trim() || null,
-    },
-  });
-}
-
 // Registers every stock seen in a sync into StockMaster — without this,
 // only the ~30 curated seed stocks (plus whichever ones a user happened to
 // open individually, triggering lib/krx-quote.ts's live refresh) were ever

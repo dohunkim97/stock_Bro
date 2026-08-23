@@ -30,8 +30,10 @@ export async function DetailSections({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      {/* 기업실적분석 + 투자자별 매매동향 */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.55fr 1fr", gap: 20, alignItems: "start" }}>
+      {/* 기업실적분석 + 투자자별 매매동향 — 기업실적분석이 보통 더 길어서, 투자자별
+          매매동향이 stretch로 그 높이에 맞춰 늘어난다(둘 다 내부 스크롤 없이 자연스러운
+          콘텐츠 높이라 TOP종목 때처럼 JS 측정까지는 필요 없다). */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.55fr 1fr", gap: 20, alignItems: "stretch" }}>
         <EarningsAnalysis code={code} />
         <InvestorTrend code={code} />
       </div>

@@ -9,6 +9,7 @@ import { findLatestEntryByCode } from "@/lib/market-data";
 import { refreshStockSnapshot } from "@/lib/krx-quote";
 import { formatDateLabel, todayISO } from "@/lib/dates";
 import { simplifyIndustry } from "@/lib/industry-labels";
+import { getCompanyKeywords } from "@/lib/company-keywords";
 import type { StockMaster } from "@/app/generated/prisma/client";
 
 // A live refresh (price lookup + financial/industry enrichment) can take
@@ -71,7 +72,10 @@ export default async function StockPage({
   }
 
   cur = cur ?? allStocks.find((s) => s.code === DEFAULT_CODE) ?? allStocks[0];
-  const watched = await isWatched(cur.code);
+  const [watched, keywords] = await Promise.all([
+    isWatched(cur.code),
+    getCompanyKeywords(cur.code, cur.name),
+  ]);
 
   const stats: { label: string; value: string }[] = [
     cur.marketCap ? { label: "시가총액", value: cur.marketCap } : null,
@@ -131,6 +135,23 @@ export default async function StockPage({
                   }}
                 >
                   {s.label} {s.value}
+                </span>
+              ))}
+              {keywords.map((k) => (
+                <span
+                  key={k}
+                  title="최근 뉴스 기반 AI 추출 — 매출·수출·사업 키워드"
+                  style={{
+                    display: "inline-block",
+                    background: "var(--accent-soft)",
+                    color: "var(--accent)",
+                    fontSize: 11.5,
+                    fontWeight: 600,
+                    padding: "4px 10px",
+                    borderRadius: 6,
+                  }}
+                >
+                  {k}
                 </span>
               ))}
             </div>

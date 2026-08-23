@@ -1,18 +1,21 @@
 import { StockTable } from "./stock-table";
+import { HeightMatchedRow } from "./height-matched-row";
 import { WatchlistNews } from "./watchlist-news";
 import { TelegramNewsPanel } from "./telegram-news";
 import { AutoRefresh } from "./auto-refresh";
 import { AiBriefing } from "./ai-briefing";
 import { SectorLeadersPanel } from "./sector-leaders-panel";
+import { IndexQuotePanel } from "./index-quote-panel";
 import { MoneyFlowPanel } from "./money-flow-panel";
 import { MoneyFlowStocksPanel } from "./money-flow-stocks-panel";
 import { ThemeNetFlowPanel } from "./theme-net-flow-panel";
 import { ThemeNetFlowStocksPanel } from "./theme-net-flow-stocks-panel";
 import { MoneyFlowTakePanel } from "./money-flow-take-panel";
 import { aggregateSectors } from "@/lib/sector-aggregation";
-import { applyThemes, onlyThemed } from "@/lib/theme-lookup";
+import { applyThemes, onlyThemed, filterToCurrentTheme } from "@/lib/theme-lookup";
 import { rankSectorPerformance, dedupeByStock } from "@/lib/sector-performance";
 import { rankMoneyFlowByDay, rankMoneyFlowStocks, rankThemeNetFlow } from "@/lib/money-flow";
+import { getMarketIndexQuotes } from "@/lib/kis-index-quote";
 import type { WeekInfo } from "@/lib/week";
 import { todayISO } from "@/lib/dates";
 import type { DailyEntry, Watchlist, ThemeDailyFlow, ThemeNetFlow } from "@/app/generated/prisma/client";
@@ -54,21 +57,32 @@ export async function DayView({
 
   // ThemeDailyFlow already carries the theme (as `theme`, mapped to `sector`
   // for lib/money-flow.ts's shared input shape) and is unique per
-  // (date, code) — no re-tagging or same-day dedup needed here, unlike the
-  // old ranking-derived path.
-  const moneyFlowThemedEntries = moneyFlowEntries.map((e) => ({
-    date: e.date,
-    name: e.name,
-    code: e.code as string | null,
-    sector: e.theme,
-    changePct: e.changePct,
-    tradingValue: e.tradingValue as string | null,
-    marketCap: e.marketCap,
-  }));
+  // (date, code) — no same-day dedup needed here, unlike the old
+  // ranking-derived path. filterToCurrentTheme still matters: a stock's
+  // `theme` on each row is a snapshot from whenever that row synced, so a
+  // reclassified stock (e.g. moved from 로봇·휴머노이드 to 반도체) otherwise
+  // keeps showing up under its old theme too, with a stale changePct from
+  // whenever it was last synced under that label.
+  const moneyFlowThemedEntries = await filterToCurrentTheme(
+    moneyFlowEntries.map((e) => ({
+      date: e.date,
+      name: e.name,
+      code: e.code as string | null,
+      sector: e.theme,
+      changePct: e.changePct,
+      tradingValue: e.tradingValue as string | null,
+      marketCap: e.marketCap,
+    })),
+    (e) => e.sector
+  );
   const moneyFlowThemes = rankMoneyFlowByDay(moneyFlowThemedEntries, moneyFlowDays);
   const moneyFlowStockGroups = rankMoneyFlowStocks(moneyFlowThemedEntries, moneyFlowDays, 6, 6);
 
-  const netFlowRank = rankThemeNetFlow(
+  // Same staleness problem as moneyFlowThemedEntries above, for ThemeNetFlow
+  // (외국인+기관 순매수) instead of ThemeDailyFlow (거래대금/등락률) — a
+  // reclassified stock otherwise still shows up under its old theme's
+  // 순매수·순매도 panel with a stale net figure.
+  const netFlowThemedEntries = await filterToCurrentTheme(
     netFlowEntries.map((e) => ({
       date: e.date,
       name: e.name,
@@ -77,9 +91,9 @@ export async function DayView({
       foreignNet: e.foreignNet,
       institutionNet: e.institutionNet,
     })),
-    5,
-    6
+    (e) => e.theme
   );
+  const netFlowRank = rankThemeNetFlow(netFlowThemedEntries, 5, 6);
 
   const todayEntries = dedupeByStock(
     [...gainerEntries, ...loserEntries, ...volumeEntries].map((e) => ({
@@ -91,19 +105,19 @@ export async function DayView({
   );
   const sectorLeaders = rankSectorPerformance(todayEntries);
   const themeLeaders = rankSectorPerformance(await onlyThemed(todayEntries));
+  const indexQuotes = await getMarketIndexQuotes();
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       {date === todayISO() && <AutoRefresh />}
 
-      {/* 왼쪽: TOP종목. 오른쪽: 업종/테마 상위 + 오늘 브리핑 — 오른쪽 전체 높이를 TOP종목과 맞춤 */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.15fr", gap: 20, alignItems: "stretch" }}>
-        <div>
-          <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 7, letterSpacing: "-0.01em" }}>
-            TOP종목
-          </div>
+      {/* 왼쪽: TOP종목. 오른쪽: 업종/테마 상위 + 오늘 브리핑 — TOP종목의 행 목록은 원래 오른쪽보다
+          훨씬 길어서, CSS의 stretch만으로는 왼쪽을 오른쪽 높이로 "줄일" 수 없다(stretch는 짧은 쪽을
+          늘리기만 함). HeightMatchedRow가 오른쪽의 실제 렌더링 높이를 측정해서 왼쪽에 그대로
+          씌우고, 넘치는 종목은 StockTable 내부에서 스크롤된다. */}
+      <HeightMatchedRow
+        left={
           <StockTable
-            date={date}
             tabs={[
               {
                 key: "gainer",
@@ -111,9 +125,7 @@ export async function DayView({
                 badgeText: "상승 TOP",
                 badgeColor: "var(--up)",
                 accentVar: "var(--up)",
-                accentSoftVar: "var(--up-soft)",
                 entries: gainerEntries,
-                showVolumeField: false,
               },
               {
                 key: "loser",
@@ -121,9 +133,7 @@ export async function DayView({
                 badgeText: "하락 TOP",
                 badgeColor: "var(--down)",
                 accentVar: "var(--down)",
-                accentSoftVar: "var(--down-soft)",
                 entries: loserEntries,
-                showVolumeField: false,
               },
               {
                 key: "volume",
@@ -131,22 +141,22 @@ export async function DayView({
                 badgeText: "거래 TOP",
                 badgeColor: "var(--dim)",
                 accentVar: "var(--accent)",
-                accentSoftVar: "var(--accent-soft)",
                 entries: volumeEntries,
-                showVolumeField: true,
               },
             ]}
           />
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "stretch" }}>
-            <SectorLeadersPanel compact groups={[{ title: "업종상위", items: sectorLeaders }]} />
-            <SectorLeadersPanel compact groups={[{ title: "테마상위", items: themeLeaders }]} />
-          </div>
-          <AiBriefing date={date} slot={briefingSlot} contributors={agg.contributors} />
-        </div>
-      </div>
+        }
+        right={
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 0.85fr", gap: 16, alignItems: "stretch" }}>
+              <SectorLeadersPanel compact groups={[{ title: "업종상위", items: sectorLeaders }]} />
+              <SectorLeadersPanel compact groups={[{ title: "테마상위", items: themeLeaders }]} />
+              <IndexQuotePanel initialQuotes={indexQuotes} />
+            </div>
+            <AiBriefing date={date} slot={briefingSlot} contributors={agg.contributors} />
+          </>
+        }
+      />
 
       {/* 자금 흐름 2x2 — [시장 관심 상위 테마|테마별 종목] 위, [순매수·순매도 상위|그 종목] 아래.
           종목 칸(오른쪽)에 더 많은 종목을 보여주기 위해 왼쪽(데이터 표)보다 넓게 배분.
