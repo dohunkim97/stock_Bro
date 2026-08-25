@@ -129,14 +129,22 @@ export async function runMarketSync(dateIso?: string) {
   // ETF holdings first and awaited alone (authoritative, upserts
   // unconditionally) — the two news-based passes run after, in parallel,
   // since they're both best-effort and independent of each other.
-  await syncThemeEtfs().catch(() => {});
+  await syncThemeEtfs().catch((e) => console.error("[sync-runner] syncThemeEtfs failed:", e));
   await Promise.all([extractThemesFromIssues(allRows), extractThemesFromNaverNews(uniqueNames)]);
   // Needs the theme tagging above to have already landed — today's newly
   // tagged stocks should get their trading value/net-buying captured too,
   // not just yesterday's known set. Independent of each other, so parallel.
+  //
+  // These used to fail completely silently (bare .catch(() => {})) — a real
+  // gap surfaced this: 2026-08-24's ThemeDailyFlow ended up with zero rows
+  // (confirmed the pipeline itself is healthy — a same-day manual rerun for
+  // a later date completed normally in ~15s), and there was no error trace
+  // anywhere to say why that one day's run came up empty. Logging now, so
+  // the next one-off failure leaves something to actually debug instead of
+  // just a silently blank column in the UI.
   await Promise.all([
-    syncThemeDailyFlow(date).catch(() => {}),
-    syncThemeNetFlow(MONEY_FLOW_TAKE_DAYS).catch(() => {}),
+    syncThemeDailyFlow(date).catch((e) => console.error("[sync-runner] syncThemeDailyFlow failed:", e)),
+    syncThemeNetFlow(MONEY_FLOW_TAKE_DAYS).catch((e) => console.error("[sync-runner] syncThemeNetFlow failed:", e)),
   ]);
   await generateTodaysMoneyFlowTake(date);
 
