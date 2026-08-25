@@ -18,7 +18,14 @@ export function MoneyFlowPanel({
   days: string[];
   themes: ThemeMoneyFlowByDay[];
 }) {
-  const cols = `1.2fr repeat(${days.length}, 1fr) 1.1fr`;
+  // `days`/`dailyTotals` come in oldest-first (day-view.tsx also uses
+  // days[0] as a query-range start elsewhere, so that order can't change
+  // at the source) — flipped here, display-only, so the table reads
+  // newest-first left to right instead. Each theme's dailyTotals is
+  // reversed the same way to stay aligned with the reversed day columns.
+  const displayDays = [...days].reverse();
+  const displayThemes = themes.map((t) => ({ ...t, dailyTotals: [...t.dailyTotals].reverse() }));
+  const cols = `1.2fr repeat(${displayDays.length}, 1fr) 1.1fr`;
 
   return (
     <section
@@ -43,9 +50,9 @@ export function MoneyFlowPanel({
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
-          <div style={{ display: "grid", gridTemplateColumns: cols, minWidth: 74 * (days.length + 2.3), fontFamily: "var(--mono)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: cols, minWidth: 74 * (displayDays.length + 2.3), fontFamily: "var(--mono)" }}>
             <div style={{ fontSize: 11, color: "var(--faint)", padding: "0 0 10px" }} />
-            {days.map((d) => (
+            {displayDays.map((d) => (
               <div key={d} style={{ fontSize: 11, color: "var(--faint)", textAlign: "right", padding: "0 0 10px" }}>
                 {formatDayHeader(d)}
               </div>
@@ -54,7 +61,7 @@ export function MoneyFlowPanel({
               누적
             </div>
 
-            {themes.map((t, i) => (
+            {displayThemes.map((t, i) => (
               <ThemeRow key={t.name} theme={t} rank={i} />
             ))}
           </div>
