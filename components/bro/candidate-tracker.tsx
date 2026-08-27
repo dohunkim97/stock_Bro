@@ -3,6 +3,8 @@ import { getLatestPrediction, parsePredictionCandidates } from "@/lib/prediction
 import { weekInfoFromKey } from "@/lib/week";
 import { renderBold } from "@/components/ui/rich-text";
 import { getDailyChangeSeries } from "@/lib/candidate-tracking";
+import { fetchKisChart } from "@/lib/kis-chart";
+import { computeTechnicalSignals, type TechnicalSignal } from "@/lib/technical-signals";
 import { chgColorVar, formatChg } from "@/lib/format";
 
 const panelStyle: React.CSSProperties = {
@@ -27,6 +29,14 @@ function dateLabel(iso?: string): string {
   return `${d.getMonth() + 1}.${d.getDate()}`;
 }
 
+// 상승=빨강/하락=파랑 (이 앱의 색상 규칙, lib/format.ts의 chgColorVar 참고) —
+// 시그널 방향(direction)에도 같은 규칙 적용.
+function signalColor(direction: TechnicalSignal["direction"]): string {
+  if (direction === "bullish") return "var(--up)";
+  if (direction === "bearish") return "var(--down)";
+  return "var(--dim)";
+}
+
 // "예상한 종목 상승률" on its own — how each of Golgoo's currently-predicted
 // candidates has actually moved since it was first predicted. Split out of
 // what used to be the combined PredictionPanel so it can sit in its own
@@ -46,11 +56,13 @@ export async function CandidateTracker() {
   const candidates = parsePredictionCandidates(latest.candidates);
   const info = weekInfoFromKey(latest.forWeekKey);
 
-  // Only ever 3-5 candidates, so a daily-chart fetch per code is cheap —
-  // this is what "예상 시점 대비 상승률" is measured against, day by day.
-  const series = await Promise.all(
-    candidates.map((c) => (c.code && c.firstSeenAt ? getDailyChangeSeries(c.code, c.firstSeenAt) : Promise.resolve([])))
-  );
+  // Only ever 3-5 candidates, so a daily-chart fetch per code is cheap — one
+  // fetch per candidate feeds both "예상 시점 대비 상승률" (day by day) and
+  // the 거래량/지지·저항 기술적 시그널 (lib/technical-signals.ts), instead of
+  // fetching the same chart twice.
+  const candles = await Promise.all(candidates.map((c) => (c.code ? fetchKisChart(c.code, "D") : Promise.resolve([]))));
+  const series = candidates.map((c, i) => (c.firstSeenAt ? getDailyChangeSeries(candles[i], c.firstSeenAt) : []));
+  const signals = candles.map((cs) => computeTechnicalSignals(cs));
 
   return (
     <section style={panelStyle}>
@@ -140,6 +152,17 @@ export async function CandidateTracker() {
                 {c.firstSeenAt && (
                   <div style={{ fontSize: 10, color: "var(--faint)", marginTop: 6, fontFamily: "var(--mono)" }}>
                     {dateLabel(c.firstSeenAt)} 예상 · 종가 기준 누적
+                  </div>
+                )}
+                {signals[i].length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
+                    {signals[i].map((s) => (
+                      <div key={s.name} style={{ fontSize: 10.5, lineHeight: 1.5, color: "var(--dim)" }}>
+                        <span style={{ fontWeight: 700, color: signalColor(s.direction) }}>시그널: {s.name}</span>
+                        {" — "}
+                        {s.detail}
+                      </div>
+                    ))}
                   </div>
                 )}
               </Link>

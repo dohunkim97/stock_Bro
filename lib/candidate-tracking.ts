@@ -1,4 +1,4 @@
-import { fetchKisChart } from "@/lib/kis-chart";
+import type { ChartCandle } from "@/lib/kis-chart";
 
 export type DailyChangePoint = {
   date: string; // YYYY-MM-DD
@@ -15,10 +15,14 @@ export type DailyChangePoint = {
 // "day N"s. The most recent point (today, if the market's still open)
 // reflects that day's running close and finalizes naturally once the
 // session ends — not specially excluded.
-export async function getDailyChangeSeries(code: string, firstSeenAtISO: string): Promise<DailyChangePoint[]> {
+//
+// Takes already-fetched candles rather than a code — callers that also
+// need lib/technical-signals.ts's signals for the same stock (e.g.
+// CandidateTracker) fetch fetchKisChart once and pass the result to both,
+// instead of two separate API calls per candidate.
+export function getDailyChangeSeries(candles: ChartCandle[], firstSeenAtISO: string): DailyChangePoint[] {
   if (!firstSeenAtISO) return [];
   const firstDate = firstSeenAtISO.slice(0, 10); // ISO datetime -> YYYY-MM-DD
-  const candles = await fetchKisChart(code, "D");
   const relevant = candles.filter((c) => c.date >= firstDate);
   if (relevant.length === 0) return [];
 
