@@ -4,6 +4,7 @@ import { applyThemes } from "@/lib/theme-lookup";
 import { rankMostMentioned } from "@/lib/mention-ranking";
 import { formatChg } from "@/lib/format";
 import { currentWeekKey, prevWeekKey, weekInfoFromKey } from "@/lib/week";
+import { formatDateLabel } from "@/lib/dates";
 import { getRecentTelegramNews } from "@/lib/telegram-news";
 import {
   getLatestPrediction,
@@ -174,9 +175,8 @@ export async function predictionBlock(): Promise<string> {
 
   const sectors = parsePredictionSectors(latest.sectors);
   const candidates = parsePredictionCandidates(latest.candidates);
-  const info = weekInfoFromKey(latest.forWeekKey);
 
-  const lines = [`[Golgoo의 다음 주 예측 · ${info.label} 대상]`, latest.summary];
+  const lines = [`[Golgoo의 종목 추천 · ${formatDateLabel(latest.forDate)} 발표, 5거래일 추적]`, latest.summary];
   if (sectors.length) {
     lines.push("예측 섹터: " + sectors.map((s) => `${s.name}(${s.reasoning})`).join(" / "));
   }
@@ -224,7 +224,7 @@ export async function buildSystemPrompt(): Promise<string> {
     '너는 "Golgoo"라는 이름의 개인 투자 AI 조력자야. 사용자의 친한 형/친구처럼 편하게 반말로, 짧고 명확하게 대답해. 이모지는 아주 가끔만.',
     '항상 아래 데이터에 근거해서 답하고, 데이터에 없으면 일반 지식으로 답하되 추정임을 밝혀. 투자 권유가 아니라 판단을 돕는 정보 제공이라는 점을 자연스럽게 지켜. 숫자는 원/조/억/% 단위로 한국식으로.',
     "텔레그램 기사는 사용자가 직접 전달해준 제보야 — 출처가 불확실할 수 있으니 그대로 사실처럼 단정짓지 말고 '~라는 기사가 있었어' 식으로 참고 정보로 다뤄.",
-    "'다음주 어떤 섹터/종목이 강할까' 같은 질문을 받으면, 아래 [Golgoo의 다음 주 예측] 데이터가 있으면 그걸 기반으로 답하고 (그 예측을 만든 근거도 같이 설명해). 없으면 최근 몇 주 흐름 + 최근 이슈 + 텔레그램 제보를 종합해서 직접 판단해. 과거 예측 적중 이력이 있으면 '지난 예측은 몇 % 맞았어' 식으로 정직하게 같이 알려줘 — 감추지 마.",
+    "'다음주(또는 요즘) 어떤 섹터/종목이 강할까' 같은 질문을 받으면, 아래 [Golgoo의 종목 추천] 데이터가 있으면 그걸 기반으로 답하고 (그 예측을 만든 근거도 같이 설명해 — 이 리포트는 매일 새로 나가고 오늘 종가에 매수했다고 가정해 5거래일 추적한다는 것도 자연스럽게 알려줘). 없으면 최근 몇 주 흐름 + 최근 이슈 + 텔레그램 제보를 종합해서 직접 판단해. 과거 예측 적중 이력이 있으면 '지난 예측은 몇 % 맞았어' 식으로 정직하게 같이 알려줘 — 감추지 마.",
     "답변은 3~5문장 이내로 간결하게. 음성으로도 읽히니 표/마크다운 기호는 쓰지 마.",
     "",
     marketBlock,

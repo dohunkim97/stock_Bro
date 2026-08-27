@@ -1,5 +1,5 @@
 import { getLatestPrediction, parsePredictionCandidates, parsePredictionSectors } from "@/lib/prediction-scoring";
-import { weekInfoFromKey } from "@/lib/week";
+import { formatDateLabel } from "@/lib/dates";
 import { renderBold } from "@/components/ui/rich-text";
 import { getCandidateDetails, type CandidateDetail } from "@/lib/candidate-detail";
 import { chgColorVar, formatChg } from "@/lib/format";
@@ -196,14 +196,13 @@ export async function PredictionReport() {
     );
   }
 
-  const info = weekInfoFromKey(latest.forWeekKey);
   const sectors = parsePredictionSectors(latest.sectors);
   const candidates = parsePredictionCandidates(latest.candidates);
   const details = candidates.length > 0 ? await getCandidateDetails(candidates) : [];
 
   return (
     <section style={panelStyle}>
-      <div style={sectionTitleStyle}>📝 Golgoo 예상 리포트 · {info.label} (5일간)</div>
+      <div style={sectionTitleStyle}>📝 Golgoo 예상 리포트 · {formatDateLabel(latest.forDate)} (5거래일 추적)</div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div style={blockStyle}>

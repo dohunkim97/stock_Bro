@@ -1,37 +1,34 @@
 import type { ChartCandle } from "@/lib/kis-chart";
 
+// Every prediction's tracking window: exactly 5 trading days from the day
+// it was published, matching the assumed buy — that day's 15:30 종가.
+export const TRACKING_WINDOW_DAYS = 5;
+
 export type DailyChangePoint = {
   date: string; // YYYY-MM-DD
-  dayIndex: number; // 1-based trading-day count since the candidate was first predicted
-  changePct: number; // cumulative % vs day 1's opening price, using that day's close
+  dayIndex: number; // 1-based trading-day count since the prediction's forDate
+  changePct: number; // cumulative % vs forDate's own closing price
 };
 
-// Day-by-day 종가 기준 누적 등락률 since a candidate was first predicted,
-// anchored to "샀다면 예상 당일 9시 시가에 매수했다" — day 1's own opening
-// price is the baseline every later day (including day 1 itself) is
-// measured against, so day 1 shows its own intraday open→close move
-// instead of always reading 0%. Only trading days on/after firstSeenAt's
-// calendar date get a slot, so weekends/holidays don't produce empty
-// "day N"s. The most recent point (today, if the market's still open)
-// reflects that day's running close and finalizes naturally once the
-// session ends — not specially excluded.
-//
-// Takes already-fetched candles rather than a code — callers that also
-// need lib/technical-signals.ts's signals for the same stock (e.g.
-// CandidateTracker) fetch fetchKisChart once and pass the result to both,
-// instead of two separate API calls per candidate.
-export function getDailyChangeSeries(candles: ChartCandle[], firstSeenAtISO: string): DailyChangePoint[] {
-  if (!firstSeenAtISO) return [];
-  const firstDate = firstSeenAtISO.slice(0, 10); // ISO datetime -> YYYY-MM-DD
-  const relevant = candles.filter((c) => c.date >= firstDate);
+// Day-by-day 종가 기준 누적 등락률 for exactly TRACKING_WINDOW_DAYS trading
+// days from a prediction's forDate — anchored to "그날 오후 3시 30분 종가에
+// 매수했다": forDate's own close is the baseline every later day (including
+// day 1 itself, which is therefore always 0%) is measured against. Only
+// trading days on/after forDate get a slot, so weekends/holidays don't
+// produce empty "day N"s, and the series is capped at
+// TRACKING_WINDOW_DAYS even if more candles are available — a prediction's
+// tracked lifecycle is exactly 5 trading days, not open-ended.
+export function getDailyChangeSeries(candles: ChartCandle[], forDate: string): DailyChangePoint[] {
+  if (!forDate) return [];
+  const relevant = candles.filter((c) => c.date >= forDate).slice(0, TRACKING_WINDOW_DAYS);
   if (relevant.length === 0) return [];
 
-  const openPrice = relevant[0].open;
-  if (!openPrice || openPrice <= 0) return [];
+  const basePrice = relevant[0].close;
+  if (!basePrice || basePrice <= 0) return [];
 
   return relevant.map((c, i) => ({
     date: c.date,
     dayIndex: i + 1,
-    changePct: ((c.close - openPrice) / openPrice) * 100,
+    changePct: ((c.close - basePrice) / basePrice) * 100,
   }));
 }

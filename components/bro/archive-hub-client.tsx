@@ -20,7 +20,7 @@ const TABS: { key: TabKey; label: string }[] = [
 ];
 
 const EMPTY_MESSAGE: Record<TabKey, string> = {
-  predictions: "아직 채점된 지난 주가 없어요 — 한 주가 끝나면 여기 쌓이기 시작해요.",
+  predictions: "아직 지난 예상 리포트가 없어요 — 오늘 리포트가 하루 지나면 여기 쌓이기 시작해요.",
   daily: "아직 쌓인 일간 리포트가 없어요.",
   chat: "아직 Golgoo와 나눈 대화 기록이 없어요.",
 };

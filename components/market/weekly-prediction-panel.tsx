@@ -5,7 +5,7 @@ import {
   parsePredictionSectors,
   parsePredictionCandidates,
 } from "@/lib/prediction-scoring";
-import { weekInfoFromKey } from "@/lib/week";
+import { formatDateLabel } from "@/lib/dates";
 import { renderBold } from "@/components/ui/rich-text";
 
 const panelStyle: React.CSSProperties = {
@@ -35,7 +35,6 @@ export async function WeeklyPredictionPanel() {
 
   const sectors = parsePredictionSectors(latest.sectors);
   const candidates = parsePredictionCandidates(latest.candidates);
-  const info = weekInfoFromKey(latest.forWeekKey);
 
   return (
     <section style={panelStyle}>
@@ -65,7 +64,7 @@ export async function WeeklyPredictionPanel() {
             textTransform: "uppercase",
           }}
         >
-          Golgoo · {info.label} 전망
+          Golgoo · {formatDateLabel(latest.forDate)} 전망
         </span>
       </div>
 
@@ -116,7 +115,7 @@ export async function WeeklyPredictionPanel() {
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {history.map((h) => (
               <div
-                key={h.forWeekKey}
+                key={h.forDate}
                 style={{
                   fontSize: 12,
                   color: "var(--dim)",

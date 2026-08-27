@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getLatestPrediction, parsePredictionCandidates } from "@/lib/prediction-scoring";
-import { weekInfoFromKey } from "@/lib/week";
+import { formatDateLabel } from "@/lib/dates";
 import { renderBold } from "@/components/ui/rich-text";
 import { getDailyChangeSeries } from "@/lib/candidate-tracking";
 import { fetchKisChart } from "@/lib/kis-chart";
@@ -54,14 +54,16 @@ export async function CandidateTracker() {
   }
 
   const candidates = parsePredictionCandidates(latest.candidates);
-  const info = weekInfoFromKey(latest.forWeekKey);
+  const forDateLabel = formatDateLabel(latest.forDate);
 
   // Only ever 3-5 candidates, so a daily-chart fetch per code is cheap — one
-  // fetch per candidate feeds both "예상 시점 대비 상승률" (day by day) and
+  // fetch per candidate feeds both "종가 매수 기준 누적 등락률" (day by day) and
   // the 거래량/지지·저항 기술적 시그널 (lib/technical-signals.ts), instead of
-  // fetching the same chart twice.
+  // fetching the same chart twice. Every candidate in this row shares the
+  // same anchor date (latest.forDate) now that predictions publish daily —
+  // there's no more per-candidate firstSeenAt.
   const candles = await Promise.all(candidates.map((c) => (c.code ? fetchKisChart(c.code, "D") : Promise.resolve([]))));
-  const series = candidates.map((c, i) => (c.firstSeenAt ? getDailyChangeSeries(candles[i], c.firstSeenAt) : []));
+  const series = candles.map((cs) => getDailyChangeSeries(cs, latest.forDate));
   const signals = candles.map((cs) => computeTechnicalSignals(cs));
 
   return (
@@ -92,7 +94,7 @@ export async function CandidateTracker() {
             textTransform: "uppercase",
           }}
         >
-          예상한 종목 상승률 · {info.label}
+          예상한 종목 상승률 · {forDateLabel}
         </span>
       </div>
 
@@ -149,11 +151,9 @@ export async function CandidateTracker() {
                     ))}
                   </div>
                 )}
-                {c.firstSeenAt && (
-                  <div style={{ fontSize: 10, color: "var(--faint)", marginTop: 6, fontFamily: "var(--mono)" }}>
-                    {dateLabel(c.firstSeenAt)} 예상 · 종가 기준 누적
-                  </div>
-                )}
+                <div style={{ fontSize: 10, color: "var(--faint)", marginTop: 6, fontFamily: "var(--mono)" }}>
+                  {dateLabel(latest.forDate)} 종가 매수 기준 누적
+                </div>
                 {signals[i].length > 0 && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
                     {signals[i].map((s) => (

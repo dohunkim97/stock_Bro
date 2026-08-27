@@ -1,23 +1,24 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/prisma";
 import { recentWeeksHistoryBlock, recentIssuesBlock, telegramBlock } from "@/lib/bro-context";
-import { getScoredPredictionHistory, parsePredictionCandidates, type CandidatePrediction } from "@/lib/prediction-scoring";
-import { currentWeekKey, nextWeekKey } from "@/lib/week";
+import { getScoredPredictionHistory, type CandidatePrediction } from "@/lib/prediction-scoring";
+import { todayISO } from "@/lib/dates";
 import { resolveStock } from "@/lib/market-data";
 import { fetchKisCodeMaster, findInCodeMaster } from "@/lib/kis-code-master";
 import { fetchKisChart } from "@/lib/kis-chart";
 import { computeTechnicalSignals } from "@/lib/technical-signals";
 
 const SYSTEM_PROMPT = [
-  "너는 한국 주식시장의 다음 주 흐름을 예상하는 애널리스트야.",
+  "너는 한국 주식시장의 향후 5거래일 유망 종목을 뽑는 애널리스트야.",
   "말투는 딱딱한 보고서체(~였다, ~보였다, ~니다) 말고, 친한 형/친구가 옆에서 브리핑해주는 것처럼 편한 반말로 써. 예를 들어 '~였다.' 대신 '~였어!', '~더라', '~였지' 처럼 자연스럽고 친근하게.",
   "summary·reasoning 안에서 진짜 중요한 문장이나 핵심 단어(강세 근거, 결정적 수치, 종목명 등)는 **이렇게** 별 두 개로 감싸서 강조해 — 한 항목에 한두 곳 정도면 충분해, 남발하지 마.",
-  "아래 최근 몇 주간의 섹터·언급 흐름, 최근 종목별 실제 뉴스 이슈, 텔레그램 제보, (있다면) 과거 예측 적중 이력을 종합해서 다음 주에 강세를 보일 가능성이 있는 섹터와 종목을 예상해.",
-  "[현재 예측 종목의 기술적 시그널]이 있으면 반드시 참고해 — 거래량 급감+음봉, 지지선 지지 확인 같은 bullish 시그널이 있는 종목은 계속 유지할 근거로, 저항선 돌파 실패·단기 급락 같은 bearish 시그널만 쌓인 종목은 교체를 고려할 근거로 써. 새 종목을 고를 때도 뉴스·수급 근거에 이런 기술적 신호가 같이 있으면 reasoning에 자연스럽게 녹여서 언급해.",
-  "과거 예측 적중 이력이 있다면 반드시 참고해 — 어떤 유형의 근거가 잘 맞았는지, 안 맞았는지를 이번 예측에 반영해.",
+  "이 리포트는 매일 새로 나가고, 오늘 종가(15:30)에 매수했다고 가정하고 5거래일 동안의 성과를 추적해 — 그러니 '다음 주' 같은 표현 대신 '오늘부터 5거래일' 식으로 말해.",
+  "아래 최근 몇 주간의 섹터·언급 흐름, 최근 종목별 실제 뉴스 이슈, 텔레그램 제보, [관심 종목군의 기술적 시그널], (있다면) 과거 예측 적중 이력을 종합해서 종목을 선정해.",
+  "[관심 종목군의 기술적 시그널]은 실제 차트 데이터로 계산된 값이야(거래량 급감+음봉, 지지선 지지 확인 같은 bullish 시그널 / 저항선 돌파 실패·단기 급락 같은 bearish 시그널) — 종목을 고를 때 반드시 참고하고, 있는 종목은 reasoning에 자연스럽게 녹여서 언급해.",
+  "과거 예측 적중 이력이 있다면 반드시 참고해 — 어떤 유형의 근거가 잘 맞았는지, 안 맞았는지를 이번 선정에 반영해.",
   "확정적 보장이 아니라 데이터에 근거한 관찰이라는 점을 유지해. 데이터에 없는 건 추측하지 마.",
   "다른 설명 없이 아래 JSON 형식으로만 답해:",
-  '{"summary": "다음 주 전망 핵심을 3-4문장으로", "sectors": [{"name": "섹터/테마명", "reasoning": "근거 한 문장"}] (2-3개), "candidates": [{"name": "정확한 종목명", "reasoning": "근거 한 문장"}] (3-5개)}',
+  '{"summary": "오늘부터 5거래일 전망 핵심을 3-4문장으로", "sectors": [{"name": "섹터/테마명", "reasoning": "근거 한 문장"}] (2-3개), "candidates": [{"name": "정확한 종목명", "reasoning": "근거 한 문장"}] (3-5개)}',
 ].join("\n");
 
 type RawItem = Record<string, unknown>;
@@ -45,10 +46,10 @@ function parseResponse(text: string): ParsedPrediction | null {
 }
 
 async function pastAccuracyBlock(): Promise<string> {
-  const scored = await getScoredPredictionHistory(4);
+  const scored = await getScoredPredictionHistory(5);
   if (scored.length === 0) return "";
 
-  const lines = ["[과거 예측 적중 이력]"];
+  const lines = ["[과거 예측 적중 이력 — 5거래일 뒤 기준]"];
   for (const s of scored) {
     const sectorPct = s.sectorHitRate !== null ? `${Math.round(s.sectorHitRate * 100)}%` : "-";
     const candPct = s.candidateHitRate !== null ? `${Math.round(s.candidateHitRate * 100)}%` : "-";
@@ -59,28 +60,35 @@ async function pastAccuracyBlock(): Promise<string> {
   return lines.join("\n");
 }
 
-// Real-data confirmation/warning for whatever candidates the CURRENT
-// forWeekKey row already has, computed fresh from each candidate's daily
-// chart (lib/technical-signals.ts — 거래량/지지·저항 rules transcribed from
-// trading-book material) — not something the LLM is asked to "remember",
-// but a concrete signal list handed to it as input. Empty (not "") when
-// there's nothing to show yet (first-ever generation, or no candidates
-// have a resolvable code).
-async function technicalSignalsBlock(candidates: CandidatePrediction[]): Promise<string> {
-  const withCode = candidates.filter((c): c is CandidatePrediction & { code: string } => !!c.code);
-  if (withCode.length === 0) return "";
+const SHORTLIST_SIZE = 15;
 
-  const perCandidate = await Promise.all(
-    withCode.map(async (c) => {
-      const candles = await fetchKisChart(c.code, "D");
-      const signals = computeTechnicalSignals(candles);
-      return { name: c.name, signals };
+// A pool of "지금 뉴스가 실제로 붙어있는" stocks to run technical-signal
+// detection against BEFORE the LLM picks — not just re-affirming whatever
+// was already chosen (there's no carry-forward anymore, every day is a
+// fresh pick), but giving the model real chart-derived signals for
+// candidates it might actually choose from. Reuses DailyEntry.code
+// directly (already populated by the sync pipeline) rather than a name
+// lookup, since these are all stocks that showed up in a real sync.
+async function signalShortlistBlock(): Promise<string> {
+  const rows = await prisma.dailyEntry.findMany({
+    where: { issue: { not: null }, code: { not: null } },
+    orderBy: { createdAt: "desc" },
+    take: SHORTLIST_SIZE * 2,
+  });
+  const seen = new Set<string>();
+  const shortlist = rows.filter((r) => (seen.has(r.name) ? false : (seen.add(r.name), true))).slice(0, SHORTLIST_SIZE);
+  if (shortlist.length === 0) return "";
+
+  const perStock = await Promise.all(
+    shortlist.map(async (r) => {
+      const candles = await fetchKisChart(r.code!, "D");
+      return { name: r.name, signals: computeTechnicalSignals(candles) };
     })
   );
 
-  const lines = ["[현재 예측 종목의 기술적 시그널]"];
+  const lines = ["[관심 종목군의 기술적 시그널]"];
   let any = false;
-  for (const p of perCandidate) {
+  for (const p of perStock) {
     if (p.signals.length === 0) continue;
     any = true;
     lines.push(`- ${p.name}: ` + p.signals.map((s) => `${s.name}(${s.direction})`).join(", "));
@@ -88,9 +96,9 @@ async function technicalSignalsBlock(candidates: CandidatePrediction[]): Promise
   return any ? lines.join("\n") : "";
 }
 
-// The code for a newly-appearing candidate always comes from resolveStock
-// (our own DB, grounded in real synced ranking data) or, failing that, the
-// KIS code-master fallback — never from whatever code the LLM itself might
+// The code for every picked candidate always comes from resolveStock (our
+// own DB, grounded in real synced ranking data) or, failing that, the KIS
+// code-master fallback — never from whatever code the LLM itself might
 // output. Confirmed live that trusting the model matters: asked to
 // self-report a code, it hallucinated one for "SK이터닉스" (a real code,
 // just for a completely different company) on one run and an invalid one
@@ -100,11 +108,11 @@ async function technicalSignalsBlock(candidates: CandidatePrediction[]): Promise
 // to, silently tracking the wrong company's price under the right one's
 // name.
 //
-// Resolves every genuinely-new candidate's local lookup exactly once (not
-// once for a "should we bother downloading the fallback" check and again
+// Resolves every candidate's local lookup exactly once (not once for a
+// "should we bother downloading the fallback" check and again
 // per-candidate), and only downloads the KIS code-master files (a ~200KB
 // fetch+parse) if at least one of them came up empty locally.
-async function resolveNewCandidateCodes(names: string[]): Promise<Map<string, string | undefined>> {
+async function resolveCandidateCodes(names: string[]): Promise<Map<string, string | undefined>> {
   const local = await Promise.all(names.map((name) => resolveStock(name)));
   const codeByName = new Map(names.map((name, i) => [name, local[i]?.code] as const));
 
@@ -117,30 +125,24 @@ async function resolveNewCandidateCodes(names: string[]): Promise<Map<string, st
   return codeByName;
 }
 
-// Runs daily on weekdays (see app/api/cron/weekly-prediction), always
-// targeting the upcoming week (not the one ending today) so it keeps
-// refining the same forWeekKey row as fresh news/Telegram sources come in
-// through the week, rather than only writing once on Friday. Upserts by
-// forWeekKey so a retried cron run just overwrites that week's prediction
-// rather than duplicating it.
+// Runs every trading day (see app/api/cron/weekly-prediction), publishing a
+// fresh 5-trading-day pick sheet for TODAY (forDate) — a separate,
+// permanent row every day (upsert only guards against a same-day retry),
+// not a single row mutated in place across a week. Each candidate's
+// tracking window (lib/candidate-tracking.ts) runs from forDate's own
+// close, capped at 5 trading days, so yesterday's picks keep their own
+// independent record in 기록보관소 even after today publishes different ones.
 export async function generateWeeklyPrediction(): Promise<void> {
   if (!process.env.ANTHROPIC_API_KEY) return;
 
-  const forWeekKey = nextWeekKey(currentWeekKey());
-
-  // Fetched here (not after the LLM call, where the old carry-forward-only
-  // read of this row used to happen) because technicalSignalsBlock needs
-  // this same row's current candidates as INPUT to the prompt, not just as
-  // something to merge into the output afterward.
-  const existing = await prisma.weeklyPrediction.findUnique({ where: { forWeekKey } });
-  const existingCandidates = existing ? parsePredictionCandidates(existing.candidates) : [];
+  const forDate = todayISO();
 
   const [historyBlock, issuesBlock, tgBlock, accBlock, signalsBlock] = await Promise.all([
     recentWeeksHistoryBlock(4),
     recentIssuesBlock(20),
     telegramBlock(),
     pastAccuracyBlock(),
-    technicalSignalsBlock(existingCandidates),
+    signalShortlistBlock(),
   ]);
 
   const userPrompt = [historyBlock, issuesBlock, tgBlock, accBlock, signalsBlock].filter(Boolean).join("\n\n");
@@ -165,31 +167,17 @@ export async function generateWeeklyPrediction(): Promise<void> {
 
   const sectors = JSON.stringify(parsed.sectors.filter(isSectorLike));
 
-  // Same-week regenerations should keep tracking each candidate's
-  // performance from when it was FIRST predicted, not reset to "0%" every
-  // time fresh sources trigger a rerun — so look up whatever baseline this
-  // forWeekKey already had (fetched above, before the LLM call) and carry
-  // it forward by name.
-  const priorByName = new Map(existingCandidates.map((c) => [c.name, c] as const));
-
   const rawCandidates = parsed.candidates.filter(isSectorLike).map((c) => ({
     name: c.name,
     reasoning: c.reasoning,
   }));
-
-  const newNames = rawCandidates.filter((c) => !priorByName.get(c.name)?.firstSeenAt).map((c) => c.name);
-  const newCodeByName = newNames.length > 0 ? await resolveNewCandidateCodes(newNames) : new Map();
-
-  const candidateList: CandidatePrediction[] = rawCandidates.map((c) => {
-    const prior = priorByName.get(c.name);
-    if (prior?.firstSeenAt) return { ...c, code: prior.code, firstSeenAt: prior.firstSeenAt };
-    return { ...c, code: newCodeByName.get(c.name), firstSeenAt: new Date().toISOString() };
-  });
+  const codeByName = await resolveCandidateCodes(rawCandidates.map((c) => c.name));
+  const candidateList: CandidatePrediction[] = rawCandidates.map((c) => ({ ...c, code: codeByName.get(c.name) }));
   const candidates = JSON.stringify(candidateList);
 
   await prisma.weeklyPrediction.upsert({
-    where: { forWeekKey },
-    create: { forWeekKey, summary: parsed.summary, sectors, candidates },
+    where: { forDate },
+    create: { forDate, summary: parsed.summary, sectors, candidates },
     update: { summary: parsed.summary, sectors, candidates },
   });
 }

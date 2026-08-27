@@ -3,10 +3,11 @@ import { generateWeeklyPrediction } from "@/lib/weekly-prediction";
 
 export const maxDuration = 60;
 
-// Fires daily on weekdays, after close (see vercel.json) — always targets
-// the upcoming week and upserts by forWeekKey, so this keeps refining the
-// SAME prediction as fresh sources (news issues, Telegram tips) accumulate
-// through the week, rather than only writing once on Friday.
+// Fires daily on weekdays, after close (see vercel.json) — publishes a
+// fresh 5-거래일 pick sheet for TODAY (forDate), upserting only to guard
+// against a same-day retry. Each day's row is permanent; it doesn't get
+// overwritten by the next day's run, so 기록보관소 can keep every past
+// day's own cumulative-return tracking independent of later picks.
 export async function GET(req: NextRequest) {
   const auth = req.headers.get("authorization");
   if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {

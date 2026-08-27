@@ -5,25 +5,12 @@
 // importing the other would be circular. This file imports neither.
 
 import { prisma } from "@/lib/prisma";
-import { getEntriesInRange } from "@/lib/market-data";
-import { aggregateSectors } from "@/lib/sector-aggregation";
-import { applyThemes } from "@/lib/theme-lookup";
-import { weekInfoFromKey } from "@/lib/week";
-import { todayISO } from "@/lib/dates";
+import { fetchKisChart } from "@/lib/kis-chart";
+import { getDailyChangeSeries, TRACKING_WINDOW_DAYS } from "@/lib/candidate-tracking";
+import { formatDateLabel, todayISO } from "@/lib/dates";
 
 export type SectorPrediction = { name: string; reasoning: string };
-// firstSeenAt is injected server-side (not by the LLM) the first time a
-// candidate appears under a given forWeekKey, and carried forward on every
-// regeneration of that same week's prediction (see lib/weekly-prediction.ts)
-// — it anchors the "예상 시점 대비 상승률" tracker (lib/candidate-tracking.ts,
-// day 1's own opening price) to when the candidate was first predicted, not
-// to whichever day the report happened to last regenerate.
-export type CandidatePrediction = {
-  name: string;
-  code?: string;
-  reasoning: string;
-  firstSeenAt?: string; // ISO date
-};
+export type CandidatePrediction = { name: string; code?: string; reasoning: string };
 
 type RawItem = Record<string, unknown>;
 
@@ -51,7 +38,6 @@ export function parsePredictionCandidates(raw: string): CandidatePrediction[] {
           name: c.name,
           reasoning: c.reasoning,
           code: typeof r.code === "string" ? (r.code as string) : undefined,
-          firstSeenAt: typeof r.firstSeenAt === "string" ? (r.firstSeenAt as string) : undefined,
         };
       });
     }
@@ -62,10 +48,10 @@ export function parsePredictionCandidates(raw: string): CandidatePrediction[] {
 }
 
 export type ScoredSector = SectorPrediction & { hit: boolean };
-export type ScoredCandidate = CandidatePrediction & { hit: boolean; actualAvgChangePct: number | null };
+export type ScoredCandidate = CandidatePrediction & { hit: boolean; finalChangePct: number | null };
 
 export type ScoredPrediction = {
-  forWeekKey: string;
+  forDate: string;
   label: string;
   summary: string;
   sectors: ScoredSector[];
@@ -75,50 +61,82 @@ export type ScoredPrediction = {
   actualHotSector: string | null;
 };
 
-type PredictionRow = { forWeekKey: string; summary: string; sectors: string; candidates: string };
+type PredictionRow = { forDate: string; summary: string; sectors: string; candidates: string };
 
-// Only scoreable once the predicted week has actually finished, and only if
-// it has real synced data — a week with no data yet (not synced, or a
-// holiday-heavy week) just isn't judgeable, so this returns null rather
-// than falsely scoring it 0%.
+// The 5 trading dates following forDate — used both to know whether a row
+// is old enough to fully score yet, and (for sectors) to look up which
+// sectors actually led over that same window.
+async function tradingDaysAfter(forDate: string, count: number): Promise<string[]> {
+  const rows = await prisma.dailyEntry.findMany({
+    where: { date: { gt: forDate } },
+    distinct: ["date"],
+    orderBy: { date: "asc" },
+    select: { date: true },
+    take: count,
+  });
+  return rows.map((r) => r.date);
+}
+
+// Only scoreable once forDate's 5-trading-day window has actually finished
+// (5 real trading dates with synced data exist after it) — a window still
+// in progress, or one with no synced data yet, just isn't judgeable, so
+// this returns null rather than falsely scoring it 0%.
 export async function scorePrediction(row: PredictionRow): Promise<ScoredPrediction | null> {
-  const info = weekInfoFromKey(row.forWeekKey);
-  if (info.endISO >= todayISO()) return null;
+  const windowDates = await tradingDaysAfter(row.forDate, TRACKING_WINDOW_DAYS);
+  if (windowDates.length < TRACKING_WINDOW_DAYS) return null;
+  const windowEnd = windowDates[windowDates.length - 1];
 
-  const entries = await getEntriesInRange(info.startISO, info.endISO);
+  const entries = await prisma.dailyEntry.findMany({ where: { date: { gte: row.forDate, lte: windowEnd } } });
   if (entries.length === 0) return null;
 
-  const themed = await applyThemes(
-    entries.map((e) => ({ name: e.name, code: e.code, sector: e.sector, changePct: e.changePct }))
-  );
-  const agg = aggregateSectors(themed);
-  const topSectors = agg.sectors.slice(0, 3).map((s) => s.name);
+  const bySector = new Map<string, { sum: number; count: number }>();
+  for (const e of entries) {
+    const b = bySector.get(e.sector) ?? { sum: 0, count: 0 };
+    b.sum += e.changePct;
+    b.count += 1;
+    bySector.set(e.sector, b);
+  }
+  const topSectors = [...bySector.entries()]
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 3)
+    .map(([name]) => name);
 
   const sectors: ScoredSector[] = parsePredictionSectors(row.sectors).map((s) => ({
     ...s,
     hit: topSectors.some((actual) => actual.includes(s.name) || s.name.includes(actual)),
   }));
 
-  const candidates: ScoredCandidate[] = parsePredictionCandidates(row.candidates).map((c) => {
-    const matches = entries.filter((e) => e.name === c.name);
-    const avg = matches.length ? matches.reduce((sum, e) => sum + e.changePct, 0) / matches.length : null;
-    return { ...c, hit: avg !== null && avg > 0, actualAvgChangePct: avg };
-  });
+  const rawCandidates = parsePredictionCandidates(row.candidates);
+  const candidates: ScoredCandidate[] = await Promise.all(
+    rawCandidates.map(async (c) => {
+      if (!c.code) return { ...c, hit: false, finalChangePct: null };
+      const candles = await fetchKisChart(c.code, "D");
+      const series = getDailyChangeSeries(candles, row.forDate);
+      const final = series.length > 0 ? series[series.length - 1].changePct : null;
+      return { ...c, hit: final !== null && final > 0, finalChangePct: final };
+    })
+  );
+
+  const sectorCounts = [...bySector.entries()].sort((a, b) => b[1].count - a[1].count);
 
   return {
-    forWeekKey: row.forWeekKey,
-    label: info.label,
+    forDate: row.forDate,
+    label: formatDateLabel(row.forDate),
     summary: row.summary,
     sectors,
     candidates,
     sectorHitRate: sectors.length ? sectors.filter((s) => s.hit).length / sectors.length : null,
     candidateHitRate: candidates.length ? candidates.filter((c) => c.hit).length / candidates.length : null,
-    actualHotSector: agg.hotSector,
+    actualHotSector: sectorCounts[0]?.[0] ?? null,
   };
 }
 
+// Strictly-scored history (5-trading-day window fully elapsed) — used to
+// tell Golgoo/the LLM how accurate past calls actually were. For a
+// day-by-day archive listing that also includes still-in-progress rows,
+// see getRecentPredictionDays below instead.
 export async function getScoredPredictionHistory(limit = 8): Promise<ScoredPrediction[]> {
-  const rows = await prisma.weeklyPrediction.findMany({ orderBy: { createdAt: "desc" }, take: limit + 4 });
+  const rows = await prisma.weeklyPrediction.findMany({ orderBy: { createdAt: "desc" }, take: limit + 6 });
   const scored: ScoredPrediction[] = [];
   for (const r of rows) {
     const s = await scorePrediction(r);
@@ -130,4 +148,45 @@ export async function getScoredPredictionHistory(limit = 8): Promise<ScoredPredi
 
 export async function getLatestPrediction() {
   return prisma.weeklyPrediction.findFirst({ orderBy: { createdAt: "desc" } });
+}
+
+export type PredictionDay = {
+  forDate: string;
+  label: string;
+  summary: string;
+  sectors: SectorPrediction[];
+  candidates: (CandidatePrediction & { series: Awaited<ReturnType<typeof getDailyChangeSeries>> })[];
+};
+
+// Every past prediction day, most recent first, each candidate carrying
+// whatever cumulative-return data is available right now (1-5 days —
+// however much of the 5-trading-day window has actually elapsed since
+// forDate) — unlike getScoredPredictionHistory, this doesn't wait for the
+// window to fully finish, so yesterday's report shows up with its
+// in-progress return instead of only appearing once it's 5 days old.
+export async function getRecentPredictionDays(limit = 14): Promise<PredictionDay[]> {
+  const rows = await prisma.weeklyPrediction.findMany({
+    where: { forDate: { lt: todayISO() } },
+    orderBy: { forDate: "desc" },
+    take: limit,
+  });
+
+  return Promise.all(
+    rows.map(async (row) => {
+      const candidates = parsePredictionCandidates(row.candidates);
+      const withSeries = await Promise.all(
+        candidates.map(async (c) => {
+          const candles = c.code ? await fetchKisChart(c.code, "D") : [];
+          return { ...c, series: getDailyChangeSeries(candles, row.forDate) };
+        })
+      );
+      return {
+        forDate: row.forDate,
+        label: formatDateLabel(row.forDate),
+        summary: row.summary,
+        sectors: parsePredictionSectors(row.sectors),
+        candidates: withSeries,
+      };
+    })
+  );
 }

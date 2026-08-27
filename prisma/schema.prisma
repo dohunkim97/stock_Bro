@@ -155,16 +155,23 @@ model ThemeNetFlow {
   @@unique([date, code])
 }
 
-// A "다음 주 강할 섹터/종목" forecast, generated once a week (Friday close,
-// see lib/weekly-prediction.ts) and keyed by the week it's FOR (forWeekKey,
-// e.g. "2026-08-3" from lib/week.ts) rather than the week it was made in.
-// Scoring isn't a stored field — it's computed on demand once forWeekKey's
-// week has actually ended, by comparing sectors/candidates against that
-// week's real DailyEntry data. sectors/candidates are JSON text in String
-// columns, same pattern as MarketBriefing.
+// A "지금부터 5거래일" stock-pick forecast, generated fresh every trading day
+// (see lib/weekly-prediction.ts) and keyed by the day it's FOR (forDate,
+// "YYYY-MM-DD") — one permanent row per calendar day, not upserted across
+// days, so every past day's exact call stays browsable in 기록보관소 even
+// after later days publish different picks. Model name is legacy (this
+// used to be a once-a-week, upserted-in-place forecast keyed by forWeekKey;
+// renaming the table felt riskier than living with the old name while
+// mid-refactor alongside concurrent work elsewhere in the app).
+// Each candidate's tracking window is exactly 5 trading days from forDate's
+// close (assumed buy price: that day's 15:30 종가) — see
+// lib/candidate-tracking.ts. Scoring isn't a stored field — it's computed
+// on demand once forDate + 5 trading days has actually passed, comparing
+// candidates against real chart data. sectors/candidates are JSON text in
+// String columns, same pattern as MarketBriefing.
 model WeeklyPrediction {
   id         String   @id @default(cuid())
-  forWeekKey String   @unique
+  forDate    String   @unique
   summary    String
   sectors    String
   candidates String

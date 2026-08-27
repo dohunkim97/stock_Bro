@@ -1,14 +1,11 @@
-import { getScoredPredictionHistory } from "@/lib/prediction-scoring";
+import { getRecentPredictionDays } from "@/lib/prediction-scoring";
+import { TRACKING_WINDOW_DAYS } from "@/lib/candidate-tracking";
 import { getRecentBriefingDays, parseSectorNote, parseCandidates, SLOT_TITLE, type BriefingSlot } from "@/lib/market-briefing";
 import { getRecentChatDays } from "@/lib/chat-history";
 import { formatDateLabel } from "@/lib/dates";
 import { renderBold } from "@/components/ui/rich-text";
 import { chgColorVar, formatChg } from "@/lib/format";
 import { ArchiveHubClient, type ArchiveRow } from "./archive-hub-client";
-
-function pct(v: number | null): string {
-  return v === null ? "-" : `${Math.round(v * 100)}%`;
-}
 
 // Strips the **bold** markers LLM-written summaries use — fine inside the
 // expanded detail (rendered via renderBold there), but the collapsed row's
@@ -23,47 +20,67 @@ function plainPreview(text: string): string {
 // archive sections that used to be scattered around /bro.
 export async function ArchiveHub() {
   const [predictions, dailyDays, chatDays] = await Promise.all([
-    getScoredPredictionHistory(10),
+    getRecentPredictionDays(14),
     getRecentBriefingDays(14),
     getRecentChatDays(14),
   ]);
 
-  const predictionRows: ArchiveRow[] = predictions.map((h) => ({
-    key: h.forWeekKey,
-    date: h.label,
-    summary: plainPreview(h.summary),
-    meta: `섹터 ${pct(h.sectorHitRate)} · 종목 ${pct(h.candidateHitRate)}`,
-    detail: (
-      <div style={{ fontSize: 11.5, lineHeight: 1.6, color: "var(--text)" }}>
-        <p style={{ margin: "0 0 10px" }}>{renderBold(h.summary)}</p>
-        {h.sectors.length > 0 && (
-          <div style={{ marginBottom: 8, display: "flex", flexDirection: "column", gap: 3 }}>
-            {h.sectors.map((s) => (
-              <div key={s.name} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span>{s.hit ? "✅" : "❌"}</span>
-                <span style={{ fontWeight: 600 }}>{s.name}</span>
-              </div>
-            ))}
-          </div>
-        )}
-        {h.candidates.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            {h.candidates.map((c) => (
-              <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span>{c.hit ? "✅" : "❌"}</span>
-                <span style={{ fontWeight: 600 }}>{c.name}</span>
-                {c.actualAvgChangePct !== null && (
-                  <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: chgColorVar(c.actualAvgChangePct) }}>
-                    {formatChg(c.actualAvgChangePct)}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    ),
-  }));
+  // Unlike the old weekly hit/miss scoring, a daily prediction row shows up
+  // here as soon as it's published (even yesterday's, still mid-way through
+  // its 5-거래일 window) — so this shows each candidate's cumulative %
+  // so far and how many of the 5 tracked days have actually elapsed,
+  // instead of a final ✅/❌ that only makes sense once the window closes.
+  const predictionRows: ArchiveRow[] = predictions.map((h) => {
+    const latestByCode = h.candidates.map((c) => (c.series.length > 0 ? c.series[c.series.length - 1] : null));
+    const avgChange =
+      latestByCode.filter((p): p is NonNullable<typeof p> => p !== null).length > 0
+        ? latestByCode.reduce((sum, p) => sum + (p?.changePct ?? 0), 0) / latestByCode.filter((p) => p !== null).length
+        : null;
+    return {
+      key: h.forDate,
+      date: h.label,
+      summary: plainPreview(h.summary),
+      meta: avgChange !== null ? `종목 평균 ${formatChg(avgChange)}` : "추적 데이터 없음",
+      detail: (
+        <div style={{ fontSize: 11.5, lineHeight: 1.6, color: "var(--text)" }}>
+          <p style={{ margin: "0 0 10px" }}>{renderBold(h.summary)}</p>
+          {h.sectors.length > 0 && (
+            <div style={{ marginBottom: 8, display: "flex", flexDirection: "column", gap: 3 }}>
+              {h.sectors.map((s) => (
+                <div key={s.name} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  <span style={{ fontWeight: 700 }}>{s.name}</span>
+                  <span style={{ fontSize: 10.5, color: "var(--dim)" }}>{renderBold(s.reasoning)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {h.candidates.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {h.candidates.map((c) => {
+                const days = c.series;
+                const latest = days.length > 0 ? days[days.length - 1] : null;
+                return (
+                  <div key={c.name}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontWeight: 700 }}>{c.name}</span>
+                      {latest ? (
+                        <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: chgColorVar(latest.changePct) }}>
+                          {formatChg(latest.changePct)} ({latest.dayIndex}/{TRACKING_WINDOW_DAYS}일차)
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 10.5, color: "var(--faint)" }}>추적 불가</span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: "var(--dim)" }}>{renderBold(c.reasoning)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ),
+    };
+  });
 
   const dailyRows: ArchiveRow[] = dailyDays.map((day) => ({
     key: day.date,
