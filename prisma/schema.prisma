@@ -218,6 +218,37 @@ model TelegramNews {
   @@unique([chatId, messageId])
 }
 
+// 둥지(My Page) — 개인 포트폴리오. 로그인이 없는 단일 사용자 앱이라 설정은
+// 싱글톤 한 행(id="singleton")으로 충분하다. 채권/대체자산/현금은 이 앱에
+// 라이브 시세 소스가 없어(KIS는 국내 주식 전용) 종목별로 관리하지 않고
+// 총액만 입력받는다 — 실시간 평가금액·자동 손절가·AI 목표가는 주식
+// 보유분(PortfolioHolding)에만 적용된다.
+model PortfolioSettings {
+  id             String   @id @default("singleton")
+  totalSeed      Float    @default(0)
+  cashAmount     Float    @default(0)
+  bondAmount     Float    @default(0)
+  altAssetAmount Float    @default(0)
+  targetStockPct Float    @default(60)
+  targetBondPct  Float    @default(20)
+  targetAltPct   Float    @default(10)
+  targetCashPct  Float    @default(10)
+  updatedAt      DateTime @updatedAt
+}
+
+// 보유 주식 한 종목 = 한 행. 같은 종목을 여러 번(분할 매수 등) 추가하면
+// 여러 행으로 남아 각자의 매수가를 따로 추적한다 — 평단가로 합치지 않는
+// 이유는, 손절가/목표가처럼 이 앱이 계산하는 지표들이 매수 시점의 맥락
+// (그때 얼마에 샀는지)에 의미가 있기 때문.
+model PortfolioHolding {
+  id        String   @id @default(cuid())
+  name      String
+  code      String
+  buyPrice  Float
+  quantity  Float
+  createdAt DateTime @default(now())
+}
+
 // A handful of short "이 회사가 실제로 뭘 파는가" keywords per stock (see
 // lib/company-keywords.ts), LLM-extracted from real news headlines — not
 // from StockMaster.sector/industry, which are broad KRX classifications, not

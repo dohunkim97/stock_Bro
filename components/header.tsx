@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { href: "/market", label: "Market" },
   { href: "/stock", label: "종목 상세" },
   { href: "/bro", label: "Golgoo" },
+  { href: "/nest", label: "둥지" },
 ];
 
 function useMarketClock() {
