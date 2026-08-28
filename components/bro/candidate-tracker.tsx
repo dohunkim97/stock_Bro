@@ -1,10 +1,8 @@
 import Link from "next/link";
 import { getLatestPrediction, parsePredictionCandidates } from "@/lib/prediction-scoring";
 import { formatDateLabel } from "@/lib/dates";
-import { renderBold } from "@/components/ui/rich-text";
 import { getDailyChangeSeries } from "@/lib/candidate-tracking";
 import { fetchKisChart } from "@/lib/kis-chart";
-import { computeTechnicalSignals, type TechnicalSignal } from "@/lib/technical-signals";
 import { chgColorVar, formatChg } from "@/lib/format";
 
 const panelStyle: React.CSSProperties = {
@@ -29,14 +27,6 @@ function dateLabel(iso?: string): string {
   return `${d.getMonth() + 1}.${d.getDate()}`;
 }
 
-// 상승=빨강/하락=파랑 (이 앱의 색상 규칙, lib/format.ts의 chgColorVar 참고) —
-// 시그널 방향(direction)에도 같은 규칙 적용.
-function signalColor(direction: TechnicalSignal["direction"]): string {
-  if (direction === "bullish") return "var(--up)";
-  if (direction === "bearish") return "var(--down)";
-  return "var(--dim)";
-}
-
 // "예상한 종목 상승률" on its own — how each of Golgoo's currently-predicted
 // candidates has actually moved since it was first predicted. Split out of
 // what used to be the combined PredictionPanel so it can sit in its own
@@ -56,15 +46,14 @@ export async function CandidateTracker() {
   const candidates = parsePredictionCandidates(latest.candidates);
   const forDateLabel = formatDateLabel(latest.forDate);
 
-  // Only ever 3-5 candidates, so a daily-chart fetch per code is cheap — one
-  // fetch per candidate feeds both "종가 매수 기준 누적 등락률" (day by day) and
-  // the 거래량/지지·저항 기술적 시그널 (lib/technical-signals.ts), instead of
-  // fetching the same chart twice. Every candidate in this row shares the
-  // same anchor date (latest.forDate) now that predictions publish daily —
-  // there's no more per-candidate firstSeenAt.
+  // Only ever 3-5 candidates, so a daily-chart fetch per code is cheap.
+  // Every candidate in this row shares the same anchor date (latest.forDate)
+  // now that predictions publish daily — there's no more per-candidate
+  // firstSeenAt. AI 추천 근거와 기술적 시그널은 이제 이 위젯이 아니라
+  // PredictionReport의 "종목 근거" 카드 쪽에서 보여준다 — 여기는 순수하게
+  // 날짜별 누적 상승률만 보여주는 라이브 트래커 역할만 한다.
   const candles = await Promise.all(candidates.map((c) => (c.code ? fetchKisChart(c.code, "D") : Promise.resolve([]))));
   const series = candles.map((cs) => getDailyChangeSeries(cs, latest.forDate));
-  const signals = candles.map((cs) => computeTechnicalSignals(cs));
 
   return (
     <section style={panelStyle}>
@@ -127,9 +116,6 @@ export async function CandidateTracker() {
                     <span style={{ fontSize: 10.5, color: "var(--faint)" }}>추적 불가</span>
                   )}
                 </div>
-                <div style={{ fontSize: 11.5, color: "var(--dim)", marginTop: 4, lineHeight: 1.5 }}>
-                  {renderBold(c.reasoning)}
-                </div>
                 {days.length > 0 && (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8 }}>
                     {days.map((p) => (
@@ -154,17 +140,6 @@ export async function CandidateTracker() {
                 <div style={{ fontSize: 10, color: "var(--faint)", marginTop: 6, fontFamily: "var(--mono)" }}>
                   {dateLabel(latest.forDate)} 종가 매수 기준 누적
                 </div>
-                {signals[i].length > 0 && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
-                    {signals[i].map((s) => (
-                      <div key={s.name} style={{ fontSize: 10.5, lineHeight: 1.5, color: "var(--dim)" }}>
-                        <span style={{ fontWeight: 700, color: signalColor(s.direction) }}>시그널: {s.name}</span>
-                        {" — "}
-                        {s.detail}
-                      </div>
-                    ))}
-                  </div>
-                )}
               </Link>
             );
           })}
