@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { parsePredictionCandidates } from "@/lib/prediction-scoring";
 import { getCandidateDetails } from "@/lib/candidate-detail";
 import { fetchKisChart } from "@/lib/kis-chart";
-import { computeTechnicalSignals } from "@/lib/technical-signals";
+import { computeTechnicalSignals, LONG_TERM_SIGNAL_CANDLES } from "@/lib/technical-signals";
 
 export const maxDuration = 60;
 
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
   const candidates = parsePredictionCandidates(row.candidates);
   const [details, candlesList] = await Promise.all([
     getCandidateDetails(candidates),
-    Promise.all(candidates.map((c) => (c.code ? fetchKisChart(c.code, "D") : Promise.resolve([])))),
+    Promise.all(candidates.map((c) => (c.code ? fetchKisChart(c.code, "D", LONG_TERM_SIGNAL_CANDLES) : Promise.resolve([])))),
   ]);
 
   const merged = details.map((d, i) => ({ ...d, signals: computeTechnicalSignals(candlesList[i]) }));

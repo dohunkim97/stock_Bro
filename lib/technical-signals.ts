@@ -10,18 +10,21 @@ import type { ChartCandle } from "@/lib/kis-chart";
 // color, volume change vs prior day, short-term drawdown, distance from
 // the 5일선(5-day MA), historical-low proximity, prior-low breakdown +
 // "바닥 확인", support/resistance levels via swing-pivot detection, and
-// moving-average stacking/지지 patterns (3/5/8/10/33/45일선, with a
-// 120일선 caution overlay).
+// moving-average stacking/지지/붕괴 patterns (3/5/8/10/33/45/300/480일선,
+// with a 120일선 caution overlay).
 // What ISN'T (skipped, by design): "전일 모든 악재 터짐" — that's a news
 // judgment call, not a price pattern; the app's real per-stock 뉴스 이슈
 // data (lib/kis-news.ts, DailyEntry.issue) already covers that separately
 // and shouldn't be faked as a price-derived signal. Also skipped: the
-// book's 360일선 회귀 rule — it needs a 360-day MA plus a second MA point
-// ~20 trading days earlier to confirm the line is rising, i.e. 380+
-// candles, while lib/kis-chart.ts caps fetchKisChart at ~300 (tuned for a
-// 200일선 to read as a real trend line, not a single dot) — widening that
-// cap further would slow down every other caller of fetchKisChart just to
-// serve this one rule.
+// book's 360일선 회귀 rule (not requested for computation the way
+// 300/480일선 were) — it needs a 360-day MA plus a second MA point ~20
+// trading days earlier to confirm the line is rising. The 300/480일선
+// detectors below need similarly deep history (480+ candles, i.e. ~2
+// years of daily data) — lib/kis-chart.ts's fetchKisChart defaults to a
+// lighter ~300-candle fetch for most callers, and only the callers that
+// actually compute these long-term signals request the deeper
+// LONG_TERM_SIGNAL_CANDLES history explicitly, so chart-display and
+// short-window callers don't pay the extra latency.
 
 export type SignalDirection = "bullish" | "bearish" | "neutral";
 export type TechnicalSignal = {
@@ -433,6 +436,62 @@ function fortyFiveDayReboundSignal(candles: ChartCandle[]): TechnicalSignal[] {
   ];
 }
 
+// --- 장기 이평선 지지/붕괴 (300일선, 480일선) ---
+// 사용자 지시: "480일선이 최후의 이평선으로 지지 못 받는 거는 위험해서
+// 매도해야 하는 걸로" — 480일선은 마지막 장기 지지선 취급, 이걸 이탈하면
+// 위험 신호로 매도 검토. 300일선은 그보다 앞선 장기 지지선으로 같은
+// 지지/붕괴 패턴을 적용하되 "최후"라는 강조는 480일선에만 붙인다.
+function longTermMaSignal(candles: ChartCandle[], period: number, label: string, isFinal: boolean): TechnicalSignal[] {
+  const i = candles.length - 1;
+  const ma = sma(candles, period, i);
+  const prevMa = sma(candles, period, i - 1);
+  if (ma === null || prevMa === null) return [];
+
+  const today = candles[i];
+  const prev = candles[i - 1];
+  if (!prev) return [];
+
+  // 어제까지는 이 지지선 위/근접이었는지 먼저 확인 — 애초에 그 라인 근처에
+  // 있지도 않았던 종목을 "붕괴"로 잡으면 과잉 신호가 된다.
+  const wasHolding = prev.close >= prevMa || Math.abs((prev.close - prevMa) / prevMa) * 100 <= 5;
+  const brokeToday = today.close < ma && ((ma - today.close) / ma) * 100 >= 2;
+
+  if (wasHolding && brokeToday) {
+    return [
+      {
+        name: `${label} 붕괴${isFinal ? " (최후 지지선 이탈)" : ""}`,
+        detail: `${label}(${fmt(ma)}) 지지가 깨짐${isFinal ? " — 장기 이평선 중 마지막 지지선인 만큼 위험 신호, 매도 검토" : " — 장기 추세 이탈 주의"}`,
+        direction: "bearish",
+      },
+    ];
+  }
+
+  if (today.close >= ma && Math.abs((today.close - ma) / ma) * 100 <= 3) {
+    return [
+      {
+        name: `${label} 지지 확인`,
+        detail: `${label}(${fmt(ma)}) 근접 지지 유지 중${isFinal ? " — 최후 지지선 사수 중" : ""}`,
+        direction: "bullish",
+      },
+    ];
+  }
+
+  return [];
+}
+
+// 480일선 + 전일 대비 시점(i-1)까지 계산하려면 481개 이상의 캔들이 필요 —
+// 주말/휴장일 편차를 감안한 여유분을 더해 이 값을 요청하면 fetchKisChart가
+// 그만큼 더 페이징해서 가져온다 (lib/kis-chart.ts 참고). 이 값을 요청하지
+// 않는 호출부(차트 표시, 단기 시그널만 쓰는 곳)는 기존 기본값(~300개) 그대로다.
+export const LONG_TERM_SIGNAL_CANDLES = 520;
+
+function longTermTrendSignals(candles: ChartCandle[]): TechnicalSignal[] {
+  return [
+    ...longTermMaSignal(candles, 300, "300일선", false),
+    ...longTermMaSignal(candles, 480, "480일선", true),
+  ];
+}
+
 function movingAverageSignals(candles: ChartCandle[]): TechnicalSignal[] {
   if (candles.length < 10) return [];
   return [
@@ -441,6 +500,7 @@ function movingAverageSignals(candles: ChartCandle[]): TechnicalSignal[] {
     ...eightDayLineSignal(candles),
     ...scoutBuySignal(candles),
     ...fortyFiveDayReboundSignal(candles),
+    ...longTermTrendSignals(candles),
   ];
 }
 

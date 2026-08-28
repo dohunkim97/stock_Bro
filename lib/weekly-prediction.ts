@@ -6,7 +6,7 @@ import { todayISO } from "@/lib/dates";
 import { resolveStock } from "@/lib/market-data";
 import { fetchKisCodeMaster, findInCodeMaster } from "@/lib/kis-code-master";
 import { fetchKisChart } from "@/lib/kis-chart";
-import { computeTechnicalSignals } from "@/lib/technical-signals";
+import { computeTechnicalSignals, LONG_TERM_SIGNAL_CANDLES } from "@/lib/technical-signals";
 
 const SYSTEM_PROMPT = [
   "너는 한국 주식시장의 향후 5거래일 유망 종목을 뽑는 애널리스트야.",
@@ -14,7 +14,8 @@ const SYSTEM_PROMPT = [
   "summary·reasoning 안에서 진짜 중요한 문장이나 핵심 단어(강세 근거, 결정적 수치, 종목명 등)는 **이렇게** 별 두 개로 감싸서 강조해 — 한 항목에 한두 곳 정도면 충분해, 남발하지 마.",
   "이 리포트는 매일 새로 나가고, 오늘 종가(15:30)에 매수했다고 가정하고 5거래일 동안의 성과를 추적해 — 그러니 '다음 주' 같은 표현 대신 '오늘부터 5거래일' 식으로 말해.",
   "아래 최근 몇 주간의 섹터·언급 흐름, 최근 종목별 실제 뉴스 이슈, 텔레그램 제보, [관심 종목군의 기술적 시그널], (있다면) 과거 예측 적중 이력을 종합해서 종목을 선정해.",
-  "[관심 종목군의 기술적 시그널]은 실제 차트 데이터로 계산된 값이야(거래량 급감+음봉·지지선 지지 확인·8일선 지지·33일선 정찰병 매수·45일선 반등·이동평균선 정배열 같은 bullish 시그널 / 저항선 돌파 실패·단기 급락·이동평균선 역배열·45일선 터치 시 거래량 증가(반등 제외) 같은 bearish 시그널) — 종목을 고를 때 반드시 참고하고, 있는 종목은 reasoning에 자연스럽게 녹여서 언급해.",
+  "[관심 종목군의 기술적 시그널]은 실제 차트 데이터로 계산된 값이야(거래량 급감+음봉·지지선 지지 확인·8일선 지지·33일선 정찰병 매수·45일선 반등·이동평균선 정배열·300일선/480일선 지지 확인 같은 bullish 시그널 / 저항선 돌파 실패·단기 급락·이동평균선 역배열·45일선 터치 시 거래량 증가(반등 제외)·300일선/480일선 붕괴 같은 bearish 시그널) — 종목을 고를 때 반드시 참고하고, 있는 종목은 reasoning에 자연스럽게 녹여서 언급해.",
+  "특히 480일선은 마지막 장기 지지선이야 — '480일선 붕괴' 시그널이 뜬 종목은 위험 신호로 보고 후보에서 제외하거나, 이미 후보로 다뤄야 한다면 반드시 매도/손절 관점에서 경고를 명확히 해.",
   "과거 예측 적중 이력이 있다면 반드시 참고해 — 어떤 유형의 근거가 잘 맞았는지, 안 맞았는지를 이번 선정에 반영해.",
   "판단 원칙: 진짜 호재를 품은 종목은 하루에 -5% 넘게 잘 안 빠져 — 뉴스는 좋은데 최근 낙폭이 -5%를 넘는 종목은 호재 신뢰도를 의심하고 신중하게 다뤄. 목표 구간·손절선은 항상 같이 언급해서, 평단가를 위협하면 미련 없이 손절한다는 원칙이 자연스럽게 드러나게 해.",
   "확정적 보장이 아니라 데이터에 근거한 관찰이라는 점을 유지해. 데이터에 없는 건 추측하지 마.",
@@ -82,7 +83,7 @@ async function signalShortlistBlock(): Promise<string> {
 
   const perStock = await Promise.all(
     shortlist.map(async (r) => {
-      const candles = await fetchKisChart(r.code!, "D");
+      const candles = await fetchKisChart(r.code!, "D", LONG_TERM_SIGNAL_CANDLES);
       return { name: r.name, signals: computeTechnicalSignals(candles) };
     })
   );

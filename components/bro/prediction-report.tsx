@@ -3,7 +3,7 @@ import { formatDateLabel } from "@/lib/dates";
 import { renderBold } from "@/components/ui/rich-text";
 import { getCandidateDetails } from "@/lib/candidate-detail";
 import { fetchKisChart } from "@/lib/kis-chart";
-import { computeTechnicalSignals } from "@/lib/technical-signals";
+import { computeTechnicalSignals, LONG_TERM_SIGNAL_CANDLES } from "@/lib/technical-signals";
 import { blockStyle, blockHeaderStyle, badgeStyle, blockLabelStyle, DetailCard } from "./detail-card";
 
 const panelStyle: React.CSSProperties = {
@@ -49,7 +49,7 @@ export async function PredictionReport() {
   // 데이터도 같은 fetchKisChart+computeTechnicalSignals로 계산한다.
   const [details, candles] = await Promise.all([
     candidates.length > 0 ? getCandidateDetails(candidates) : Promise.resolve([]),
-    Promise.all(candidates.map((c) => (c.code ? fetchKisChart(c.code, "D") : Promise.resolve([])))),
+    Promise.all(candidates.map((c) => (c.code ? fetchKisChart(c.code, "D", LONG_TERM_SIGNAL_CANDLES) : Promise.resolve([])))),
   ]);
   const signalsByName = new Map(candidates.map((c, i) => [c.name, computeTechnicalSignals(candles[i])]));
 

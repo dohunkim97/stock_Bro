@@ -83,15 +83,24 @@ const WINDOW_YEARS: Record<ChartPeriod, number> = { D: 1, W: 3, M: 10 };
 
 // Enough history for a 200일선 to actually read as a trend line across a
 // good portion of the chart, not just a single dot on the most recent bar.
+// This stays the default for most callers (chart display, short-window
+// signals) — passing a larger `targetCandles` (see lib/technical-signals.ts's
+// LONG_TERM_SIGNAL_CANDLES) only widens the fetch for the specific callers
+// that actually need deep history (300일선/480일선 등), instead of slowing
+// down every fetchKisChart call in the app.
 const TARGET_CANDLES = 300;
-const MAX_EXTRA_PAGES = 2;
+const DEFAULT_MAX_EXTRA_PAGES = 2;
 
 // 국내주식기간별시세(일/주/월/년) — 국내주식-016, tr_id FHKST03010100. One call
 // caps at 100 candles regardless of period or date-range width, so getting
-// enough history for a 200-period moving average means paging backwards:
-// each extra call's window ends the day before the earliest candle seen so
-// far and reaches back another WINDOW_YEARS.
-export async function fetchKisChart(code: string, period: ChartPeriod = "D"): Promise<ChartCandle[]> {
+// enough history for a long moving average means paging backwards: each
+// extra call's window ends the day before the earliest candle seen so far
+// and reaches back another WINDOW_YEARS.
+export async function fetchKisChart(
+  code: string,
+  period: ChartPeriod = "D",
+  targetCandles: number = TARGET_CANDLES
+): Promise<ChartCandle[]> {
   const appKey = process.env.KIS_APP_KEY;
   const appSecret = process.env.KIS_APP_SECRET;
   if (!appKey || !appSecret) return [];
@@ -106,7 +115,12 @@ export async function fetchKisChart(code: string, period: ChartPeriod = "D"): Pr
 
   let all = await fetchPage(code, period, start, end, appKey, appSecret, token);
 
-  for (let i = 0; i < MAX_EXTRA_PAGES && all.length > 0 && all.length < TARGET_CANDLES; i++) {
+  // KIS returns ~100 rows/call, so reaching `targetCandles` needs roughly
+  // that many extra pages — never fewer than the historical default so
+  // existing behavior at the default target doesn't change.
+  const maxExtraPages = Math.max(DEFAULT_MAX_EXTRA_PAGES, Math.ceil(targetCandles / 100) - 1);
+
+  for (let i = 0; i < maxExtraPages && all.length > 0 && all.length < targetCandles; i++) {
     const nextEnd = new Date(all[0].date);
     nextEnd.setDate(nextEnd.getDate() - 1);
     const nextStart = new Date(nextEnd);
