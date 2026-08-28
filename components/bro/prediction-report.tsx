@@ -2,6 +2,8 @@ import { getLatestPrediction, parsePredictionCandidates, parsePredictionSectors 
 import { formatDateLabel } from "@/lib/dates";
 import { renderBold } from "@/components/ui/rich-text";
 import { getCandidateDetails } from "@/lib/candidate-detail";
+import { fetchKisChart } from "@/lib/kis-chart";
+import { computeTechnicalSignals } from "@/lib/technical-signals";
 import { blockStyle, blockHeaderStyle, badgeStyle, blockLabelStyle, DetailCard } from "./detail-card";
 
 const panelStyle: React.CSSProperties = {
@@ -42,7 +44,14 @@ export async function PredictionReport() {
 
   const sectors = parsePredictionSectors(latest.sectors);
   const candidates = parsePredictionCandidates(latest.candidates);
-  const details = candidates.length > 0 ? await getCandidateDetails(candidates) : [];
+  // 종목 근거 카드 안에 CandidateTracker(우측 예상종목 위젯)와 동일한 기술적
+  // 시그널을 같이 보여준다 — 같은 근거를 두 군데서 다르게 보이지 않게, 차트
+  // 데이터도 같은 fetchKisChart+computeTechnicalSignals로 계산한다.
+  const [details, candles] = await Promise.all([
+    candidates.length > 0 ? getCandidateDetails(candidates) : Promise.resolve([]),
+    Promise.all(candidates.map((c) => (c.code ? fetchKisChart(c.code, "D") : Promise.resolve([])))),
+  ]);
+  const signalsByName = new Map(candidates.map((c, i) => [c.name, computeTechnicalSignals(candles[i])]));
 
   return (
     <section style={panelStyle}>
@@ -84,7 +93,7 @@ export async function PredictionReport() {
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {details.map((d) => (
-                <DetailCard key={d.name} d={d} />
+                <DetailCard key={d.name} d={d} signals={signalsByName.get(d.name)} />
               ))}
             </div>
           </div>
