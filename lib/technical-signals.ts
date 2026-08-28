@@ -2,17 +2,26 @@ import type { ChartCandle } from "@/lib/kis-chart";
 
 // Computable technical-analysis signals derived from real daily OHLCV data
 // (not the LLM "recalling" a book concept) — rules transcribed from user-
-// supplied trading-book material on 지지/저항(support/resistance) and
-// 거래량(volume). Each detector below cites which rule it implements.
+// supplied trading-book material on 지지/저항(support/resistance), 거래량
+// (volume), and 이동평균선(moving averages). Each detector below cites
+// which rule it implements.
 //
 // What's precisely computable from candles alone (built here): candle
 // color, volume change vs prior day, short-term drawdown, distance from
 // the 5일선(5-day MA), historical-low proximity, prior-low breakdown +
-// "바닥 확인", and support/resistance levels via swing-pivot detection.
+// "바닥 확인", support/resistance levels via swing-pivot detection, and
+// moving-average stacking/지지 patterns (3/5/8/10/33/45일선, with a
+// 120일선 caution overlay).
 // What ISN'T (skipped, by design): "전일 모든 악재 터짐" — that's a news
 // judgment call, not a price pattern; the app's real per-stock 뉴스 이슈
 // data (lib/kis-news.ts, DailyEntry.issue) already covers that separately
-// and shouldn't be faked as a price-derived signal.
+// and shouldn't be faked as a price-derived signal. Also skipped: the
+// book's 360일선 회귀 rule — it needs a 360-day MA plus a second MA point
+// ~20 trading days earlier to confirm the line is rising, i.e. 380+
+// candles, while lib/kis-chart.ts caps fetchKisChart at ~300 (tuned for a
+// 200일선 to read as a real trend line, not a single dot) — widening that
+// cap further would slow down every other caller of fetchKisChart just to
+// serve this one rule.
 
 export type SignalDirection = "bullish" | "bearish" | "neutral";
 export type TechnicalSignal = {
@@ -244,6 +253,197 @@ function supportResistanceSignals(candles: ChartCandle[]): TechnicalSignal[] {
   return signals;
 }
 
+// --- 이동평균선 배열 (정배열/역배열) ---
+// "이동평균선 배열이 3,5,10이 아닌 10,5,3을 말함(역추세)" — 3일선이 5일선
+// 위, 5일선이 10일선 위면 단기 추세가 정배열(우상향 정렬), 반대면 역배열.
+function maOrderSignal(candles: ChartCandle[]): TechnicalSignal[] {
+  const i = candles.length - 1;
+  const ma3 = sma(candles, 3, i);
+  const ma5 = sma(candles, 5, i);
+  const ma10 = sma(candles, 10, i);
+  if (ma3 === null || ma5 === null || ma10 === null) return [];
+
+  if (ma3 > ma5 && ma5 > ma10) {
+    return [
+      {
+        name: "이동평균선 정배열",
+        detail: `3일선(${fmt(ma3)}) > 5일선(${fmt(ma5)}) > 10일선(${fmt(ma10)}) — 단기 추세가 우상향으로 정렬된 상태`,
+        direction: "bullish",
+      },
+    ];
+  }
+  if (ma3 < ma5 && ma5 < ma10) {
+    return [
+      {
+        name: "이동평균선 역배열",
+        detail: `3일선(${fmt(ma3)}) < 5일선(${fmt(ma5)}) < 10일선(${fmt(ma10)}) — 단기 추세가 역행 중(역추세)`,
+        direction: "bearish",
+      },
+    ];
+  }
+  return [];
+}
+
+// --- 3일선 지지 (바닥권 첫 상한가 이후) ---
+// "바닥권에서 '이유 있는' 첫 상한가를 기록하고 상승 추세로 바뀌는 종목은
+// 3일선을 탄다" — 최근 상한가(+29%+ 근사) 이전 구간이 바닥권이었는지, 그
+// 이후 지금까지 3일선 위에서 유지되고 있는지를 확인.
+function firstLimitUpThreeDaySignal(candles: ChartCandle[]): TechnicalSignal[] {
+  const i = candles.length - 1;
+  const lookback = Math.min(20, i);
+  let surgeIdx = -1;
+  for (let j = i - 1; j >= Math.max(1, i - lookback); j--) {
+    const prevC = candles[j - 1];
+    if (!prevC || prevC.close <= 0) continue;
+    const chg = ((candles[j].close - prevC.close) / prevC.close) * 100;
+    if (chg >= 29) {
+      surgeIdx = j;
+      break;
+    }
+  }
+  if (surgeIdx === -1) return [];
+
+  const priorWindow = candles.slice(Math.max(0, surgeIdx - 60), surgeIdx);
+  if (priorWindow.length < 10) return [];
+  const priorLow = Math.min(...priorWindow.map((c) => c.low));
+  if (priorLow <= 0) return [];
+  // "바닥권"인지는 상한가를 맞기 '직전' 가격이 최근 저점 근처였는지로 판단
+  // — 상한가 당일 종가 자체는 정의상 전일 대비 +29%±라, 그 값을 저점과
+  // 비교하면 진짜 바닥권 여부와 무관하게 항상 25%+ 차이가 나서 늘 걸러짐.
+  const preSurgeClose = candles[surgeIdx - 1].close;
+  if (((preSurgeClose - priorLow) / priorLow) * 100 > 25) return []; // 바닥권 아니면 해당 없음
+
+  const ma3 = sma(candles, 3, i);
+  const today = candles[i];
+  if (ma3 === null || today.close < ma3) return []; // 이미 3일선 이탈 — "타는 중" 아님
+
+  const surgePct = ((candles[surgeIdx].close - candles[surgeIdx - 1].close) / candles[surgeIdx - 1].close) * 100;
+  return [
+    {
+      name: "3일선 지지 (바닥권 상한가 이후)",
+      detail: `${candles[surgeIdx].date} 바닥권 상한가(+${Math.round(surgePct)}%) 이후 3일선(${fmt(ma3)}) 위에서 지지 유지 중`,
+      direction: "bullish",
+    },
+  ];
+}
+
+// --- 8일선 지지 (3·5일선 이탈 후 대체 지지선) ---
+// "3,5일선에서 지지를 받지 못한 급등주는 8일선이 강력한 지지선이 된다
+// (그 다음 지지선은 20일선일 확률이 매우 높다)"
+function eightDayLineSignal(candles: ChartCandle[]): TechnicalSignal[] {
+  const i = candles.length - 1;
+  const ma3 = sma(candles, 3, i);
+  const ma5 = sma(candles, 5, i);
+  const ma8 = sma(candles, 8, i);
+  if (ma3 === null || ma5 === null || ma8 === null) return [];
+
+  const today = candles[i];
+  if (today.close < ma3 && today.close < ma5 && today.close >= ma8) {
+    return [
+      {
+        name: "8일선 지지",
+        detail: `3일선·5일선은 이탈했지만 8일선(${fmt(ma8)})에서 지지 확인 — 다음 지지선은 20일선일 확률이 높음`,
+        direction: "bullish",
+      },
+    ];
+  }
+  return [];
+}
+
+// --- 33일선 정찰병 매수 ---
+// "33일선 - 45일선 정찰병. 33일선에서 지지를 받고 있을 시 정찰병(일부 매수)"
+function scoutBuySignal(candles: ChartCandle[]): TechnicalSignal[] {
+  const i = candles.length - 1;
+  const ma33 = sma(candles, 33, i);
+  if (ma33 === null) return [];
+
+  const today = candles[i];
+  const gapPct = ((today.close - ma33) / ma33) * 100;
+  if (today.close >= ma33 && gapPct <= 3) {
+    return [
+      {
+        name: "33일선 정찰병 매수 구간",
+        detail: `33일선(${fmt(ma33)}) 근접 지지 — 45일선 도달 전 일부 매수(정찰병) 관찰 구간`,
+        direction: "bullish",
+      },
+    ];
+  }
+  return [];
+}
+
+// --- 45일선 반등 (낙주매매) ---
+// "하루 20%+ 급등 이후 처음 45일선에 닿을 때 거래량이 줄면서 음봉마감하면
+// 반등 — 첫 터치 이후로는 확률이 낮으니 무시. 120일선 같은 장기선이 위에
+// 있으면 주의(맞고 떨어지는 경우가 잦음). 단, 45일선 닿을 때 거래량이
+// 늘어난 상태면 무조건 제외."
+function fortyFiveDayReboundSignal(candles: ChartCandle[]): TechnicalSignal[] {
+  const i = candles.length - 1;
+  const ma45 = sma(candles, 45, i);
+  if (ma45 === null) return [];
+
+  const lookback = Math.min(60, i);
+  let surgeIdx = -1;
+  for (let j = i - 1; j >= Math.max(1, i - lookback); j--) {
+    const prevC = candles[j - 1];
+    if (!prevC || prevC.close <= 0) continue;
+    const chg = ((candles[j].close - prevC.close) / prevC.close) * 100;
+    if (chg >= 20) {
+      surgeIdx = j;
+      break;
+    }
+  }
+  if (surgeIdx === -1) return [];
+
+  // 급등 이후 오늘 이전에 이미 45일선을 터치한 적 있다면 "처음"이 아니므로
+  // 책 기준 무시.
+  for (let j = surgeIdx + 1; j < i; j++) {
+    const maAtJ = sma(candles, 45, j);
+    if (maAtJ === null) continue;
+    if (Math.abs((candles[j].close - maAtJ) / maAtJ) * 100 <= 2) return [];
+  }
+
+  const today = candles[i];
+  if (Math.abs((today.close - ma45) / ma45) * 100 > 2) return []; // 오늘도 아직 터치 전
+
+  const prev = candles[i - 1];
+  const volUp = prev && prev.volume > 0 ? today.volume > prev.volume : false;
+  const surgePct = ((candles[surgeIdx].close - candles[surgeIdx - 1].close) / candles[surgeIdx - 1].close) * 100;
+
+  if (volUp) {
+    return [
+      {
+        name: "45일선 터치 (반등 신호 제외)",
+        detail: `${candles[surgeIdx].date} 급등(+${Math.round(surgePct)}%) 이후 첫 45일선(${fmt(ma45)}) 터치이지만 거래량이 늘어난 상태 — 책 기준 반등 신호에서 제외되는 조건`,
+        direction: "bearish",
+      },
+    ];
+  }
+
+  if (!isBearish(today)) return []; // 거래량은 줄었지만 음봉이 아니면 책의 반등 조건과 정확히 일치하지 않음
+
+  const ma120 = sma(candles, 120, i);
+  const caution = ma120 !== null && today.close < ma120 ? " (단, 120일선이 위에 있어 주의 — 저항으로 작용할 수 있음)" : "";
+
+  return [
+    {
+      name: "45일선 반등",
+      detail: `${candles[surgeIdx].date} 급등(+${Math.round(surgePct)}%) 이후 첫 45일선(${fmt(ma45)}) 터치, 거래량 감소+음봉 — 반등 기대 구간${caution}`,
+      direction: "bullish",
+    },
+  ];
+}
+
+function movingAverageSignals(candles: ChartCandle[]): TechnicalSignal[] {
+  if (candles.length < 10) return [];
+  return [
+    ...maOrderSignal(candles),
+    ...firstLimitUpThreeDaySignal(candles),
+    ...eightDayLineSignal(candles),
+    ...scoutBuySignal(candles),
+    ...fortyFiveDayReboundSignal(candles),
+  ];
+}
+
 // Runs every detector against one stock's daily candles (chronological,
 // oldest→newest — the same shape lib/kis-chart.ts's fetchKisChart already
 // returns) and reports whatever's currently active on the latest candle.
@@ -255,5 +455,6 @@ export function computeTechnicalSignals(candles: ChartCandle[]): TechnicalSignal
     ...historicalLowSignal(candles),
     ...priorLowBreakdownSignal(candles),
     ...supportResistanceSignals(candles),
+    ...movingAverageSignals(candles),
   ];
 }
