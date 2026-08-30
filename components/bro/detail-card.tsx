@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { chgColorVar, formatChg } from "@/lib/format";
 import type { CandidateDetail } from "@/lib/candidate-detail";
 import type { DailyChangePoint } from "@/lib/candidate-tracking";
@@ -88,17 +89,40 @@ export function DetailCard({
   series?: DailyChangePoint[];
   signals?: TechnicalSignal[];
 }) {
+  const nameBlock = (
+    <span style={{ fontWeight: 800, fontSize: 13.5 }}>
+      {d.name}
+      {d.code && (
+        <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)", marginLeft: 5 }}>
+          ({d.code})
+        </span>
+      )}
+    </span>
+  );
+
   return (
     <div style={{ ...detailCardStyle, display: "flex", flexDirection: "column", gap: 7 }}>
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-        <span style={{ fontWeight: 800, fontSize: 13.5 }}>
-          {d.name}
-          {d.code && (
-            <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)", marginLeft: 5 }}>
-              ({d.code})
-            </span>
-          )}
-        </span>
+        {d.code ? (
+          <Link
+            href={`/stock?code=${d.code}`}
+            className="hover-accent-border"
+            title="차트·재무 등 종목 상세 보기"
+            style={{
+              display: "inline-flex",
+              textDecoration: "none",
+              color: "inherit",
+              border: "1px solid transparent",
+              borderRadius: 6,
+              padding: "1px 4px",
+              margin: "-1px -4px",
+            }}
+          >
+            {nameBlock}
+          </Link>
+        ) : (
+          nameBlock
+        )}
         {d.themeTags.length > 0 && <span style={{ color: "var(--faint)" }}>|</span>}
         {d.themeTags.map((t) => (
           <span
@@ -206,8 +230,8 @@ export function DetailCard({
           }}
         >
           {signals.map((s) => (
-            <div key={s.name} style={{ fontSize: 10.5, lineHeight: 1.5, color: "var(--dim)" }}>
-              <span style={{ fontWeight: 700, color: signalColor(s.direction) }}>시그널: {s.name}</span>
+            <div key={s.name} style={{ fontSize: 11.5, lineHeight: 1.55, fontWeight: 700, color: "var(--text)" }}>
+              <span style={{ color: signalColor(s.direction) }}>시그널: {s.name}</span>
               {" — "}
               {s.detail}
             </div>
