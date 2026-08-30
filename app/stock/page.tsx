@@ -4,12 +4,16 @@ import { StockPicker } from "@/components/stock/stock-picker";
 import { PriceChart } from "@/components/stock/price-chart";
 import { DetailSections } from "@/components/stock/detail-sections";
 import { WatchlistButton } from "@/components/stock/watchlist-button";
+import { GolgooProvider } from "@/components/stock/golgoo-context";
+import { GolgooEvidenceButton } from "@/components/stock/golgoo-evidence-button";
+import { GolgooPanel } from "@/components/stock/golgoo-panel";
 import { isWatched } from "@/lib/watchlist";
 import { findLatestEntryByCode } from "@/lib/market-data";
 import { refreshStockSnapshot } from "@/lib/krx-quote";
 import { formatDateLabel, todayISO } from "@/lib/dates";
 import { simplifyIndustry } from "@/lib/industry-labels";
 import { getCompanyKeywords } from "@/lib/company-keywords";
+import { getLatestPrediction, parsePredictionCandidates } from "@/lib/prediction-scoring";
 import type { StockMaster } from "@/app/generated/prisma/client";
 
 // A live refresh (price lookup + financial/industry enrichment) can take
@@ -72,10 +76,18 @@ export default async function StockPage({
   }
 
   cur = cur ?? allStocks.find((s) => s.code === DEFAULT_CODE) ?? allStocks[0];
-  const [watched, keywords] = await Promise.all([
+  const [watched, keywords, latestPrediction] = await Promise.all([
     isWatched(cur.code),
     getCompanyKeywords(cur.code, cur.name),
+    getLatestPrediction(),
   ]);
+  // "🥚 골구 근거" 버튼/패널/차트 오버레이는 이 종목이 실제로 골구의 현재
+  // 예상종목 중 하나일 때만 켠다 — 무거운 근거 계산(app/api/stock/golgoo-
+  // evidence)은 버튼을 눌렀을 때만 하고, 여기선 candidates 코드 목록만
+  // 훑어서 available 여부만 싸게 판단한다.
+  const isGolgooCandidate = latestPrediction
+    ? parsePredictionCandidates(latestPrediction.candidates).some((c) => c.code === cur.code)
+    : false;
 
   const stats: { label: string; value: string }[] = [
     cur.marketCap ? { label: "시가총액", value: cur.marketCap } : null,
@@ -86,6 +98,7 @@ export default async function StockPage({
   ].filter((s): s is { label: string; value: string } => s !== null);
 
   return (
+    <GolgooProvider available={isGolgooCandidate}>
     <main style={{ maxWidth: 1360, margin: "0 auto", padding: "26px 24px 60px" }}>
       <div style={{ position: "relative", marginBottom: 22, zIndex: 30 }}>
         <StockPicker stocks={allStocks} currentCode={cur.code} />
@@ -102,6 +115,7 @@ export default async function StockPage({
                 sector={cur.sector}
                 initialWatched={watched}
               />
+              <GolgooEvidenceButton />
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 9, flexWrap: "wrap" }}>
               <span
@@ -179,11 +193,15 @@ export default async function StockPage({
         </div>
       </div>
 
-      <div style={{ marginBottom: 20 }}>
-        <PriceChart key={cur.code} code={cur.code} />
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start", marginBottom: 20 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <PriceChart key={cur.code} code={cur.code} />
+        </div>
+        {isGolgooCandidate && <GolgooPanel code={cur.code} />}
       </div>
 
       <DetailSections stockName={cur.name} code={cur.code} market={cur.market} />
     </main>
+    </GolgooProvider>
   );
 }
