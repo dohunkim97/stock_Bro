@@ -346,39 +346,60 @@ export function PriceChart({ code }: { code: string }) {
     const downColor = cssVar("--down", "#3b82f6");
     const dimColor = cssVar("--dim", "#8a92a3");
 
+    const markers: SeriesMarker<Time>[] = [];
+
+    // 터치 횟수 상위 3개만 — 다 그리면 오른쪽 가격축 라벨이 겹쳐서 못 읽는다.
+    // 각 레벨은 점선 가격선(어디가 지지/저항인지) + 실제로 그 라인을 만든
+    // 스윙 포인트(최근 2개)에 동그라미로 "여기서 터치했다"는 근거를 남긴다.
     if (golgooLevels) {
-      for (const level of golgooLevels.slice(0, 6)) {
+      for (const level of golgooLevels.slice(0, 3)) {
         const color = level.type === "support" ? downColor : level.type === "resistance" ? upColor : dimColor;
-        const label = level.type === "support" ? "지지" : level.type === "resistance" ? "저항" : "지지/저항";
+        const label = level.type === "support" ? "지지선" : level.type === "resistance" ? "저항선" : "지지/저항선";
         try {
           const line = series.createPriceLine({
             price: level.price,
             color,
-            lineWidth: 1,
+            lineWidth: 2,
             lineStyle: LineStyle.Dashed,
             axisLabelVisible: true,
-            title: `${label} ${level.touches}회`,
+            title: `${label} · ${level.touches}회`,
           });
           priceLinesRef.current.push(line);
         } catch {
           // stale series from a just-torn-down chart — next tick redraws
         }
+
+        for (const date of level.touchDates.slice(0, 2)) {
+          markers.push({
+            time: date as Time,
+            position: level.type === "support" ? "belowBar" : "aboveBar",
+            shape: "circle",
+            color,
+            text: `${label} 터치`,
+            id: `golgoo-level-${level.price}-${date}`,
+          });
+        }
       }
     }
 
+    // 오늘 기준으로 활성화된 시그널(거래량/이동평균선 등)은 최근 봉 위에
+    // 별도 동그라미로 — 위 지지/저항 터치와 구분되게 그대로 둔다.
     if (golgooSignals && golgooSignals.length > 0 && latestDateRef.current) {
-      const markers: SeriesMarker<Time>[] = golgooSignals.map((s, i) => ({
-        time: latestDateRef.current as Time,
-        position: s.direction === "bearish" ? "belowBar" : "aboveBar",
-        shape: "circle",
-        color: s.direction === "bullish" ? upColor : s.direction === "bearish" ? downColor : dimColor,
-        text: s.name,
-        id: `golgoo-signal-${i}`,
-      }));
-      markersApi.setMarkers(markers);
-    } else {
-      markersApi.setMarkers([]);
+      for (const s of golgooSignals) {
+        markers.push({
+          time: latestDateRef.current as Time,
+          position: s.direction === "bearish" ? "belowBar" : "aboveBar",
+          shape: "circle",
+          color: s.direction === "bullish" ? upColor : s.direction === "bearish" ? downColor : dimColor,
+          text: s.name,
+          id: `golgoo-signal-${s.name}`,
+        });
+      }
     }
+
+    // lightweight-charts requires markers sorted ascending by time.
+    markers.sort((a, b) => String(a.time).localeCompare(String(b.time)));
+    markersApi.setMarkers(markers);
   }, [golgooOpen, golgooSignals, golgooLevels, chartTick]);
 
   return (
