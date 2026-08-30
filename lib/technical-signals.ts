@@ -169,21 +169,26 @@ export type SupportResistanceLevel = {
   price: number;
   touches: number;
   type: "support" | "resistance" | "both";
+  // 이 레벨을 이룬 실제 스윙 고점/저점 날짜들(최신순) — 차트에 "여기서
+  // 이 라인을 실제로 터치했다"는 동그라미를 찍을 때 쓴다. computeTechnical
+  // Signals의 "오늘 기준" 판단과 달리, 이건 그 레벨이 과거에 실제로
+  // 만들어진 지점 자체를 가리킨다.
+  touchDates: string[];
 };
 
 // 스윙 고점/저점: 앞뒤 `span`개 캔들 구간에서 가장 높은/낮은 값이면 피벗으로
 // 인정. 근접한 피벗(가격 차이 tolerancePct 이내)은 하나의 레벨로 병합해
 // touches(터치 횟수)를 누적 — "지지와 저항이 가장 잘 먹힐 때는 첫 번째"
 // (지지/저항 4) 룰을 판단하려면 이 touches가 필요.
-function findSwingPivots(candles: ChartCandle[], span = 5): { price: number; type: "high" | "low" }[] {
-  const pivots: { price: number; type: "high" | "low" }[] = [];
+function findSwingPivots(candles: ChartCandle[], span = 5): { price: number; type: "high" | "low"; date: string }[] {
+  const pivots: { price: number; type: "high" | "low"; date: string }[] = [];
   for (let i = span; i < candles.length - span; i++) {
     const window = candles.slice(i - span, i + span + 1);
     if (candles[i].high === Math.max(...window.map((c) => c.high))) {
-      pivots.push({ price: candles[i].high, type: "high" });
+      pivots.push({ price: candles[i].high, type: "high", date: candles[i].date });
     }
     if (candles[i].low === Math.min(...window.map((c) => c.low))) {
-      pivots.push({ price: candles[i].low, type: "low" });
+      pivots.push({ price: candles[i].low, type: "low", date: candles[i].date });
     }
   }
   return pivots;
@@ -199,12 +204,14 @@ export function findSupportResistanceLevels(candles: ChartCandle[], tolerancePct
     if (existing) {
       existing.price = (existing.price * existing.touches + p.price) / (existing.touches + 1);
       existing.touches += 1;
+      existing.touchDates.push(p.date);
       if (existing.type !== kind) existing.type = "both";
     } else {
-      levels.push({ price: p.price, touches: 1, type: kind });
+      levels.push({ price: p.price, touches: 1, type: kind, touchDates: [p.date] });
     }
   }
 
+  for (const l of levels) l.touchDates.sort().reverse(); // most recent touch first
   return levels.sort((a, b) => b.touches - a.touches);
 }
 
