@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { chgColorVar, formatChg } from "@/lib/format";
 import type { CandidateDetail } from "@/lib/candidate-detail";
-import type { DailyChangePoint } from "@/lib/candidate-tracking";
+import { TRACKING_WINDOW_DAYS, type DailyChangePoint } from "@/lib/candidate-tracking";
 import type { TechnicalSignal } from "@/lib/technical-signals";
 
 // Shared "종목 근거" block styling + DetailCard — used by both today's live
@@ -215,6 +215,37 @@ export function DetailCard({
               {p.dayIndex}일차 {formatChg(p.changePct)}
             </span>
           ))}
+        </div>
+      )}
+
+      {/* 5거래일 추적이 다 끝난 뒤에만 "최종 결과"로 확정해서 기대수익(전략
+          가이드의 목표구간 기준)과 실제 5일차 수익률을 나란히 비교해 보여준다
+          — 진행 중인 예측은 아직 최종이 아니므로 이 줄 자체를 숨긴다. */}
+      {series && series.length >= TRACKING_WINDOW_DAYS && (
+        <div
+          style={{
+            fontSize: 11.5,
+            fontWeight: 700,
+            lineHeight: 1.6,
+            padding: "7px 10px",
+            borderRadius: 8,
+            background: "var(--panel2)",
+            border: "1px solid var(--border2)",
+          }}
+        >
+          🏁 {TRACKING_WINDOW_DAYS}일차 최종 —{" "}
+          <span style={{ fontFamily: "var(--mono)", color: chgColorVar(series[series.length - 1].changePct) }}>
+            실제 {formatChg(series[series.length - 1].changePct)}
+          </span>
+          {d.strategy.targetPct !== null && (
+            <>
+              {" "}
+              /{" "}
+              <span style={{ fontFamily: "var(--mono)", color: "var(--dim)" }}>
+                기대 {formatChg(d.strategy.targetPct)}
+              </span>
+            </>
+          )}
         </div>
       )}
 
