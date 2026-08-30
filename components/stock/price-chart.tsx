@@ -349,18 +349,20 @@ export function PriceChart({ code }: { code: string }) {
     const markers: SeriesMarker<Time>[] = [];
 
     // 터치 횟수 상위 3개만 — 다 그리면 오른쪽 가격축 라벨이 겹쳐서 못 읽는다.
-    // 각 레벨은 점선 가격선(어디가 지지/저항인지) + 실제로 그 라인을 만든
-    // 스윙 포인트(최근 2개)에 동그라미로 "여기서 터치했다"는 근거를 남긴다.
+    // 점선은 배경 위에서 잘 안 띄어서 실선 + 굵게로 바꿨다. 같은 레벨의
+    // 터치 지점(최근 2개)은 전부 화살표만 찍고, 설명 글자는 그중 가장
+    // 최근 지점 하나에만 붙여서 같은 문구가 반복되지 않게 한다.
     if (golgooLevels) {
       for (const level of golgooLevels.slice(0, 3)) {
         const color = level.type === "support" ? downColor : level.type === "resistance" ? upColor : dimColor;
         const label = level.type === "support" ? "지지선" : level.type === "resistance" ? "저항선" : "지지/저항선";
+        const shape = level.type === "support" ? "arrowUp" : level.type === "resistance" ? "arrowDown" : "circle";
         try {
           const line = series.createPriceLine({
             price: level.price,
             color,
-            lineWidth: 2,
-            lineStyle: LineStyle.Dashed,
+            lineWidth: 3,
+            lineStyle: LineStyle.Solid,
             axisLabelVisible: true,
             title: `${label} · ${level.touches}회`,
           });
@@ -369,16 +371,16 @@ export function PriceChart({ code }: { code: string }) {
           // stale series from a just-torn-down chart — next tick redraws
         }
 
-        for (const date of level.touchDates.slice(0, 2)) {
+        level.touchDates.slice(0, 2).forEach((date, idx) => {
           markers.push({
             time: date as Time,
             position: level.type === "support" ? "belowBar" : "aboveBar",
-            shape: "circle",
+            shape,
             color,
-            text: `${label} 터치`,
+            text: idx === 0 ? `${label} 터치` : "",
             id: `golgoo-level-${level.price}-${date}`,
           });
-        }
+        });
       }
     }
 
