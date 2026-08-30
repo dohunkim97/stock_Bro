@@ -1,7 +1,22 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { createChart, CandlestickSeries, HistogramSeries, LineSeries, TickMarkType, type IChartApi } from "lightweight-charts";
+import {
+  createChart,
+  createSeriesMarkers,
+  CandlestickSeries,
+  HistogramSeries,
+  LineSeries,
+  LineStyle,
+  TickMarkType,
+  type IChartApi,
+  type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type IPriceLine,
+  type SeriesMarker,
+  type Time,
+} from "lightweight-charts";
+import { useGolgoo } from "./golgoo-context";
 
 type ChartPeriod = "D" | "W" | "M";
 const PERIOD_LABEL: Record<ChartPeriod, string> = { D: "일봉", W: "주봉", M: "월봉" };
@@ -106,11 +121,21 @@ function cssVar(name: string, fallback: string): string {
 export function PriceChart({ code }: { code: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const markersApiRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const priceLinesRef = useRef<IPriceLine[]>([]);
+  const latestDateRef = useRef<string | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const [period, setPeriod] = useState<ChartPeriod>("D");
   const [loading, setLoading] = useState(true);
   const [empty, setEmpty] = useState(false);
   const [hover, setHover] = useState<HoverState | null>(null);
+  const [chartTick, setChartTick] = useState(0);
+  // 골구 근거 토글 상태 + 시그널/지지·저항 데이터 — GolgooPanel이 불러오는
+  // 대로 여기로 흘러들어와서, 켜져 있으면 아래 overlay effect가 차트 위에
+  // 그려준다. 이 페이지에 GolgooProvider가 없으면 useGolgoo가 던지므로,
+  // app/stock/page.tsx는 항상 이 컴포넌트를 GolgooProvider 안에 둔다.
+  const { open: golgooOpen, signals: golgooSignals, levels: golgooLevels } = useGolgoo();
 
   useEffect(() => {
     let cancelled = false;
@@ -133,6 +158,9 @@ export function PriceChart({ code }: { code: string }) {
         // instance before building a new one on the same container.
         resizeObserverRef.current?.disconnect();
         chartRef.current?.remove();
+        candleSeriesRef.current = null;
+        markersApiRef.current = null;
+        priceLinesRef.current = [];
 
         const upColor = cssVar("--up", "#f2434f");
         const downColor = cssVar("--down", "#3b82f6");
@@ -182,6 +210,10 @@ export function PriceChart({ code }: { code: string }) {
         candleSeries.setData(
           candles.map((c) => ({ time: c.date, open: c.open, high: c.high, low: c.low, close: c.close }))
         );
+        candleSeriesRef.current = candleSeries;
+        markersApiRef.current = createSeriesMarkers(candleSeries, []);
+        priceLinesRef.current = [];
+        latestDateRef.current = candles[candles.length - 1]?.date ?? null;
 
         // Keyed by date so the crosshair handler below can look up each
         // MA's value at whatever bar the cursor is over — a line series only
@@ -258,6 +290,7 @@ export function PriceChart({ code }: { code: string }) {
         resizeObserverRef.current = resizeObserver;
 
         setLoading(false);
+        setChartTick((v) => v + 1); // lets the overlay effect below (re)draw on a fresh series
       })
       .catch(() => {
         if (!cancelled) {
@@ -280,8 +313,73 @@ export function PriceChart({ code }: { code: string }) {
       resizeObserverRef.current?.disconnect();
       chartRef.current?.remove();
       chartRef.current = null;
+      candleSeriesRef.current = null;
+      markersApiRef.current = null;
+      priceLinesRef.current = [];
     };
   }, []);
+
+  // 골구 근거가 켜져 있으면(golgooOpen) 지지/저항 레벨은 점선 가격선으로,
+  // 오늘 활성화된 시그널은 최근 봉 위에 동그라미 마커로 그린다 — 꺼지면
+  // 둘 다 지운다. chartTick은 기간(D/W/M) 전환으로 차트가 통째로 다시
+  // 만들어졌을 때도 이 effect가 새 시리즈에 다시 그리도록 하는 트리거.
+  useEffect(() => {
+    const series = candleSeriesRef.current;
+    const markersApi = markersApiRef.current;
+    if (!series || !markersApi) return;
+
+    for (const line of priceLinesRef.current) {
+      try {
+        series.removePriceLine(line);
+      } catch {
+        // series/line may already be gone if the chart was torn down mid-flight
+      }
+    }
+    priceLinesRef.current = [];
+
+    if (!golgooOpen) {
+      markersApi.setMarkers([]);
+      return;
+    }
+
+    const upColor = cssVar("--up", "#f2434f");
+    const downColor = cssVar("--down", "#3b82f6");
+    const dimColor = cssVar("--dim", "#8a92a3");
+
+    if (golgooLevels) {
+      for (const level of golgooLevels.slice(0, 6)) {
+        const color = level.type === "support" ? downColor : level.type === "resistance" ? upColor : dimColor;
+        const label = level.type === "support" ? "지지" : level.type === "resistance" ? "저항" : "지지/저항";
+        try {
+          const line = series.createPriceLine({
+            price: level.price,
+            color,
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: `${label} ${level.touches}회`,
+          });
+          priceLinesRef.current.push(line);
+        } catch {
+          // stale series from a just-torn-down chart — next tick redraws
+        }
+      }
+    }
+
+    if (golgooSignals && golgooSignals.length > 0 && latestDateRef.current) {
+      const markers: SeriesMarker<Time>[] = golgooSignals.map((s, i) => ({
+        time: latestDateRef.current as Time,
+        position: s.direction === "bearish" ? "belowBar" : "aboveBar",
+        shape: "circle",
+        color: s.direction === "bullish" ? upColor : s.direction === "bearish" ? downColor : dimColor,
+        text: s.name,
+        id: `golgoo-signal-${i}`,
+      }));
+      markersApi.setMarkers(markers);
+    } else {
+      markersApi.setMarkers([]);
+    }
+  }, [golgooOpen, golgooSignals, golgooLevels, chartTick]);
 
   return (
     <section style={panelStyle}>
