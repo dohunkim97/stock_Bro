@@ -2,6 +2,11 @@ import { formatWon } from "@/lib/format";
 import { RankBadge } from "./rank-badge";
 import type { ThemeNetRank } from "@/lib/money-flow";
 
+// ThemeNetFlowStocksPanel과 반드시 같은 값 — 패딩만으로 셀 높이를 맞추면
+// 뱃지·칩처럼 요소마다 다른 미세한 라인하이트 차이가 10줄 누적되면서 두
+// 패널의 아래쪽 줄이 몇 px씩 어긋난다.
+const ROW_HEIGHT = 36;
+
 function NetRow({ item, direction, rank }: { item: ThemeNetRank; direction: "buy" | "sell"; rank: number }) {
   const color = direction === "buy" ? "var(--up)" : "var(--down)";
   const amount = formatWon(Math.abs(item.totalNet));
@@ -9,10 +14,10 @@ function NetRow({ item, direction, rank }: { item: ThemeNetRank; direction: "buy
     <div
       style={{
         display: "flex",
-        alignItems: "baseline",
+        alignItems: "center",
         justifyContent: "space-between",
         gap: 16,
-        padding: "9px 0",
+        height: ROW_HEIGHT,
         borderTop: "1px solid var(--border)",
         whiteSpace: "nowrap",
       }}

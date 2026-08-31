@@ -3,6 +3,11 @@ import { chgColorVar, formatChg } from "@/lib/format";
 import { RankBadge } from "./rank-badge";
 import type { ThemeStockGroups, MoneyFlowStock } from "@/lib/money-flow";
 
+// MoneyFlowPanel과 반드시 같은 값 — 패딩만으로 셀 높이를 맞추면 뱃지·칩처럼
+// 셀마다 다른 요소의 미세한 라인하이트 차이가 10줄 누적되면서 두 패널의
+// 아래쪽 줄이 몇 px씩 어긋난다.
+const ROW_HEIGHT = 38;
+
 function StockChips({ stocks }: { stocks: MoneyFlowStock[] }) {
   if (stocks.length === 0) return <span style={{ color: "var(--faint)" }}>-</span>;
   return (
@@ -67,7 +72,7 @@ export function MoneyFlowStocksPanel({ themes }: { themes: ThemeStockGroups[] })
                     fontFamily: "var(--sans)",
                     fontWeight: 700,
                     fontSize: 13,
-                    padding: "10px 0",
+                    height: ROW_HEIGHT,
                     borderTop: "1px solid var(--border)",
                     whiteSpace: "nowrap",
                   }}
@@ -75,10 +80,26 @@ export function MoneyFlowStocksPanel({ themes }: { themes: ThemeStockGroups[] })
                   <RankBadge rank={i + 1} />
                   {t.name}
                 </span>
-                <span style={{ padding: "10px 0", borderTop: "1px solid var(--border)", whiteSpace: "nowrap" }}>
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    height: ROW_HEIGHT,
+                    borderTop: "1px solid var(--border)",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   <StockChips stocks={t.leaders} />
                 </span>
-                <span style={{ padding: "10px 0", borderTop: "1px solid var(--border)", whiteSpace: "nowrap" }}>
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    height: ROW_HEIGHT,
+                    borderTop: "1px solid var(--border)",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   <StockChips stocks={t.followers} />
                 </span>
               </div>

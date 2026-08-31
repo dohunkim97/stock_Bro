@@ -31,10 +31,13 @@ function StockChips({ stocks }: { stocks: NetFlowStock[] }) {
   );
 }
 
+// ThemeNetFlowPanel과 반드시 같은 값 — 위 파일 헤더 설명 참고.
+const ROW_HEIGHT = 36;
+
 function ThemeRow({ item, rank }: { item: ThemeNetRank; rank: number }) {
   return (
-    <div style={{ padding: "9px 0", borderTop: "1px solid var(--border)", fontSize: 12, minWidth: 0 }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+    <div style={{ height: ROW_HEIGHT, borderTop: "1px solid var(--border)", fontSize: 12, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, height: "100%", minWidth: 0 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, flexShrink: 0, whiteSpace: "nowrap" }}>
           <RankBadge rank={rank} />
           {item.name}
