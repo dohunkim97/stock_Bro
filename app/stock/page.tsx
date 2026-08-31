@@ -7,6 +7,8 @@ import { WatchlistButton } from "@/components/stock/watchlist-button";
 import { GolgooProvider } from "@/components/stock/golgoo-context";
 import { GolgooEvidenceButton } from "@/components/stock/golgoo-evidence-button";
 import { GolgooPanel } from "@/components/stock/golgoo-panel";
+import { ChartAnalysisButton } from "@/components/stock/chart-analysis-button";
+import { ChartAnalysisPanel } from "@/components/stock/chart-analysis-panel";
 import { isWatched } from "@/lib/watchlist";
 import { findLatestEntryByCode } from "@/lib/market-data";
 import { refreshStockSnapshot } from "@/lib/krx-quote";
@@ -116,6 +118,7 @@ export default async function StockPage({
                 initialWatched={watched}
               />
               <GolgooEvidenceButton />
+              <ChartAnalysisButton />
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 9, flexWrap: "wrap" }}>
               <span
@@ -198,6 +201,7 @@ export default async function StockPage({
           <PriceChart key={cur.code} code={cur.code} />
         </div>
         {isGolgooCandidate && <GolgooPanel code={cur.code} />}
+        <ChartAnalysisPanel code={cur.code} />
       </div>
 
       <DetailSections stockName={cur.name} code={cur.code} market={cur.market} />

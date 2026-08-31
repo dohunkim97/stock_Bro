@@ -14,7 +14,7 @@ const STEP_CIRCLE = ["①", "②", "③", "④", "⑤"];
 // 차트 위 ①②③ 마커는 짧은 라벨만 보여줄 수 있어서(hover 툴팁이 없는
 // lightweight-charts 마커 특성상), 같은 번호의 전체 설명은 여기 목록으로
 // 따로 보여준다 — 번호로 차트 마커와 1:1 매칭된다.
-function StoryList({ story }: { story: ChartStoryAnnotation[] }) {
+export function StoryList({ story }: { story: ChartStoryAnnotation[] }) {
   if (story.length === 0) return null;
   return (
     <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
