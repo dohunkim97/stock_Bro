@@ -163,12 +163,16 @@ export async function DayView({
         }
       />
 
-      {/* 자금 흐름 2x2 — [시장 관심 상위 테마|테마별 종목] 위, [순매수·순매도 상위|그 종목] 아래.
-          종목 칸(오른쪽)에 더 많은 종목을 보여주기 위해 왼쪽(데이터 표)보다 넓게 배분.
-          alignItems: stretch로 각 행 안의 두 칸 높이를 서로 맞춤. */}
+      {/* 자금 흐름 — [시장 관심 상위 테마|테마별 종목] 위, [순매수·순매도 상위|그 종목] 아래.
+          종목 칸(오른쪽)엔 종목 칩이 원래 넓게 필요해서 왼쪽(데이터 표)보다 넓게 배분.
+          alignItems: stretch로 각 행 안의 두 칸 높이를 서로 맞춤. 두 줄을 별도 그리드로
+          나눈 이유: 순매수·순매도 상위 테마는 칩이 없어 내용이 훨씬 좁아서, 같은 0.8fr을
+          주면 가로 스크롤이 생긴다 — 그 줄만 왼쪽 비중을 높여 스크롤 없이 들어가게 했다. */}
       <div style={{ display: "grid", gridTemplateColumns: "0.8fr 1.2fr", gap: 20, alignItems: "stretch" }}>
         <MoneyFlowPanel days={moneyFlowDays} themes={moneyFlowThemes} />
         <MoneyFlowStocksPanel themes={moneyFlowStockGroups} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1.3fr 0.7fr", gap: 20, alignItems: "stretch" }}>
         <ThemeNetFlowPanel days={moneyFlowDays.length} buying={netFlowRank.buying} selling={netFlowRank.selling} />
         <ThemeNetFlowStocksPanel buying={netFlowRank.buying} selling={netFlowRank.selling} />
       </div>
