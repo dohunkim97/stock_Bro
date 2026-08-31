@@ -104,10 +104,11 @@ const MONEY_FLOW_TAKE_DAYS = 5;
 // write-up step did.
 async function generateTodaysMoneyFlowTake(date: string): Promise<void> {
   try {
-    const days = recentBusinessDays(date, MONEY_FLOW_TAKE_DAYS);
-    const [flowRows, netRows] = await Promise.all([
-      getThemeDailyFlowInRange(days[0], date),
-      getThemeNetFlowInRange(days[0], date),
+    const days5 = recentBusinessDays(date, MONEY_FLOW_TAKE_DAYS);
+    const days10 = recentBusinessDays(date, THEME_NET_FLOW_SYNC_DAYS);
+    const [flowRows, netRows10] = await Promise.all([
+      getThemeDailyFlowInRange(days5[0], date),
+      getThemeNetFlowInRange(days10[0], date),
     ]);
     // filterToCurrentTheme matters here too: a reclassified stock's older
     // rows would otherwise still count toward its old theme's totals, which
@@ -126,11 +127,20 @@ async function generateTodaysMoneyFlowTake(date: string): Promise<void> {
       })),
       (e) => e.sector
     );
-    const netRowsThemed = await filterToCurrentTheme(netRows, (e) => e.theme);
+    const netRowsThemed10 = await filterToCurrentTheme(netRows10, (e) => e.theme);
+    // days5는 days10의 뒷부분 부분집합이라(둘 다 date까지 끝나는 최근
+    // 영업일 목록) 다시 조회하지 않고 날짜로만 걸러서 5일치를 뽑아낸다.
+    const netRowsThemed5 = netRowsThemed10.filter((r) => r.date >= days5[0]);
 
-    const table = rankMoneyFlowByDay(themed, days);
-    const netFlow = rankThemeNetFlow(netRowsThemed);
-    await generateMoneyFlowTake(date, days.length, table, netFlow);
+    const table = rankMoneyFlowByDay(themed, days5);
+    // 순매수·순매도는 최근 5일과 10일 둘 다 골구에게 준다 — 같은 테마가 두
+    // 기간에서 방향이 갈리면(예: 10일 전체론 순매도 우세인데 최근 5일은
+    // 순매수로 반전) 그게 오히려 가장 짚어줄 만한 신호라, 그 반전 자체를
+    // 프롬프트에서 명시적으로 설명하게 시킨다 — 그래야 화면의 순매도 랭킹
+    // (10일 기준)과 코멘트(예전엔 5일만 봤음)가 서로 모순돼 보이지 않는다.
+    const netFlow5 = rankThemeNetFlow(netRowsThemed5);
+    const netFlow10 = rankThemeNetFlow(netRowsThemed10);
+    await generateMoneyFlowTake(date, days5.length, days10.length, table, netFlow5, netFlow10);
   } catch {
     // best-effort
   }
