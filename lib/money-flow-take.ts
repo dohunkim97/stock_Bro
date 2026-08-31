@@ -9,6 +9,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/prisma";
 import { formatWon } from "@/lib/format";
+import { fetchKisChart } from "@/lib/kis-chart";
+import { buildChartNote } from "@/lib/candidate-detail";
 import type { ThemeMoneyFlowByDay, ThemeNetRank } from "@/lib/money-flow";
 
 const SYSTEM_PROMPT = [
@@ -40,7 +42,26 @@ function formatNetRanks(label: string, items: ThemeNetRank[]): string {
   return `${label}:\n${lines.join("\n")}`;
 }
 
-type CandidateItem = { name: string; code?: string; reasoning: string };
+type CandidateItem = { name: string; code?: string; reasoning: string; chartNote?: string };
+
+// buildChartNote (lib/candidate-detail.ts, 5일선/20일선 대비 현재가 위치)는
+// 순수 계산이라 LLM을 다시 부를 필요가 없다 — 자금 흐름 근거로 뽑힌 종목
+// 이름이 정해진 뒤에, 그 종목들의 실제 차트 위치만 별도로 계산해서 붙인다.
+async function attachChartNotes(candidates: CandidateItem[]): Promise<CandidateItem[]> {
+  return Promise.all(
+    candidates.map(async (c) => {
+      if (!c.code) return c;
+      try {
+        const candles = await fetchKisChart(c.code, "D");
+        if (candles.length === 0) return c;
+        const { note } = buildChartNote(candles.map((k) => k.close));
+        return { ...c, chartNote: note };
+      } catch {
+        return c;
+      }
+    })
+  );
+}
 
 function parseTakeResponse(text: string): { summary: string; candidates: { name: string; reasoning: string }[] } | null {
   const match = text.match(/\{[\s\S]*\}/);
@@ -127,11 +148,13 @@ export async function generateMoneyFlowTake(
     const parsed = parseTakeResponse(text);
     if (!parsed) return;
 
-    const candidateList: CandidateItem[] = parsed.candidates.map((c) => ({
-      name: c.name,
-      code: codeByName.get(c.name),
-      reasoning: c.reasoning,
-    }));
+    const candidateList: CandidateItem[] = await attachChartNotes(
+      parsed.candidates.map((c) => ({
+        name: c.name,
+        code: codeByName.get(c.name),
+        reasoning: c.reasoning,
+      }))
+    );
     const candidates = candidateList.length > 0 ? JSON.stringify(candidateList) : undefined;
 
     await prisma.moneyFlowTake.upsert({

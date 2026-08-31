@@ -74,6 +74,9 @@ export async function MoneyFlowTakePanel() {
               >
                 <span style={{ fontWeight: 700, marginRight: 5 }}>{c.name}</span>
                 <span style={{ color: "var(--text)" }}>{renderBold(c.reasoning)}</span>
+                {c.chartNote && (
+                  <span style={{ color: "var(--faint)", fontSize: 11.5, marginLeft: 6 }}>· 차트: {c.chartNote}</span>
+                )}
               </Link>
             ))}
           </div>

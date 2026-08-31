@@ -39,8 +39,10 @@ function sma(closes: number[], period: number): number | null {
 }
 
 // 실데이터 기반 — LLM이 손대지 않는다. 5일선/20일선 대비 현재가 위치를 그대로
-// 문장으로 옮길 뿐이라 매일 계산해도 늘 사실과 일치한다.
-function buildChartNote(closes: number[]): { note: string; recentHigh: number | null; support: number | null } {
+// 문장으로 옮길 뿐이라 매일 계산해도 늘 사실과 일치한다. lib/money-flow-take.ts도
+// 추천 종목의 차트 근거를 붙일 때 이 함수를 그대로 재사용한다 — 같은 계산을
+// 두 곳에서 따로 구현하면 언젠가 서로 다른 말을 하게 된다.
+export function buildChartNote(closes: number[]): { note: string; recentHigh: number | null; support: number | null } {
   if (closes.length < 5) return { note: "차트 데이터가 아직 부족해요.", recentHigh: null, support: null };
 
   const current = closes[closes.length - 1];
