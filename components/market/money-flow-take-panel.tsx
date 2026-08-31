@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getLatestMoneyFlowTake, parseMoneyFlowCandidates } from "@/lib/money-flow-take";
 import { renderBold } from "@/components/ui/rich-text";
+import { RankBadge } from "./rank-badge";
 
 // Self-contained like WeeklyPredictionPanel — reads whatever the latest
 // sync generated (lib/sync-runner.ts), not scoped to the date being browsed.
@@ -79,18 +80,21 @@ export async function MoneyFlowTakePanel() {
           >
             <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>추천 종목</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {candidates.map((c) => (
+              {candidates.map((c, i) => (
                 <Link
                   key={c.name}
                   href={c.code ? `/stock?code=${c.code}` : "/stock"}
                   className="hover-accent-border"
-                  style={{ fontSize: 13, lineHeight: 1.55, display: "block" }}
+                  style={{ display: "flex", alignItems: "baseline", gap: 6, fontSize: 13, lineHeight: 1.55 }}
                 >
-                  <span style={{ fontWeight: 700, marginRight: 5 }}>{c.name}</span>
-                  <span style={{ color: "var(--text)" }}>{renderBold(c.reasoning)}</span>
-                  {c.chartNote && (
-                    <span style={{ color: "var(--faint)", fontSize: 11.5, marginLeft: 6 }}>· 차트: {c.chartNote}</span>
-                  )}
+                  <RankBadge rank={i + 1} />
+                  <span>
+                    <span style={{ fontWeight: 700, marginRight: 5 }}>{c.name}</span>
+                    <span style={{ color: "var(--text)" }}>{renderBold(c.reasoning)}</span>
+                    {c.chartNote && (
+                      <span style={{ color: "var(--faint)", fontSize: 11.5, marginLeft: 6 }}>· 차트: {c.chartNote}</span>
+                    )}
+                  </span>
                 </Link>
               ))}
             </div>
