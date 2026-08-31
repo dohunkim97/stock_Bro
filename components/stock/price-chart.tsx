@@ -135,7 +135,24 @@ export function PriceChart({ code }: { code: string }) {
   // 대로 여기로 흘러들어와서, 켜져 있으면 아래 overlay effect가 차트 위에
   // 그려준다. 이 페이지에 GolgooProvider가 없으면 useGolgoo가 던지므로,
   // app/stock/page.tsx는 항상 이 컴포넌트를 GolgooProvider 안에 둔다.
-  const { open: golgooOpen, signals: golgooSignals, levels: golgooLevels, story: golgooStory } = useGolgoo();
+  // 골구 근거(candidate-gated)와 골구 차트분석(누구든 가능) 둘 다 같은
+  // 오버레이를 그릴 수 있어서, 실제로 열려 있는 쪽 데이터를 그대로 쓴다 —
+  // 골구 근거 쪽이 더 풍부한 데이터(전략가이드 등과 같이 계산됨)라 두 개가
+  // 동시에 열려 있으면 그쪽을 우선한다.
+  const {
+    open: golgooOpen,
+    signals: golgooSignals,
+    levels: golgooLevels,
+    story: golgooStory,
+    chartOpen,
+    chartSignals,
+    chartLevels,
+    chartStory,
+  } = useGolgoo();
+  const overlayOpen = golgooOpen || chartOpen;
+  const overlaySignals = golgooOpen ? golgooSignals : chartSignals;
+  const overlayLevels = golgooOpen ? golgooLevels : chartLevels;
+  const overlayStory = golgooOpen ? golgooStory : chartStory;
 
   useEffect(() => {
     let cancelled = false;
@@ -319,9 +336,10 @@ export function PriceChart({ code }: { code: string }) {
     };
   }, []);
 
-  // 골구 근거가 켜져 있으면(golgooOpen) 지지/저항 레벨은 점선 가격선으로,
-  // 오늘 활성화된 시그널은 최근 봉 위에 동그라미 마커로 그린다 — 꺼지면
-  // 둘 다 지운다. chartTick은 기간(D/W/M) 전환으로 차트가 통째로 다시
+  // 골구 근거 또는 골구 차트분석 둘 중 하나라도 켜져 있으면(overlayOpen)
+  // 지지/저항 레벨은 가격선으로, 오늘 활성화된 시그널은 최근 봉 위에
+  // 동그라미 마커로 그린다 — 둘 다 꺼지면 지운다. chartTick은 기간(D/W/M)
+  // 전환으로 차트가 통째로 다시
   // 만들어졌을 때도 이 effect가 새 시리즈에 다시 그리도록 하는 트리거.
   useEffect(() => {
     const series = candleSeriesRef.current;
@@ -337,7 +355,7 @@ export function PriceChart({ code }: { code: string }) {
     }
     priceLinesRef.current = [];
 
-    if (!golgooOpen) {
+    if (!overlayOpen) {
       markersApi.setMarkers([]);
       return;
     }
@@ -352,10 +370,10 @@ export function PriceChart({ code }: { code: string }) {
     // 터치 횟수 상위 3개만 — 다 그리면 오른쪽 가격축 라벨이 겹쳐서 못 읽는다.
     // 그중 가장 많이 터치된 첫 번째 레벨은 "핵심 기준선"(S/R 전환의 중심)으로
     // 굵은 강조색(--accent)에 별도 라벨을 붙이고, 그 레벨의 터치 이력은
-    // golgooStory(사후 분류된 실제 사건들)를 ①②③ 번호 마커로 대신 그린다 —
+    // overlayStory(사후 분류된 실제 사건들)를 ①②③ 번호 마커로 대신 그린다 —
     // 나머지 2개 레벨은 기존처럼 화살표+터치 횟수만 표시.
-    if (golgooLevels && golgooLevels.length > 0) {
-      const [keyLevel, ...otherLevels] = golgooLevels.slice(0, 3);
+    if (overlayLevels && overlayLevels.length > 0) {
+      const [keyLevel, ...otherLevels] = overlayLevels.slice(0, 3);
 
       try {
         const keyLabel =
@@ -373,12 +391,12 @@ export function PriceChart({ code }: { code: string }) {
         // stale series from a just-torn-down chart — next tick redraws
       }
 
-      if (golgooStory && golgooStory.length > 0) {
+      if (overlayStory && overlayStory.length > 0) {
         // 이벤트가 시간상 가까이 몰리면 배지 글자까지 다 그릴 때 서로 겹쳐서
         // 안 읽히므로, 차트 위에는 번호만 찍고 전체 설명은
         // GolgooPanel의 "차트 스토리" 목록(번호로 1:1 매칭)에서 보여준다.
         const STEP_CIRCLE = ["①", "②", "③", "④", "⑤"];
-        for (const ev of golgooStory) {
+        for (const ev of overlayStory) {
           const color = ev.direction === "bullish" ? upColor : ev.direction === "bearish" ? downColor : accentColor;
           markers.push({
             time: ev.date as Time,
@@ -435,8 +453,8 @@ export function PriceChart({ code }: { code: string }) {
 
     // 오늘 기준으로 활성화된 시그널(거래량/이동평균선 등)은 최근 봉 위에
     // 별도 동그라미로 — 위 지지/저항 터치와 구분되게 그대로 둔다.
-    if (golgooSignals && golgooSignals.length > 0 && latestDateRef.current) {
-      for (const s of golgooSignals) {
+    if (overlaySignals && overlaySignals.length > 0 && latestDateRef.current) {
+      for (const s of overlaySignals) {
         markers.push({
           time: latestDateRef.current as Time,
           position: s.direction === "bearish" ? "belowBar" : "aboveBar",
@@ -451,7 +469,7 @@ export function PriceChart({ code }: { code: string }) {
     // lightweight-charts requires markers sorted ascending by time.
     markers.sort((a, b) => String(a.time).localeCompare(String(b.time)));
     markersApi.setMarkers(markers);
-  }, [golgooOpen, golgooSignals, golgooLevels, golgooStory, chartTick]);
+  }, [overlayOpen, overlaySignals, overlayLevels, overlayStory, chartTick]);
 
   return (
     <section style={panelStyle}>
