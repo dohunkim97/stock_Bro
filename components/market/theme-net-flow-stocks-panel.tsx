@@ -77,7 +77,7 @@ export function ThemeNetFlowStocksPanel({
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
         <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.01em" }}>🏢 순매수·순매도 테마별 종목</span>
       </div>
-      <div aria-hidden style={{ visibility: "hidden", fontSize: 11.5, marginBottom: 16, lineHeight: 1.5 }}>
+      <div aria-hidden style={{ visibility: "hidden", fontSize: 11.5, marginBottom: 16, lineHeight: 1.5, maxWidth: 560 }}>
         테마에 태깅된 종목들의 외국인+기관 순매수 거래대금을 다 더한 값이에요. 거래가 활발한 것(위쪽
         &quot;시장 관심 상위 테마&quot;)과는 다른 지표로, 사는 쪽이 우세한지 파는 쪽이 우세한지를 봐요.
       </div>

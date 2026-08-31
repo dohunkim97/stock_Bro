@@ -64,7 +64,10 @@ export function ThemeNetFlowPanel({
           최근 {days}거래일 · 외국인+기관 누적 순매수
         </span>
       </div>
-      <div style={{ fontSize: 11.5, color: "var(--faint)", marginBottom: 16, lineHeight: 1.5 }}>
+      {/* maxWidth를 안 주면 이 줄글이 원래 한 줄로 쳤을 때의 폭(꽤 넓다)이
+          카드의 max-content 계산을 지배해서, 아래 표보다 카드가 훨씬 넓어지고
+          — 그 결과 표 오른쪽에 빈 공간이 남고 구분선도 거기서 끊겨 보인다. */}
+      <div style={{ fontSize: 11.5, color: "var(--faint)", marginBottom: 16, lineHeight: 1.5, maxWidth: 560 }}>
         테마에 태깅된 종목들의 외국인+기관 순매수 거래대금을 다 더한 값이에요. 거래가 활발한 것(위쪽
         &quot;시장 관심 상위 테마&quot;)과는 다른 지표로, 사는 쪽이 우세한지 파는 쪽이 우세한지를 봐요.
       </div>

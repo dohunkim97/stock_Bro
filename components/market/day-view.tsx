@@ -172,7 +172,11 @@ export async function DayView({
         <MoneyFlowPanel days={moneyFlowDays} themes={moneyFlowThemes} />
         <MoneyFlowStocksPanel themes={moneyFlowStockGroups} />
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1.3fr 0.7fr", gap: 20, alignItems: "stretch" }}>
+      {/* 왼쪽은 max-content로 표 내용 폭에 딱 맞춰 카드가 늘어나고(빈 여백 없이),
+          남는 공간은 전부 오른쪽(1fr)이 가져간다 — 설명 문단에 maxWidth를 줘서
+          이 계산을 표 폭이 주도하게 만들었다(그 문단 자체가 원래 한 줄 폭으로
+          치면 표보다 넓어서, 안 그러면 카드가 쓸데없이 넓어진다). */}
+      <div style={{ display: "grid", gridTemplateColumns: "max-content 1fr", gap: 20, alignItems: "stretch" }}>
         <ThemeNetFlowPanel days={moneyFlowDays.length} buying={netFlowRank.buying} selling={netFlowRank.selling} />
         <ThemeNetFlowStocksPanel buying={netFlowRank.buying} selling={netFlowRank.selling} />
       </div>
