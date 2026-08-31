@@ -49,39 +49,54 @@ export async function MoneyFlowTakePanel() {
         </span>
       </div>
 
-      <p style={{ margin: candidates.length > 0 ? "0 0 18px" : 0, fontSize: 14.5, lineHeight: 1.75, color: "var(--text)", maxWidth: 900 }}>
-        {renderBold(take.summary)}
-      </p>
-
-      {candidates.length > 0 && (
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: candidates.length > 0 ? "1fr 1fr" : "1fr",
+          gap: 16,
+        }}
+      >
         <div
           style={{
             padding: "14px 16px",
             background: "var(--panel)",
             border: "1px solid var(--border)",
             borderRadius: 10,
-            maxWidth: 900,
           }}
         >
-          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>추천 종목</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {candidates.map((c) => (
-              <Link
-                key={c.name}
-                href={c.code ? `/stock?code=${c.code}` : "/stock"}
-                className="hover-accent-border"
-                style={{ fontSize: 13, lineHeight: 1.55, display: "block" }}
-              >
-                <span style={{ fontWeight: 700, marginRight: 5 }}>{c.name}</span>
-                <span style={{ color: "var(--text)" }}>{renderBold(c.reasoning)}</span>
-                {c.chartNote && (
-                  <span style={{ color: "var(--faint)", fontSize: 11.5, marginLeft: 6 }}>· 차트: {c.chartNote}</span>
-                )}
-              </Link>
-            ))}
-          </div>
+          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>설명</div>
+          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.7, color: "var(--text)" }}>{renderBold(take.summary)}</p>
         </div>
-      )}
+
+        {candidates.length > 0 && (
+          <div
+            style={{
+              padding: "14px 16px",
+              background: "var(--panel)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>추천 종목</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {candidates.map((c) => (
+                <Link
+                  key={c.name}
+                  href={c.code ? `/stock?code=${c.code}` : "/stock"}
+                  className="hover-accent-border"
+                  style={{ fontSize: 13, lineHeight: 1.55, display: "block" }}
+                >
+                  <span style={{ fontWeight: 700, marginRight: 5 }}>{c.name}</span>
+                  <span style={{ color: "var(--text)" }}>{renderBold(c.reasoning)}</span>
+                  {c.chartNote && (
+                    <span style={{ color: "var(--faint)", fontSize: 11.5, marginLeft: 6 }}>· 차트: {c.chartNote}</span>
+                  )}
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </section>
   );
 }
