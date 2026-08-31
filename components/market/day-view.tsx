@@ -93,7 +93,10 @@ export async function DayView({
     })),
     (e) => e.theme
   );
-  const netFlowRank = rankThemeNetFlow(netFlowThemedEntries, 5, 6);
+  // 5개씩만 보여주면 태양광처럼 순매수 상위권인 테마 말고는 대부분 잘려나가서
+  // (실제로 이 window엔 순매수 18개/순매도 27개 테마가 있다) 10개씩으로 늘려
+  // 다양성을 확보한다.
+  const netFlowRank = rankThemeNetFlow(netFlowThemedEntries, 10, 6);
 
   const todayEntries = dedupeByStock(
     [...gainerEntries, ...loserEntries, ...volumeEntries].map((e) => ({
