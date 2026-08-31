@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getLatestPrediction, parsePredictionCandidates } from "@/lib/prediction-scoring";
 import { getCandidateDetails } from "@/lib/candidate-detail";
 import { fetchKisChart } from "@/lib/kis-chart";
-import { computeTechnicalSignals, findSupportResistanceLevels, LONG_TERM_SIGNAL_CANDLES } from "@/lib/technical-signals";
+import {
+  computeTechnicalSignals,
+  findSupportResistanceLevels,
+  buildChartStory,
+  LONG_TERM_SIGNAL_CANDLES,
+} from "@/lib/technical-signals";
 import { getDailyChangeSeries } from "@/lib/candidate-tracking";
 
 // Backs the "🥚 골구 근거" panel on the stock detail page — only ever called
@@ -33,6 +38,7 @@ export async function GET(req: NextRequest) {
     detail: details[0] ?? null,
     signals: computeTechnicalSignals(candles),
     levels: findSupportResistanceLevels(candles),
+    story: buildChartStory(candles),
     series: getDailyChangeSeries(candles, latest.forDate),
   });
 }

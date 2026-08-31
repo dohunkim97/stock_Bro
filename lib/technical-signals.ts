@@ -525,3 +525,142 @@ export function computeTechnicalSignals(candles: ChartCandle[]): TechnicalSignal
     ...movingAverageSignals(candles),
   ];
 }
+
+// --- 차트 스토리 어노테이션 (지지/저항 전환 스토리라인) ---
+// 사용자가 참고한 UI 아이디어(번호 매긴 ①②③ 마커 + 툴팁으로 지지/저항
+// 스토리를 보여주는 것)는 그대로 가져오되, 내용 자체는 예시로 준 고정된
+// 5단계 서사(10,500원 저항 실패→...→돌파 성공)를 하드코딩하지 않는다 —
+// 실제 종목마다 그 흐름이 다르므로, 이미 계산돼 있는 핵심 지지/저항선
+// (findSupportResistanceLevels, "가장 많이 터치된 레벨"이 곧 "S/R 전환
+// 핵심 구간")의 실제 터치 이력을 시간순으로 훑으며 각 터치가 돌파/실패/
+// 지지/이탈 중 무엇이었는지 사후에 분류해서 만든다.
+export type StoryEventType =
+  | "RESISTANCE_FAIL"
+  | "RESISTANCE_BREAK"
+  | "SUPPORT_HOLD"
+  | "SUPPORT_BREAK"
+  | "VOLUME_SPIKE"
+  | "GOLDEN_CROSS";
+
+export type ChartStoryAnnotation = {
+  date: string;
+  price: number;
+  stepNumber: number; // 1부터, 시간순
+  type: StoryEventType;
+  badgeLabel: string;
+  description: string;
+  direction: SignalDirection;
+};
+
+// 터치 시점 이후 최대 5거래일 동안의 가격 흐름을 보고 그 터치가 돌파로
+// 이어졌는지(성공) 되밀렸는지(실패)를 사후 판정한다 — 책 규칙(저항 강력
+// 돌파/실패, 지지 확인/이탈)과 같은 방향성이지만 "오늘" 기준이 아니라
+// 과거 특정 터치 시점 기준으로 같은 판정을 반복 적용하는 것.
+function classifyLevelTouch(
+  candles: ChartCandle[],
+  touchIdx: number,
+  level: SupportResistanceLevel
+): { type: StoryEventType; badgeLabel: string; description: string; direction: SignalDirection } | null {
+  const lookahead = candles.slice(touchIdx + 1, touchIdx + 6);
+  if (lookahead.length === 0) return null;
+
+  if (level.type !== "support") {
+    const broke = lookahead.some((c) => c.close > level.price * 1.02);
+    if (broke) {
+      return {
+        type: "RESISTANCE_BREAK",
+        badgeLabel: "저항 돌파 성공",
+        description: `저항선(${fmt(level.price)}) 근접 이후 상향 돌파 확인 — 지지선으로 전환 가능성`,
+        direction: "bullish",
+      };
+    }
+    return {
+      type: "RESISTANCE_FAIL",
+      badgeLabel: "저항 실패",
+      description: `저항선(${fmt(level.price)}) 근접 후 못 뚫고 하락 전환`,
+      direction: "bearish",
+    };
+  }
+
+  const brokeDown = lookahead.some((c) => c.close < level.price * 0.98);
+  if (brokeDown) {
+    return {
+      type: "SUPPORT_BREAK",
+      badgeLabel: "지지 이탈",
+      description: `지지선(${fmt(level.price)}) 하향 이탈`,
+      direction: "bearish",
+    };
+  }
+  return {
+    type: "SUPPORT_HOLD",
+    badgeLabel: "지지 확인",
+    description: `지지선(${fmt(level.price)}) 근접 후 이탈 없이 지지 유지`,
+    direction: "bullish",
+  };
+}
+
+// 5일선이 60일선을 상향 돌파한 가장 최근 시점 — 차트에 이미 그리고 있는
+// 5/60/200일선(components/stock/price-chart.tsx)과 같은 두 선의 교차라
+// 새 이평선을 추가하지 않고 계산만 더한다.
+function detectGoldenCross(candles: ChartCandle[]): ChartStoryAnnotation | null {
+  for (let i = candles.length - 1; i >= 61; i--) {
+    const ma5now = sma(candles, 5, i);
+    const ma60now = sma(candles, 60, i);
+    const ma5prev = sma(candles, 5, i - 1);
+    const ma60prev = sma(candles, 60, i - 1);
+    if (ma5now === null || ma60now === null || ma5prev === null || ma60prev === null) continue;
+    if (ma5prev <= ma60prev && ma5now > ma60now) {
+      return {
+        date: candles[i].date,
+        price: candles[i].close,
+        stepNumber: 0, // buildChartStory가 최종 정렬 후 다시 매김
+        type: "GOLDEN_CROSS",
+        badgeLabel: "골든크로스",
+        description: "5일선이 60일선을 상향 돌파 — 중기 추세 전환 신호",
+        direction: "bullish",
+      };
+    }
+  }
+  return null;
+}
+
+// 가장 많이 터치된(=가장 신뢰도 높은) 레벨 하나를 "핵심 기준선"으로 골라
+// 그 터치 이력 + 거래량 급증 + 골든크로스를 시간순으로 합쳐 최근 5개만
+// 남기고 ①~⑤ 번호를 매긴다 — 레벨 자체(가격/터치횟수)는
+// findSupportResistanceLevels(candles)[0]과 항상 같아서, 호출부가 이미
+// 그 레벨을 별도로 그리고 있다면 중복 계산할 필요 없이 이 함수 하나만
+// 더 부르면 된다.
+export function buildChartStory(candles: ChartCandle[]): ChartStoryAnnotation[] {
+  const levels = findSupportResistanceLevels(candles);
+  if (levels.length === 0) return [];
+  const keyLevel = levels[0];
+
+  const events: Omit<ChartStoryAnnotation, "stepNumber">[] = [];
+  const chronologicalTouches = [...keyLevel.touchDates].sort(); // touchDates is most-recent-first; undo that here
+
+  for (const date of chronologicalTouches) {
+    const idx = candles.findIndex((c) => c.date === date);
+    if (idx === -1) continue;
+
+    const classified = classifyLevelTouch(candles, idx, keyLevel);
+    if (classified) events.push({ date, price: candles[idx].close, ...classified });
+
+    const prevVol = candles[idx - 1]?.volume;
+    if (prevVol && prevVol > 0 && candles[idx].volume / prevVol >= 3) {
+      events.push({
+        date,
+        price: candles[idx].close,
+        type: "VOLUME_SPIKE",
+        badgeLabel: "거래량 급증",
+        description: `전일 대비 거래량 +${Math.round((candles[idx].volume / prevVol - 1) * 100)}%`,
+        direction: "neutral",
+      });
+    }
+  }
+
+  const golden = detectGoldenCross(candles);
+  if (golden) events.push(golden);
+
+  events.sort((a, b) => a.date.localeCompare(b.date));
+  return events.slice(-5).map((e, i) => ({ ...e, stepNumber: i + 1 }));
+}

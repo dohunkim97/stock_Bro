@@ -135,7 +135,7 @@ export function PriceChart({ code }: { code: string }) {
   // 대로 여기로 흘러들어와서, 켜져 있으면 아래 overlay effect가 차트 위에
   // 그려준다. 이 페이지에 GolgooProvider가 없으면 useGolgoo가 던지므로,
   // app/stock/page.tsx는 항상 이 컴포넌트를 GolgooProvider 안에 둔다.
-  const { open: golgooOpen, signals: golgooSignals, levels: golgooLevels } = useGolgoo();
+  const { open: golgooOpen, signals: golgooSignals, levels: golgooLevels, story: golgooStory } = useGolgoo();
 
   useEffect(() => {
     let cancelled = false;
@@ -345,15 +345,64 @@ export function PriceChart({ code }: { code: string }) {
     const upColor = cssVar("--up", "#f2434f");
     const downColor = cssVar("--down", "#3b82f6");
     const dimColor = cssVar("--dim", "#8a92a3");
+    const accentColor = cssVar("--accent", "#e0aa3e");
 
     const markers: SeriesMarker<Time>[] = [];
 
     // 터치 횟수 상위 3개만 — 다 그리면 오른쪽 가격축 라벨이 겹쳐서 못 읽는다.
-    // 점선은 배경 위에서 잘 안 띄어서 실선 + 굵게로 바꿨다. 같은 레벨의
-    // 터치 지점(최근 2개)은 전부 화살표만 찍고, 설명 글자는 그중 가장
-    // 최근 지점 하나에만 붙여서 같은 문구가 반복되지 않게 한다.
-    if (golgooLevels) {
-      for (const level of golgooLevels.slice(0, 3)) {
+    // 그중 가장 많이 터치된 첫 번째 레벨은 "핵심 기준선"(S/R 전환의 중심)으로
+    // 굵은 강조색(--accent)에 별도 라벨을 붙이고, 그 레벨의 터치 이력은
+    // golgooStory(사후 분류된 실제 사건들)를 ①②③ 번호 마커로 대신 그린다 —
+    // 나머지 2개 레벨은 기존처럼 화살표+터치 횟수만 표시.
+    if (golgooLevels && golgooLevels.length > 0) {
+      const [keyLevel, ...otherLevels] = golgooLevels.slice(0, 3);
+
+      try {
+        const keyLabel =
+          keyLevel.type === "support" ? "지지선" : keyLevel.type === "resistance" ? "저항선" : "지지/저항 전환선";
+        const line = series.createPriceLine({
+          price: keyLevel.price,
+          color: accentColor,
+          lineWidth: 4,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: `핵심 ${keyLabel} · ${keyLevel.touches}회 터치`,
+        });
+        priceLinesRef.current.push(line);
+      } catch {
+        // stale series from a just-torn-down chart — next tick redraws
+      }
+
+      if (golgooStory && golgooStory.length > 0) {
+        // 이벤트가 시간상 가까이 몰리면 배지 글자까지 다 그릴 때 서로 겹쳐서
+        // 안 읽히므로, 차트 위에는 번호만 찍고 전체 설명은
+        // GolgooPanel의 "차트 스토리" 목록(번호로 1:1 매칭)에서 보여준다.
+        const STEP_CIRCLE = ["①", "②", "③", "④", "⑤"];
+        for (const ev of golgooStory) {
+          const color = ev.direction === "bullish" ? upColor : ev.direction === "bearish" ? downColor : accentColor;
+          markers.push({
+            time: ev.date as Time,
+            position: ev.direction === "bearish" ? "belowBar" : "aboveBar",
+            shape: ev.type === "GOLDEN_CROSS" ? "arrowUp" : "circle",
+            color,
+            text: STEP_CIRCLE[ev.stepNumber - 1] ?? String(ev.stepNumber),
+            id: `golgoo-story-${ev.stepNumber}-${ev.date}`,
+          });
+        }
+      } else {
+        keyLevel.touchDates.slice(0, 2).forEach((date, idx) => {
+          markers.push({
+            time: date as Time,
+            position: keyLevel.type === "support" ? "belowBar" : "aboveBar",
+            shape: keyLevel.type === "support" ? "arrowUp" : "arrowDown",
+            color: accentColor,
+            text: idx === 0 ? "핵심 기준선 터치" : "",
+            id: `golgoo-level-key-${date}`,
+          });
+        });
+      }
+
+      for (const level of otherLevels) {
         const color = level.type === "support" ? downColor : level.type === "resistance" ? upColor : dimColor;
         const label = level.type === "support" ? "지지선" : level.type === "resistance" ? "저항선" : "지지/저항선";
         const shape = level.type === "support" ? "arrowUp" : level.type === "resistance" ? "arrowDown" : "circle";
@@ -402,7 +451,7 @@ export function PriceChart({ code }: { code: string }) {
     // lightweight-charts requires markers sorted ascending by time.
     markers.sort((a, b) => String(a.time).localeCompare(String(b.time)));
     markersApi.setMarkers(markers);
-  }, [golgooOpen, golgooSignals, golgooLevels, chartTick]);
+  }, [golgooOpen, golgooSignals, golgooLevels, golgooStory, chartTick]);
 
   return (
     <section style={panelStyle}>
