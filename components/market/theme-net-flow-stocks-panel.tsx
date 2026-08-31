@@ -36,13 +36,16 @@ const ROW_HEIGHT = 36;
 
 function ThemeRow({ item, rank }: { item: ThemeNetRank; rank: number }) {
   return (
-    <div style={{ height: ROW_HEIGHT, borderTop: "1px solid var(--border)", fontSize: 12, minWidth: 0 }}>
+    // overflow:hidden은 안전장치다 — 아래 종목 칩 스크롤 영역이 스크롤바
+    // 두께만큼 살짝 더 필요해지는 행이 생겨도, 행 높이 자체는 항상
+    // ROW_HEIGHT로 못박아서 그 행 하나 때문에 아래 순위들이 밀리지 않게 한다.
+    <div style={{ height: ROW_HEIGHT, overflow: "hidden", borderTop: "1px solid var(--border)", fontSize: 12, minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, height: "100%", minWidth: 0 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, flexShrink: 0, whiteSpace: "nowrap" }}>
           <RankBadge rank={rank} />
           {item.name}
         </span>
-        <div style={{ overflowX: "auto", minWidth: 0 }}>
+        <div className="thin-scrollbar" style={{ overflowX: "auto", minWidth: 0 }}>
           <StockChips stocks={item.stocks} />
         </div>
       </div>

@@ -182,10 +182,11 @@ model WeeklyPrediction {
 // generated once per sync (see lib/money-flow-take.ts) from that day's money
 // flow table + rotation data. Keyed by the date it's FOR, one row per day.
 model MoneyFlowTake {
-  id        String   @id @default(cuid())
-  date      String   @unique
-  summary   String
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  date       String   @unique
+  summary    String
+  candidates String? // JSON-encoded CandidateItem[] (name/code/reasoning) — see lib/money-flow-take.ts
+  createdAt  DateTime @default(now())
 }
 
 // Golgoo chat turns, persisted so past conversations can be browsed in the

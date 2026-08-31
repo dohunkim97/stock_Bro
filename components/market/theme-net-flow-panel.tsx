@@ -18,6 +18,7 @@ function NetRow({ item, direction, rank }: { item: ThemeNetRank; direction: "buy
         justifyContent: "space-between",
         gap: 16,
         height: ROW_HEIGHT,
+        overflow: "hidden",
         borderTop: "1px solid var(--border)",
         whiteSpace: "nowrap",
       }}
