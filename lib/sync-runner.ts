@@ -32,6 +32,28 @@ async function extractThemesFromIssues(rows: UploadRow[]): Promise<void> {
   }
 }
 
+const RETRY_DELAY_MS = 5000;
+
+// One retry after a short pause for a step that's shown intermittent,
+// unexplained failures in production (syncThemeDailyFlow/syncThemeNetFlow —
+// see the comment where this is used) — still best-effort overall (logs and
+// gives up rather than throwing) since one blank day shouldn't take down
+// the rest of the sync, but a single retry meaningfully cuts how often that
+// actually happens for a likely-transient cause like a rate limit.
+async function withRetry(label: string, fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
+  } catch (e) {
+    console.error(`[sync-runner] ${label} failed, retrying once:`, e);
+    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+    try {
+      await fn();
+    } catch (e2) {
+      console.error(`[sync-runner] ${label} failed again after retry:`, e2);
+    }
+  }
+}
+
 const NAVER_NEWS_CONCURRENCY = 15;
 const NAVER_NEWS_STOCK_CAP = 25;
 
@@ -64,7 +86,14 @@ async function extractThemesFromNaverNews(names: string[]): Promise<void> {
   }
 }
 
-const MONEY_FLOW_TAKE_DAYS = 10;
+// 이 둘은 별개다 — THEME_NET_FLOW_SYNC_DAYS는 syncThemeNetFlow가 종목별로
+// 얼마나 과거까지 순매수 이력을 받아오는지(마켓 페이지 "최근 10거래일" 패널이
+// 쓰는 저장 데이터 자체의 폭)이고, MONEY_FLOW_TAKE_DAYS는 그 저장된 데이터
+// 중 골구의 투자 방향 코멘트가 며칠치를 누적해서 볼지다. 하나로 합쳐 쓰면
+// 코멘트용 기간을 줄일 때 저장되는 이력 자체도 같이 줄어서 마켓 페이지
+// 패널이 10일치를 못 채우게 된다.
+const THEME_NET_FLOW_SYNC_DAYS = 10;
+const MONEY_FLOW_TAKE_DAYS = 5;
 
 // Recomputes the same market-interest table + net-flow ranking the market
 // page renders (lib/money-flow.ts) — ThemeDailyFlow (every themed stock's
@@ -139,12 +168,16 @@ export async function runMarketSync(dateIso?: string) {
   // gap surfaced this: 2026-08-24's ThemeDailyFlow ended up with zero rows
   // (confirmed the pipeline itself is healthy — a same-day manual rerun for
   // a later date completed normally in ~15s), and there was no error trace
-  // anywhere to say why that one day's run came up empty. Logging now, so
-  // the next one-off failure leaves something to actually debug instead of
-  // just a silently blank column in the UI.
+  // anywhere to say why that one day's run came up empty. Logging now AND
+  // retrying once after a short delay — the same intermittent gap recurred
+  // (2026-08-27~08-31 both went stale again), so logging alone wasn't
+  // enough; whatever transient condition causes this (KIS rate limiting
+  // under load is the leading suspect, going by lib/kis-quote.ts's own
+  // comment about burst failures) is worth one automatic retry before
+  // giving up for the day.
   await Promise.all([
-    syncThemeDailyFlow(date).catch((e) => console.error("[sync-runner] syncThemeDailyFlow failed:", e)),
-    syncThemeNetFlow(MONEY_FLOW_TAKE_DAYS).catch((e) => console.error("[sync-runner] syncThemeNetFlow failed:", e)),
+    withRetry("syncThemeDailyFlow", () => syncThemeDailyFlow(date)),
+    withRetry("syncThemeNetFlow", () => syncThemeNetFlow(THEME_NET_FLOW_SYNC_DAYS)),
   ]);
   await generateTodaysMoneyFlowTake(date);
 

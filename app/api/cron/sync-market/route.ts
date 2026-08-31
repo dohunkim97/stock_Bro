@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runMarketSync } from "@/lib/sync-runner";
 
-export const maxDuration = 150;
+// syncThemeDailyFlow/syncThemeNetFlow now retry once on failure (see
+// lib/sync-runner.ts) — bumped from 150 so a retry-triggering slow day still
+// has room to finish instead of getting cut off mid-retry.
+export const maxDuration = 280;
 
 // Triggered by Vercel Cron (see vercel.json). Vercel automatically sends
 // `Authorization: Bearer $CRON_SECRET` when that env var is set — this
