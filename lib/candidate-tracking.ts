@@ -11,22 +11,25 @@ export type DailyChangePoint = {
 };
 
 // Day-by-day 종가 기준 누적 등락률 for exactly TRACKING_WINDOW_DAYS trading
-// days from a prediction's forDate — anchored to "그날 오후 3시 30분 종가에
-// 매수했다": forDate's own close is the baseline every later day (including
-// day 1 itself, which is therefore always 0%) is measured against. Only
-// trading days on/after forDate get a slot, so weekends/holidays don't
-// produce empty "day N"s, and the series is capped at
-// TRACKING_WINDOW_DAYS even if more candles are available — a prediction's
-// tracked lifecycle is exactly 5 trading days, not open-ended.
+// days AFTER a prediction's forDate — anchored to "그날 오후 3시 30분 종가에
+// 매수했다": forDate's own close is the baseline (매수가), but forDate itself
+// isn't a tracked day (it'd always show 0%, since it IS the base price) — 1일차
+// is the first trading day after the buy, and the window runs 5 trading days
+// from there. The first candle at/after forDate anchors the base price (so a
+// forDate that isn't itself a trading day, or whose candle hasn't synced yet,
+// still resolves to the right buy price); everything after that anchor is the
+// tracked window, capped at TRACKING_WINDOW_DAYS even if more candles exist —
+// a prediction's tracked lifecycle is exactly 5 trading days, not open-ended.
 export function getDailyChangeSeries(candles: ChartCandle[], forDate: string): DailyChangePoint[] {
   if (!forDate) return [];
-  const relevant = candles.filter((c) => c.date >= forDate).slice(0, TRACKING_WINDOW_DAYS);
-  if (relevant.length === 0) return [];
+  const baseIndex = candles.findIndex((c) => c.date >= forDate);
+  if (baseIndex === -1) return [];
 
-  const basePrice = relevant[0].close;
+  const basePrice = candles[baseIndex].close;
   if (!basePrice || basePrice <= 0) return [];
 
-  return relevant.map((c, i) => ({
+  const after = candles.slice(baseIndex + 1, baseIndex + 1 + TRACKING_WINDOW_DAYS);
+  return after.map((c, i) => ({
     date: c.date,
     dayIndex: i + 1,
     changePct: ((c.close - basePrice) / basePrice) * 100,
