@@ -17,6 +17,7 @@ import {
   type Time,
 } from "lightweight-charts";
 import { useGolgoo } from "./golgoo-context";
+import type { SupportResistanceLevel } from "@/lib/technical-signals";
 
 type ChartPeriod = "D" | "W" | "M";
 const PERIOD_LABEL: Record<ChartPeriod, string> = { D: "일봉", W: "주봉", M: "월봉" };
@@ -125,6 +126,7 @@ export function PriceChart({ code }: { code: string }) {
   const markersApiRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const latestDateRef = useRef<string | null>(null);
+  const latestCloseRef = useRef<number | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const [period, setPeriod] = useState<ChartPeriod>("D");
   const [loading, setLoading] = useState(true);
@@ -231,6 +233,7 @@ export function PriceChart({ code }: { code: string }) {
         markersApiRef.current = createSeriesMarkers(candleSeries, []);
         priceLinesRef.current = [];
         latestDateRef.current = candles[candles.length - 1]?.date ?? null;
+        latestCloseRef.current = candles[candles.length - 1]?.close ?? null;
 
         // Keyed by date so the crosshair handler below can look up each
         // MA's value at whatever bar the cursor is over — a line series only
@@ -365,26 +368,42 @@ export function PriceChart({ code }: { code: string }) {
     const dimColor = cssVar("--dim", "#8a92a3");
     const accentColor = cssVar("--accent", "#e0aa3e");
 
+    // 스윙 고점/저점이 같은 가격대에서 병합되면 type이 "both"(지지도 저항도
+    // 됐던 자리)로 나올 수 있는데, "지지/저항선"이라고 뭉뚱그려 표시하면
+    // 뭘 보여주는 건지 애매해진다 — 지금 종가가 그 레벨 위/아래 어디 있는지로
+    // 딱 하나(지지 또는 저항)로 확정해서 라벨/색을 정한다.
+    function resolveRole(level: SupportResistanceLevel): "support" | "resistance" {
+      if (level.type !== "both") return level.type;
+      const latest = latestCloseRef.current;
+      return latest !== null && level.price > latest ? "resistance" : "support";
+    }
+    function roleLabel(role: "support" | "resistance"): string {
+      return role === "support" ? "지지선" : "저항선";
+    }
+    function roleColor(role: "support" | "resistance"): string {
+      return role === "support" ? downColor : upColor;
+    }
+
     const markers: SeriesMarker<Time>[] = [];
 
     // 터치 횟수 상위 3개만 — 다 그리면 오른쪽 가격축 라벨이 겹쳐서 못 읽는다.
     // 그중 가장 많이 터치된 첫 번째 레벨은 "핵심 기준선"(S/R 전환의 중심)으로
-    // 굵은 강조색(--accent)에 별도 라벨을 붙이고, 그 레벨의 터치 이력은
+    // 강조색(--accent)에 별도 라벨을 붙이고, 그 레벨의 터치 이력은
     // overlayStory(사후 분류된 실제 사건들)를 ①②③ 번호 마커로 대신 그린다 —
-    // 나머지 2개 레벨은 기존처럼 화살표+터치 횟수만 표시.
+    // 나머지 2개 레벨은 기존처럼 화살표+터치 횟수만 표시. 선은 가늘게(2px)
+    // 유지해서 캔들을 가리지 않게 한다.
     if (overlayLevels && overlayLevels.length > 0) {
       const [keyLevel, ...otherLevels] = overlayLevels.slice(0, 3);
+      const keyRole = resolveRole(keyLevel);
 
       try {
-        const keyLabel =
-          keyLevel.type === "support" ? "지지선" : keyLevel.type === "resistance" ? "저항선" : "지지/저항 전환선";
         const line = series.createPriceLine({
           price: keyLevel.price,
           color: accentColor,
-          lineWidth: 4,
+          lineWidth: 2,
           lineStyle: LineStyle.Solid,
           axisLabelVisible: true,
-          title: `핵심 ${keyLabel} · ${keyLevel.touches}회 터치`,
+          title: `핵심 ${roleLabel(keyRole)} · ${keyLevel.touches}회 터치`,
         });
         priceLinesRef.current.push(line);
       } catch {
@@ -411,8 +430,8 @@ export function PriceChart({ code }: { code: string }) {
         keyLevel.touchDates.slice(0, 2).forEach((date, idx) => {
           markers.push({
             time: date as Time,
-            position: keyLevel.type === "support" ? "belowBar" : "aboveBar",
-            shape: keyLevel.type === "support" ? "arrowUp" : "arrowDown",
+            position: keyRole === "support" ? "belowBar" : "aboveBar",
+            shape: keyRole === "support" ? "arrowUp" : "arrowDown",
             color: accentColor,
             text: idx === 0 ? "핵심 기준선 터치" : "",
             id: `golgoo-level-key-${date}`,
@@ -421,14 +440,15 @@ export function PriceChart({ code }: { code: string }) {
       }
 
       for (const level of otherLevels) {
-        const color = level.type === "support" ? downColor : level.type === "resistance" ? upColor : dimColor;
-        const label = level.type === "support" ? "지지선" : level.type === "resistance" ? "저항선" : "지지/저항선";
-        const shape = level.type === "support" ? "arrowUp" : level.type === "resistance" ? "arrowDown" : "circle";
+        const role = resolveRole(level);
+        const color = roleColor(role);
+        const label = roleLabel(role);
+        const shape = role === "support" ? "arrowUp" : "arrowDown";
         try {
           const line = series.createPriceLine({
             price: level.price,
             color,
-            lineWidth: 3,
+            lineWidth: 2,
             lineStyle: LineStyle.Solid,
             axisLabelVisible: true,
             title: `${label} · ${level.touches}회`,
@@ -441,7 +461,7 @@ export function PriceChart({ code }: { code: string }) {
         level.touchDates.slice(0, 2).forEach((date, idx) => {
           markers.push({
             time: date as Time,
-            position: level.type === "support" ? "belowBar" : "aboveBar",
+            position: role === "support" ? "belowBar" : "aboveBar",
             shape,
             color,
             text: idx === 0 ? `${label} 터치` : "",
