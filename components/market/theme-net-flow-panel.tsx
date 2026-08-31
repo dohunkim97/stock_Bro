@@ -1,12 +1,16 @@
 import { formatWon } from "@/lib/format";
+import { RankBadge } from "./rank-badge";
 import type { ThemeNetRank } from "@/lib/money-flow";
 
-function NetRow({ item, direction }: { item: ThemeNetRank; direction: "buy" | "sell" }) {
+function NetRow({ item, direction, rank }: { item: ThemeNetRank; direction: "buy" | "sell"; rank: number }) {
   const color = direction === "buy" ? "var(--up)" : "var(--down)";
   const amount = formatWon(Math.abs(item.totalNet));
   return (
     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, padding: "9px 0", borderTop: "1px solid var(--border)" }}>
-      <span style={{ fontWeight: 700, fontSize: 13 }}>{item.name}</span>
+      <span style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13 }}>
+        <RankBadge rank={rank} />
+        {item.name}
+      </span>
       <span style={{ display: "flex", alignItems: "baseline", gap: 8, fontFamily: "var(--mono)", fontSize: 12 }}>
         <span style={{ color: "var(--faint)" }}>{item.stockCount}종목</span>
         <span style={{ fontWeight: 700, color }}>
@@ -47,7 +51,7 @@ export function ThemeNetFlowPanel({
       </div>
       <div style={{ fontSize: 11.5, color: "var(--faint)", marginBottom: 16, lineHeight: 1.5 }}>
         테마에 태깅된 종목들의 외국인+기관 순매수 거래대금을 다 더한 값이에요. 거래가 활발한 것(위쪽
-        "시장 관심 상위 테마")과는 다른 지표로, 사는 쪽이 우세한지 파는 쪽이 우세한지를 봐요.
+        &quot;시장 관심 상위 테마&quot;)과는 다른 지표로, 사는 쪽이 우세한지 파는 쪽이 우세한지를 봐요.
       </div>
 
       {!hasData ? (
@@ -59,7 +63,7 @@ export function ThemeNetFlowPanel({
             {buying.length === 0 ? (
               <div style={{ fontSize: 12.5, color: "var(--faint)", padding: "9px 0" }}>해당 없음</div>
             ) : (
-              buying.map((b) => <NetRow key={b.name} item={b} direction="buy" />)
+              buying.map((b, i) => <NetRow key={b.name} item={b} direction="buy" rank={i + 1} />)
             )}
           </div>
           <div>
@@ -67,7 +71,7 @@ export function ThemeNetFlowPanel({
             {selling.length === 0 ? (
               <div style={{ fontSize: 12.5, color: "var(--faint)", padding: "9px 0" }}>해당 없음</div>
             ) : (
-              selling.map((s) => <NetRow key={s.name} item={s} direction="sell" />)
+              selling.map((s, i) => <NetRow key={s.name} item={s} direction="sell" rank={i + 1} />)
             )}
           </div>
         </div>

@@ -75,8 +75,10 @@ export async function DayView({
     })),
     (e) => e.sector
   );
-  const moneyFlowThemes = rankMoneyFlowByDay(moneyFlowThemedEntries, moneyFlowDays);
-  const moneyFlowStockGroups = rankMoneyFlowStocks(moneyFlowThemedEntries, moneyFlowDays, 6, 6);
+  // 1~10위까지 — ThemeNetFlow 쪽(아래)과 동일한 개수로 맞춰서 두 자금흐름
+  // 섹션이 서로 비슷한 스케일로 보이도록.
+  const moneyFlowThemes = rankMoneyFlowByDay(moneyFlowThemedEntries, moneyFlowDays, 10);
+  const moneyFlowStockGroups = rankMoneyFlowStocks(moneyFlowThemedEntries, moneyFlowDays, 10, 6);
 
   // Same staleness problem as moneyFlowThemedEntries above, for ThemeNetFlow
   // (외국인+기관 순매수) instead of ThemeDailyFlow (거래대금/등락률) — a

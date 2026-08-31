@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { formatWon } from "@/lib/format";
+import { RankBadge } from "./rank-badge";
 import type { ThemeNetRank, NetFlowStock } from "@/lib/money-flow";
 
 function netColor(net: number): string {
@@ -30,11 +31,14 @@ function StockChips({ stocks }: { stocks: NetFlowStock[] }) {
   );
 }
 
-function ThemeRow({ item }: { item: ThemeNetRank }) {
+function ThemeRow({ item, rank }: { item: ThemeNetRank; rank: number }) {
   return (
     <div style={{ padding: "9px 0", borderTop: "1px solid var(--border)", fontSize: 12, minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
-        <span style={{ fontWeight: 700, fontSize: 13, flexShrink: 0 }}>{item.name}</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
+          <RankBadge rank={rank} />
+          {item.name}
+        </span>
         <div style={{ overflowX: "auto", minWidth: 0 }}>
           <StockChips stocks={item.stocks} />
         </div>
@@ -44,7 +48,10 @@ function ThemeRow({ item }: { item: ThemeNetRank }) {
 }
 
 // ThemeNetFlowPanel과 같은 순매수/순매도 2열 구조 — 짝을 이루는 그 패널과 행
-// 수·행 높이가 최대한 비슷하게 맞도록.
+// 수·행 높이를 맞춘다. 그 패널엔 제목 밑에 2줄짜리 설명 문단이 있어서, 여기도
+// 똑같은 자리에 안 보이는(aria-hidden) 복사본을 넣어 높이를 정확히 맞춘 뒤에
+// "▲ 순매수 상위" 줄부터 시작하게 했다 — 서로 다른 문구로 대충 맞추면 폰트
+// 렌더링 차이로 줄이 미묘하게 어긋날 수 있어서, 아예 같은 문구를 복사했다.
 export function ThemeNetFlowStocksPanel({
   buying,
   selling,
@@ -67,6 +74,10 @@ export function ThemeNetFlowStocksPanel({
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
         <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.01em" }}>🏢 순매수·순매도 테마별 종목</span>
       </div>
+      <div aria-hidden style={{ visibility: "hidden", fontSize: 11.5, marginBottom: 16, lineHeight: 1.5 }}>
+        테마에 태깅된 종목들의 외국인+기관 순매수 거래대금을 다 더한 값이에요. 거래가 활발한 것(위쪽
+        &quot;시장 관심 상위 테마&quot;)과는 다른 지표로, 사는 쪽이 우세한지 파는 쪽이 우세한지를 봐요.
+      </div>
 
       {!hasData ? (
         <div style={{ fontSize: 13.5, color: "var(--dim)" }}>표시할 테마가 아직 없어요.</div>
@@ -77,7 +88,7 @@ export function ThemeNetFlowStocksPanel({
             {buying.length === 0 ? (
               <div style={{ fontSize: 12.5, color: "var(--faint)", padding: "9px 0" }}>해당 없음</div>
             ) : (
-              buying.map((b) => <ThemeRow key={b.name} item={b} />)
+              buying.map((b, i) => <ThemeRow key={b.name} item={b} rank={i + 1} />)
             )}
           </div>
           <div style={{ minWidth: 0 }}>
@@ -85,7 +96,7 @@ export function ThemeNetFlowStocksPanel({
             {selling.length === 0 ? (
               <div style={{ fontSize: 12.5, color: "var(--faint)", padding: "9px 0" }}>해당 없음</div>
             ) : (
-              selling.map((s) => <ThemeRow key={s.name} item={s} />)
+              selling.map((s, i) => <ThemeRow key={s.name} item={s} rank={i + 1} />)
             )}
           </div>
         </div>

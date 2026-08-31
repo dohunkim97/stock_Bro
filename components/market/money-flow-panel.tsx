@@ -1,5 +1,6 @@
 import { formatWon } from "@/lib/format";
 import { weekdayLabel } from "@/lib/dates";
+import { RankBadge } from "./rank-badge";
 import type { ThemeMoneyFlowByDay } from "@/lib/money-flow";
 
 function formatDayHeader(iso: string): string {
@@ -86,23 +87,7 @@ function ThemeRow({ theme, rank }: { theme: ThemeMoneyFlowByDay; rank: number })
           borderTop: "1px solid var(--border)",
         }}
       >
-        <span
-          style={{
-            flexShrink: 0,
-            width: 18,
-            height: 18,
-            borderRadius: 5,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 10,
-            fontWeight: 700,
-            background: rank === 0 ? "var(--accent)" : "var(--panel2)",
-            color: rank === 0 ? "#0a0d13" : "var(--dim)",
-          }}
-        >
-          {rank + 1}
-        </span>
+        <RankBadge rank={rank + 1} />
         {theme.name}
       </div>
       {theme.dailyTotals.map((v, i) => (
