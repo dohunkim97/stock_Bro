@@ -77,7 +77,10 @@ export function ThemeNetFlowStocksPanel({
         minWidth: 0,
       }}
     >
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+      {/* marginBottom: 6은 ThemeNetFlowPanel의 제목 줄과 반드시 같아야 한다 —
+          여기만 16이었더니 그 10px 차이가 그대로 누적돼서 두 패널의 "1위" 줄이
+          시작부터 어긋나 있었다. */}
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
         <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.01em" }}>🏢 순매수·순매도 테마별 종목</span>
       </div>
       <div aria-hidden style={{ visibility: "hidden", fontSize: 11.5, marginBottom: 16, lineHeight: 1.5, maxWidth: 560 }}>
