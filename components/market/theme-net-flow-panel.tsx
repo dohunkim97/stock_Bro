@@ -6,7 +6,17 @@ function NetRow({ item, direction, rank }: { item: ThemeNetRank; direction: "buy
   const color = direction === "buy" ? "var(--up)" : "var(--down)";
   const amount = formatWon(Math.abs(item.totalNet));
   return (
-    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, padding: "9px 0", borderTop: "1px solid var(--border)" }}>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        justifyContent: "space-between",
+        gap: 16,
+        padding: "9px 0",
+        borderTop: "1px solid var(--border)",
+        whiteSpace: "nowrap",
+      }}
+    >
       <span style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13 }}>
         <RankBadge rank={rank} />
         {item.name}
@@ -57,22 +67,28 @@ export function ThemeNetFlowPanel({
       {!hasData ? (
         <div style={{ fontSize: 13.5, color: "var(--dim)" }}>비교할 만한 순매수·순매도 데이터가 아직 없어요.</div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--up)", marginBottom: 4 }}>▲ 순매수 상위</div>
-            {buying.length === 0 ? (
-              <div style={{ fontSize: 12.5, color: "var(--faint)", padding: "9px 0" }}>해당 없음</div>
-            ) : (
-              buying.map((b, i) => <NetRow key={b.name} item={b} direction="buy" rank={i + 1} />)
-            )}
-          </div>
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--down)", marginBottom: 4 }}>▼ 순매도 상위</div>
-            {selling.length === 0 ? (
-              <div style={{ fontSize: 12.5, color: "var(--faint)", padding: "9px 0" }}>해당 없음</div>
-            ) : (
-              selling.map((s, i) => <NetRow key={s.name} item={s} direction="sell" rank={i + 1} />)
-            )}
+        // 긴 테마명이 줄바꿈되면 그 아래 순위들이 밀려서 짝이 되는 패널과 줄이
+        // 어긋난다 — 그래서 행 전체를 한 줄(nowrap)로 고정하고, 대신 칸 너비가
+        // 모자라면 이 영역 전체가 가로 스크롤되게 했다(각 열은 max-content라
+        // 내용 폭 그대로 커진다).
+        <div style={{ overflowX: "auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "max-content max-content", gap: 24, width: "max-content" }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--up)", marginBottom: 4 }}>▲ 순매수 상위</div>
+              {buying.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: "var(--faint)", padding: "9px 0" }}>해당 없음</div>
+              ) : (
+                buying.map((b, i) => <NetRow key={b.name} item={b} direction="buy" rank={i + 1} />)
+              )}
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--down)", marginBottom: 4 }}>▼ 순매도 상위</div>
+              {selling.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: "var(--faint)", padding: "9px 0" }}>해당 없음</div>
+              ) : (
+                selling.map((s, i) => <NetRow key={s.name} item={s} direction="sell" rank={i + 1} />)
+              )}
+            </div>
           </div>
         </div>
       )}

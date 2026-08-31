@@ -26,7 +26,11 @@ export function MoneyFlowPanel({
   // reversed the same way to stay aligned with the reversed day columns.
   const displayDays = [...days].reverse();
   const displayThemes = themes.map((t) => ({ ...t, dailyTotals: [...t.dailyTotals].reverse() }));
-  const cols = `1.2fr repeat(${displayDays.length}, 1fr) 1.1fr`;
+  // 테마명 칸은 max-content로 — 1.2fr처럼 비율로 두면 "반도체 팹 물류자동화"
+  // 같은 긴 이름이 칸 안에서 줄바꿈되고, 그러면 그 아래 순위들이 다 밀려서
+  // 짝을 이루는 MoneyFlowStocksPanel과 줄이 어긋난다. 넘치면 아래 overflowX:auto
+  // 로 패널 전체가 가로 스크롤된다.
+  const cols = `max-content repeat(${displayDays.length}, 1fr) 1.1fr`;
 
   return (
     <section
@@ -85,6 +89,7 @@ function ThemeRow({ theme, rank }: { theme: ThemeMoneyFlowByDay; rank: number })
           gap: 8,
           padding: "10px 0",
           borderTop: "1px solid var(--border)",
+          whiteSpace: "nowrap",
         }}
       >
         <RankBadge rank={rank + 1} />

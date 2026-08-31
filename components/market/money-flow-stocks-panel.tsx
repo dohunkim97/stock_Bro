@@ -50,7 +50,7 @@ export function MoneyFlowStocksPanel({ themes }: { themes: ThemeStockGroups[] })
         <div style={{ fontSize: 13.5, color: "var(--dim)" }}>표시할 테마가 아직 없어요.</div>
       ) : (
         <div style={{ overflowX: "auto" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "120px max-content max-content", columnGap: 20, fontSize: 12, width: "max-content", fontFamily: "var(--mono)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "max-content max-content max-content", columnGap: 20, fontSize: 12, width: "max-content", fontFamily: "var(--mono)" }}>
             {/* MoneyFlowPanel의 헤더 행(빈 칸 + 날짜들 + 누적)과 같은 스타일로 맞춰서
                 — 이 헤더 행 높이가 그 패널과 같아야 아래 테마 행들이 서로 줄이 맞는다. */}
             <div style={{ fontSize: 11, color: "var(--faint)", padding: "0 0 10px" }} />
