@@ -38,7 +38,11 @@ type Role = "support" | "resistance";
 
 type PickedLevel = { level: SupportResistanceLevel; role: Role; isKey: boolean; labelIndex: number; color: string };
 
-type LevelLabel = { id: string; y: number; text: string; color: string };
+// 선 위에는 숫자만 든 작은 동그라미(어느 번호 지지/저항선인지)만 찍는다 —
+// 텍스트를 선 위에 바로 쓰면 캔들이랑 겹쳐서 안 보인다는 피드백으로 분리:
+// 전체 설명 문장은 LevelSummary로 따로(캔버스 밖, 헤더 아래 한 줄) 보여준다.
+type LevelLabel = { id: string; y: number; index: number; color: string };
+type LevelSummary = { id: string; text: string; color: string };
 
 type TouchPoint = { id: string; x: number; y: number; index: number; color: string };
 
@@ -237,7 +241,9 @@ export function PriceChart({ code }: { code: string }) {
   const [hover, setHover] = useState<HoverState | null>(null);
   const [chartTick, setChartTick] = useState(0);
   const [levelLabels, setLevelLabels] = useState<LevelLabel[]>([]);
+  const [levelSummaries, setLevelSummaries] = useState<LevelSummary[]>([]);
   const [touchPoints, setTouchPoints] = useState<TouchPoint[]>([]);
+  const [dividerY, setDividerY] = useState<number | null>(null);
   const recomputeOverlayRef = useRef<() => void>(() => {});
 
   // 개인 이동평균선 설정 — 기본은 5/60/200일이고, 사용자가 추가/삭제하면
@@ -311,33 +317,43 @@ export function PriceChart({ code }: { code: string }) {
   const overlaySignals = golgooOpen ? golgooSignals : chartSignals;
   const overlayLevels = golgooOpen ? golgooLevels : chartLevels;
 
-  // 지지/저항선의 왼쪽 라벨(글자)과 터치 지점(빈 동그라미)의 화면 좌표를
-  // 다시 계산한다 — 팬/줌/리사이즈될 때마다 다시 불러야 해서 ref로 최신
-  // 버전을 항상 들고 있는다. 터치 번호는 과거→최근 순으로(1회, 2회, …)
-  // 매기고, 화면이 붐비지 않게 레벨당 최근 6개까지만 그린다(번호 자체는
-  // 실제 누적 횟수를 유지 — 6개 넘게 터치된 레벨이면 "3,4,5회…"로 이어짐).
+  // 지지/저항선의 "몇 번 선인지" 동그라미와 터치 지점(빈 동그라미)의 화면
+  // 좌표, 그리고 차트/거래량 판 경계선 위치를 다시 계산한다 — 팬/줌/
+  // 리사이즈될 때마다 다시 불러야 해서 ref로 최신 버전을 항상 들고 있는다.
+  // 전체 설명 문장(LevelSummary)은 좌표가 필요 없어서 여기서 같이 채우고
+  // 캔버스 밖(헤더 아래)에 그냥 텍스트로 보여준다. 터치 번호는 과거→최근
+  // 순으로(1회, 2회, …) 매기고, 화면이 붐비지 않게 레벨당 최근 6개까지만
+  // 그린다(번호 자체는 실제 누적 횟수를 유지 — 6개 넘게 터치된 레벨이면
+  // "3,4,5회…"로 이어짐).
   function recomputeOverlay() {
     const chart = chartRef.current;
     const series = candleSeriesRef.current;
     const picked = pickedLevelsRef.current;
+
+    const panes = chart?.panes();
+    setDividerY(panes && panes[0] ? panes[0].getHeight() : null);
+
     if (!chart || !series || !overlayOpen || picked.length === 0) {
       setTouchPoints([]);
       setLevelLabels([]);
+      setLevelSummaries([]);
       return;
     }
 
     const points: TouchPoint[] = [];
     const labels: LevelLabel[] = [];
+    const summaries: LevelSummary[] = [];
 
     for (const p of picked) {
+      summaries.push({
+        id: `${p.role}-${p.level.price}`,
+        text: `${p.labelIndex}번 ${roleLabel(p.role)} ${priceFormatter(p.level.price)}원 · ${p.level.touches}회 터치 · ${strengthLabel(p.role, p.level.touches)}`,
+        color: p.color,
+      });
+
       const y = series.priceToCoordinate(p.level.price);
       if (y !== null) {
-        labels.push({
-          id: `${p.role}-${p.level.price}`,
-          y: y as number,
-          text: `${p.labelIndex}번 ${roleLabel(p.role)} ${priceFormatter(p.level.price)}원 (${strengthLabel(p.role, p.level.touches)})`,
-          color: p.color,
-        });
+        labels.push({ id: `${p.role}-${p.level.price}`, y: y as number, index: p.labelIndex, color: p.color });
       }
 
       const chronological = [...p.level.touchDates].sort(); // touchDates는 최신순 저장이라 오래된 순으로 뒤집는다.
@@ -352,6 +368,7 @@ export function PriceChart({ code }: { code: string }) {
 
     setTouchPoints(points);
     setLevelLabels(labels);
+    setLevelSummaries(summaries);
   }
   recomputeOverlayRef.current = recomputeOverlay;
 
@@ -399,7 +416,10 @@ export function PriceChart({ code }: { code: string }) {
           layout: {
             background: { color: "transparent" },
             textColor,
-            panes: { enableResize: true, separatorColor: borderColor, separatorHoverColor: cssVar("--accent-soft", "rgba(224,170,62,0.14)") },
+            // 라이브러리 자체 구분선은 두께 옵션이 없어서(색만 조절 가능) 진한
+            // 색으로 눈에 띄게 하고, 실제 "두꺼운 선"은 아래 dividerY 오버레이
+            // div로 그 위에 따로 그린다.
+            panes: { enableResize: true, separatorColor: cssVar("--faint", "#545b6b"), separatorHoverColor: cssVar("--accent", "#e0aa3e") },
           },
           grid: { vertLines: { color: borderColor }, horzLines: { color: borderColor } },
           timeScale: {
@@ -540,6 +560,12 @@ export function PriceChart({ code }: { code: string }) {
           });
         });
         resizeObserver.observe(containerRef.current);
+        // 판 경계(가격/거래량)를 마우스로 드래그해서 높이를 바꿀 때는 컨테이너
+        // 전체 크기는 안 바뀌니 위 observe만으론 안 잡힌다 — 라이브러리에
+        // 전용 리사이즈 이벤트가 없어서 가격 판 자체의 DOM 엘리먼트도 같이
+        // 관찰해 dividerY(두꺼운 구분선 오버레이 위치)를 계속 맞춘다.
+        const pricePaneEl = chart.panes()[0]?.getHTMLElement();
+        if (pricePaneEl) resizeObserver.observe(pricePaneEl);
         resizeObserverRef.current = resizeObserver;
 
         setLoading(false);
@@ -600,6 +626,7 @@ export function PriceChart({ code }: { code: string }) {
       volumeMarkersApi?.setMarkers([]);
       pickedLevelsRef.current = [];
       setLevelLabels([]);
+      setLevelSummaries([]);
       setTouchPoints([]);
       return;
     }
@@ -617,14 +644,14 @@ export function PriceChart({ code }: { code: string }) {
     }));
     pickedLevelsRef.current = picked;
 
-    // 라인 자체는 실선만 — 라벨은 축 옆에 겹쳐 쌓이는 대신 차트 왼쪽 위,
-    // 그 라인 높이에 바로 글자로만 적는다(칸/테두리 없이).
+    // 라인은 얇게 — 굵으면 캔들을 가려서 오히려 안 보인다는 피드백으로
+    // 더 얇게 뺐다. 어느 선인지는 이제 선 위 동그라미 번호로 구분한다.
     for (const p of picked) {
       try {
         const line = series.createPriceLine({
           price: p.level.price,
           color: p.color,
-          lineWidth: p.isKey ? 3 : 2,
+          lineWidth: p.isKey ? 2 : 1,
           lineStyle: LineStyle.Solid,
           axisLabelVisible: false,
         });
@@ -796,31 +823,72 @@ export function PriceChart({ code }: { code: string }) {
         </div>
       </div>
 
+      {!loading && !empty && levelSummaries.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "4px 16px",
+            padding: "10px 18px",
+            borderBottom: "1px solid var(--border)",
+            fontFamily: "var(--mono)",
+            fontSize: 12,
+          }}
+        >
+          {levelSummaries.map((s) => (
+            <span key={s.id} style={{ color: s.color, fontWeight: 700 }}>
+              {s.text}
+            </span>
+          ))}
+        </div>
+      )}
+
       <div style={{ position: "relative", minHeight: CHART_HEIGHT }}>
         <div
           ref={containerRef}
           style={{ width: "100%", height: CHART_HEIGHT, display: loading || empty ? "none" : "block" }}
         />
 
+        {!loading && !empty && dividerY !== null && (
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              top: dividerY - 2,
+              height: 4,
+              background: "var(--faint)",
+              zIndex: 2,
+              pointerEvents: "none",
+            }}
+          />
+        )}
+
         {!loading &&
           !empty &&
           levelLabels.map((lb) => (
             <div
               key={lb.id}
+              title={`${lb.index}번 선`}
               style={{
                 position: "absolute",
-                left: 8,
-                top: lb.y - 8,
-                zIndex: 3,
+                left: 6,
+                top: lb.y - 10,
+                width: 20,
+                height: 20,
+                borderRadius: "50%",
+                background: lb.color,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 4,
                 pointerEvents: "none",
-                fontSize: 11,
-                fontWeight: 800,
-                color: lb.color,
-                textShadow: "0 1px 3px rgba(0,0,0,0.85), 0 0 6px rgba(0,0,0,0.6)",
-                whiteSpace: "nowrap",
+                boxShadow: "0 1px 4px rgba(0,0,0,0.5)",
               }}
             >
-              {lb.text}
+              <span style={{ fontSize: 11, fontWeight: 800, color: "var(--panel)", fontFamily: "var(--mono)" }}>
+                {lb.index}
+              </span>
             </div>
           ))}
 
