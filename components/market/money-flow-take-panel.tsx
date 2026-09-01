@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getLatestMoneyFlowTake, parseMoneyFlowCandidates } from "@/lib/money-flow-take";
 import { renderBold } from "@/components/ui/rich-text";
 import { RankBadge } from "./rank-badge";
+import { formatDateLabel } from "@/lib/dates";
 
 // Self-contained like WeeklyPredictionPanel — reads whatever the latest
 // sync generated (lib/sync-runner.ts), not scoped to the date being browsed.
@@ -20,7 +21,7 @@ export async function MoneyFlowTakePanel() {
         padding: 24,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <div
           style={{
             width: 28,
@@ -47,6 +48,9 @@ export async function MoneyFlowTakePanel() {
           }}
         >
           Golgoo · 자금 흐름 기반 투자 방향
+        </span>
+        <span style={{ fontSize: 11.5, color: "var(--faint)", marginLeft: "auto" }}>
+          {formatDateLabel(take.date)} 기준
         </span>
       </div>
 
