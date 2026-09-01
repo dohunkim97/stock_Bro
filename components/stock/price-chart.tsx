@@ -34,6 +34,17 @@ type HoverInfo = {
 
 type HoverState = { info: HoverInfo; x: number; y: number };
 
+type StoryBox = {
+  id: string;
+  x: number;
+  y: number;
+  above: boolean;
+  stepNumber: number;
+  badgeLabel: string;
+  description: string;
+  color: string;
+};
+
 const MOVING_AVERAGES: { period: number; color: string }[] = [
   { period: 5, color: "#f59e0b" },
   { period: 60, color: "#22c55e" },
@@ -133,6 +144,8 @@ export function PriceChart({ code }: { code: string }) {
   const [empty, setEmpty] = useState(false);
   const [hover, setHover] = useState<HoverState | null>(null);
   const [chartTick, setChartTick] = useState(0);
+  const [storyBoxes, setStoryBoxes] = useState<StoryBox[]>([]);
+  const recomputeStoryBoxesRef = useRef<() => void>(() => {});
   // 골구 근거 토글 상태 + 시그널/지지·저항 데이터 — GolgooPanel이 불러오는
   // 대로 여기로 흘러들어와서, 켜져 있으면 아래 overlay effect가 차트 위에
   // 그려준다. 이 페이지에 GolgooProvider가 없으면 useGolgoo가 던지므로,
@@ -155,6 +168,47 @@ export function PriceChart({ code }: { code: string }) {
   const overlaySignals = golgooOpen ? golgooSignals : chartSignals;
   const overlayLevels = golgooOpen ? golgooLevels : chartLevels;
   const overlayStory = golgooOpen ? golgooStory : chartStory;
+
+  // ①②③ 콜아웃 박스를 차트 좌표로 다시 계산 — lightweight-charts 마커는
+  // 짧은 글자 하나만 붙일 수 있어서, 전체 설명(배지+description)은 이
+  // 함수가 계산한 x/y에 얹는 별도 HTML 오버레이(아래 storyBoxes 렌더링)로
+  // 보여준다. 리렌더마다 새로 만들어지는 함수라 overlayStory를 항상 최신
+  // 값으로 캡처하고, ref에 담아둬서 차트 생성 시점에 한 번만 거는 pan/zoom/
+  // resize 구독에서도 항상 최신 버전을 부를 수 있게 한다.
+  function recomputeStoryBoxes() {
+    const chart = chartRef.current;
+    const series = candleSeriesRef.current;
+    if (!chart || !series || !overlayOpen || !overlayStory || overlayStory.length === 0) {
+      setStoryBoxes([]);
+      return;
+    }
+
+    const upColor = cssVar("--up", "#f2434f");
+    const downColor = cssVar("--down", "#3b82f6");
+    const accentColor = cssVar("--accent", "#e0aa3e");
+    const containerHeight = containerRef.current?.clientHeight ?? 360;
+
+    const boxes = overlayStory
+      .map((ev) => {
+        const x = chart.timeScale().timeToCoordinate(ev.date as Time);
+        const y = series.priceToCoordinate(ev.price);
+        if (x === null || y === null) return null;
+        return {
+          id: `${ev.stepNumber}-${ev.date}`,
+          x: x as number,
+          y: y as number,
+          above: y > containerHeight / 2,
+          stepNumber: ev.stepNumber,
+          badgeLabel: ev.badgeLabel,
+          description: ev.description,
+          color: ev.direction === "bullish" ? upColor : ev.direction === "bearish" ? downColor : accentColor,
+        };
+      })
+      .filter((b): b is StoryBox => b !== null);
+
+    setStoryBoxes(boxes);
+  }
+  recomputeStoryBoxesRef.current = recomputeStoryBoxes;
 
   useEffect(() => {
     let cancelled = false;
@@ -268,6 +322,10 @@ export function PriceChart({ code }: { code: string }) {
 
         chart.timeScale().fitContent();
 
+        // 팬/줌으로 시간축이 바뀌면 ①②③ 콜아웃 박스의 화면 좌표도 다시
+        // 계산해야 한다 — ref로 항상 최신 recomputeStoryBoxes를 부른다.
+        chart.timeScale().subscribeVisibleLogicalRangeChange(() => recomputeStoryBoxesRef.current());
+
         // 날짜/종가/거래량/이동평균값을 보여주는 호버 범례 — 커서가 실제로 봉 위에
         //있을 때만 뜨고, 벗어나면 사라짐.
         const byDate = new Map(candles.map((c, i) => [c.date, { c, i }] as const));
@@ -304,13 +362,17 @@ export function PriceChart({ code }: { code: string }) {
         let rafId: number | null = null;
         const resizeObserver = new ResizeObserver(() => {
           if (rafId !== null) cancelAnimationFrame(rafId);
-          rafId = requestAnimationFrame(() => chartRef.current?.timeScale().fitContent());
+          rafId = requestAnimationFrame(() => {
+            chartRef.current?.timeScale().fitContent();
+            recomputeStoryBoxesRef.current();
+          });
         });
         resizeObserver.observe(containerRef.current);
         resizeObserverRef.current = resizeObserver;
 
         setLoading(false);
         setChartTick((v) => v + 1); // lets the overlay effect below (re)draw on a fresh series
+        recomputeStoryBoxesRef.current();
       })
       .catch(() => {
         if (!cancelled) {
@@ -360,6 +422,7 @@ export function PriceChart({ code }: { code: string }) {
 
     if (!overlayOpen) {
       markersApi.setMarkers([]);
+      setStoryBoxes([]);
       return;
     }
 
@@ -489,6 +552,7 @@ export function PriceChart({ code }: { code: string }) {
     // lightweight-charts requires markers sorted ascending by time.
     markers.sort((a, b) => String(a.time).localeCompare(String(b.time)));
     markersApi.setMarkers(markers);
+    recomputeStoryBoxes();
   }, [overlayOpen, overlaySignals, overlayLevels, overlayStory, chartTick]);
 
   return (
@@ -527,6 +591,43 @@ export function PriceChart({ code }: { code: string }) {
 
       <div style={{ position: "relative", minHeight: 360 }}>
         <div ref={containerRef} style={{ width: "100%", height: 360, display: loading || empty ? "none" : "block" }} />
+
+        {!loading &&
+          !empty &&
+          storyBoxes.map((box) => {
+            const BOX_WIDTH = 176;
+            const containerWidth = containerRef.current?.clientWidth ?? 600;
+            const left = Math.min(Math.max(box.x - BOX_WIDTH / 2, 4), containerWidth - BOX_WIDTH - 4);
+            return (
+              <div
+                key={box.id}
+                style={{
+                  position: "absolute",
+                  left,
+                  ...(box.above ? { bottom: 360 - box.y + 10 } : { top: box.y + 10 }),
+                  width: BOX_WIDTH,
+                  zIndex: 4,
+                  pointerEvents: "none",
+                  background: "color-mix(in srgb, var(--panel) 94%, transparent)",
+                  border: "1px solid var(--border)",
+                  borderLeft: `3px solid ${box.color}`,
+                  borderRadius: 8,
+                  padding: "7px 9px",
+                  boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
+                  <span style={{ fontWeight: 800, fontSize: 11, color: box.color }}>
+                    {["①", "②", "③", "④", "⑤"][box.stepNumber - 1] ?? box.stepNumber}
+                  </span>
+                  <span style={{ fontWeight: 700, fontSize: 11, color: "var(--text)" }}>{box.badgeLabel}</span>
+                </div>
+                <div style={{ fontSize: 10.5, lineHeight: 1.45, color: "var(--dim)", marginTop: 3 }}>
+                  {box.description}
+                </div>
+              </div>
+            );
+          })}
 
         {hover && !loading && !empty && (() => {
           const BOX_WIDTH = 172;
