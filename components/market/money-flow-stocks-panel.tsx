@@ -1,6 +1,12 @@
 import Link from "next/link";
 import { chgColorVar, formatChg } from "@/lib/format";
+import { RankBadge } from "./rank-badge";
 import type { ThemeStockGroups, MoneyFlowStock } from "@/lib/money-flow";
+
+// MoneyFlowPanel과 반드시 같은 값 — 패딩만으로 셀 높이를 맞추면 뱃지·칩처럼
+// 셀마다 다른 요소의 미세한 라인하이트 차이가 10줄 누적되면서 두 패널의
+// 아래쪽 줄이 몇 px씩 어긋난다.
+const ROW_HEIGHT = 38;
 
 function StockChips({ stocks }: { stocks: MoneyFlowStock[] }) {
   if (stocks.length === 0) return <span style={{ color: "var(--faint)" }}>-</span>;
@@ -26,7 +32,9 @@ function StockChips({ stocks }: { stocks: MoneyFlowStock[] }) {
 }
 
 // 대표기업/관련 중소형주를 한 줄에 같이 넣어 테마당 1행으로 압축 — 짝을 이루는
-// MoneyFlowPanel(테마당 1행 테이블)과 내용 높이가 비슷하게 맞도록.
+// MoneyFlowPanel과 헤더 행(같은 fontSize:11/padding) + 데이터 행(같은
+// padding:"10px 0") 스타일을 그대로 맞춰서, 두 패널의 순위별 줄이 서로
+// 정확히 나란히 오도록 했다.
 export function MoneyFlowStocksPanel({ themes }: { themes: ThemeStockGroups[] }) {
   return (
     <section
@@ -47,26 +55,51 @@ export function MoneyFlowStocksPanel({ themes }: { themes: ThemeStockGroups[] })
         <div style={{ fontSize: 13.5, color: "var(--dim)" }}>표시할 테마가 아직 없어요.</div>
       ) : (
         <div style={{ overflowX: "auto" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "90px max-content max-content", columnGap: 20, fontSize: 12, width: "max-content" }}>
-            {themes.map((t) => (
+          <div style={{ display: "grid", gridTemplateColumns: "max-content max-content max-content", columnGap: 20, fontSize: 12, width: "max-content", fontFamily: "var(--mono)" }}>
+            {/* MoneyFlowPanel의 헤더 행(빈 칸 + 날짜들 + 누적)과 같은 스타일로 맞춰서
+                — 이 헤더 행 높이가 그 패널과 같아야 아래 테마 행들이 서로 줄이 맞는다. */}
+            <div style={{ fontSize: 11, color: "var(--faint)", padding: "0 0 10px" }} />
+            <div style={{ fontSize: 11, color: "var(--faint)", padding: "0 0 10px" }}>대표기업</div>
+            <div style={{ fontSize: 11, color: "var(--faint)", padding: "0 0 10px" }}>관련 중소형주</div>
+
+            {themes.map((t, i) => (
               <div key={t.name} style={{ display: "contents" }}>
                 <span
                   style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontFamily: "var(--sans)",
                     fontWeight: 700,
                     fontSize: 13,
-                    padding: "10px 0",
+                    height: ROW_HEIGHT,
                     borderTop: "1px solid var(--border)",
                     whiteSpace: "nowrap",
                   }}
                 >
+                  <RankBadge rank={i + 1} />
                   {t.name}
                 </span>
-                <span style={{ padding: "10px 0", borderTop: "1px solid var(--border)", whiteSpace: "nowrap" }}>
-                  <span style={{ color: "var(--dim)", marginRight: 5 }}>대표</span>
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    height: ROW_HEIGHT,
+                    borderTop: "1px solid var(--border)",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   <StockChips stocks={t.leaders} />
                 </span>
-                <span style={{ padding: "10px 0", borderTop: "1px solid var(--border)", whiteSpace: "nowrap" }}>
-                  <span style={{ color: "var(--dim)", marginRight: 5 }}>중소형</span>
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    height: ROW_HEIGHT,
+                    borderTop: "1px solid var(--border)",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   <StockChips stocks={t.followers} />
                 </span>
               </div>

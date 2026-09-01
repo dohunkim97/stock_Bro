@@ -16,11 +16,11 @@ export const SLOT_TITLE: Record<BriefingSlot, string> = {
 
 const SLOT_INSTRUCTION: Record<BriefingSlot, string> = {
   morning:
-    "지금은 장 시작 전 아침이야. 전일 마감 이후 들어온 텔레그램 제보를 중심으로, 오늘 장이 열리면 주목할 만한 포인트를 정리해줘.",
+    "지금은 정오야, 오전장(오전 8시 프리마켓~정오)을 정리하는 시점이야. 실시간 랭킹과 한투 종합 시황/공시, 오전 중 들어온 텔레그램 제보를 종합해서 오전장 흐름을 정리해줘.",
   midday:
-    "지금은 장중 중간 시점이야. 실시간 랭킹과 한투 종합 시황/공시, 오늘 모닝 브리핑 이후 들어온 텔레그램 제보를 종합해서 그 사이 뭐가 바뀌었는지 정리해줘.",
+    "지금은 정규장 마감(오후 3시) 시점이야. 정오 모닝 브리핑 이후부터 마감까지 실시간 랭킹과 한투 종합 시황/공시, 그 사이 들어온 텔레그램 제보를 종합해서 오후장 흐름을 정리해줘.",
   close:
-    "지금은 장마감 이후야. 전일 마감부터 오늘 마감까지 하루 전체 흐름 — 실시간 랭킹, 한투 종합 시황/공시, 그 사이 들어온 텔레그램 제보까지 종합해서 오늘 하루를 정리해줘.",
+    "지금은 NXT 애프터마켓까지 마감된 시점(오후 8시)이야. 오후 3시 정규장 마감 이후 NXT 애프터마켓 흐름까지 포함해서, 그 사이 실시간 랭킹·한투 종합 시황/공시·텔레그램 제보를 종합해 하루 전체를 마무리 정리해줘.",
 };
 
 const SYSTEM_PROMPT_BASE = [
@@ -69,26 +69,17 @@ function parseBriefing(text: string): BriefingJson | null {
   }
 }
 
-// midday wants "since this morning's briefing"; morning and close both want
-// "since the last close" — close is a full-day rollup back to yesterday's
-// close, and this morning hasn't happened yet the moment morning itself runs,
-// so they resolve to the same anchor: the most recent "close" slot.
-async function windowStart(slot: BriefingSlot, date: string, now: Date): Promise<Date> {
-  if (slot === "midday") {
-    const morning = await prisma.marketBriefing.findFirst({
-      where: { date, slot: "morning" },
-      orderBy: { createdAt: "desc" },
-    });
-    if (morning) return morning.createdAt;
-  } else {
-    const prevClose = await prisma.marketBriefing.findFirst({
-      where: { slot: "close" },
-      orderBy: { createdAt: "desc" },
-    });
-    if (prevClose) return prevClose.createdAt;
-  }
-  // First-ever run for a slot with no prior anchor to work from.
-  return new Date(now.getTime() - 24 * 60 * 60 * 1000);
+// 각 슬롯이 커버하는 구간은 고정된 KST 시각 경계다 — 모닝(08:00~정오),
+// 중간(정오~15:00 정규장 마감), 장마감(15:00~20:00 NXT 애프터마켓 마감).
+// "+09:00"을 직접 박아서 만들면 이 서버가 어느 타임존에서 돌든(Vercel은
+// UTC) 항상 정확한 KST 벽시계 시각을 가리키는 순간을 얻는다 — 이전엔 "지난
+// 슬롯 이후"로 동적으로 잡았는데, 슬롯 실행이 늦어지거나 하루 건너뛰면 그
+// 앵커 자체가 밀리면서 구간이 어긋났다.
+const SLOT_START_HOUR: Record<BriefingSlot, number> = { morning: 8, midday: 12, close: 15 };
+
+function windowStart(slot: BriefingSlot, date: string): Date {
+  const hour = String(SLOT_START_HOUR[slot]).padStart(2, "0");
+  return new Date(`${date}T${hour}:00:00+09:00`);
 }
 
 const LIVE_TOP_N = 8;
@@ -162,22 +153,22 @@ function formatTelegramBlock(items: Awaited<ReturnType<typeof getTelegramNewsSin
 export async function generateBriefing(slot: BriefingSlot, date: string): Promise<void> {
   if (!process.env.ANTHROPIC_API_KEY) return;
 
-  const now = new Date();
-  const since = await windowStart(slot, date, now);
-  const wantsLiveData = slot === "midday" || slot === "close";
+  const since = windowStart(slot, date);
+  // 모닝 브리핑도 이제 정오에 생성되면서 오전 9시~정오 정규장 절반을
+  // 포함하게 됐으니, 세 슬롯 다 실시간 데이터를 본다.
 
   const [marketBlock, weeklyBlock, tgItems, liveSnapshot] = await Promise.all([
     marketDataBlock(),
     weeklyTrendBlock(),
     getTelegramNewsSince(since, 30),
-    wantsLiveData ? fetchKisLiveSnapshot(LIVE_TOP_N) : Promise.resolve(null),
+    fetchKisLiveSnapshot(LIVE_TOP_N),
   ]);
 
   // KIS's news-title endpoint is only meaningful scoped to a specific code
   // (verified empirically — blank returns generic newswire, not market
   // commentary), so this runs after the snapshot, not in the Promise.all
   // above, since it depends on which codes the snapshot surfaced.
-  const kisNews = wantsLiveData ? await fetchKisNewsForCodes(pickTopCodes(liveSnapshot, NEWS_CODE_COUNT)) : [];
+  const kisNews = await fetchKisNewsForCodes(pickTopCodes(liveSnapshot, NEWS_CODE_COUNT));
 
   const userPrompt = [
     marketBlock,

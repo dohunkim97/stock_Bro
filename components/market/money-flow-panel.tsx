@@ -1,5 +1,6 @@
 import { formatWon } from "@/lib/format";
 import { weekdayLabel } from "@/lib/dates";
+import { RankBadge } from "./rank-badge";
 import type { ThemeMoneyFlowByDay } from "@/lib/money-flow";
 
 function formatDayHeader(iso: string): string {
@@ -10,6 +11,12 @@ function formatDayHeader(iso: string): string {
 function cell(value: number): string {
   return value > 0 ? formatWon(value) : "-";
 }
+
+// 패딩만으로 셀 높이를 맞추면 뱃지·칩처럼 셀마다 다른 요소의 미세한
+// 라인하이트 차이가 10줄 누적되면서 짝을 이루는 MoneyFlowStocksPanel과
+// 아래쪽 줄이 몇 px씩 어긋난다 — 그래서 이 값으로 두 패널의 모든 행 높이를
+// 고정해서 절대 어긋나지 않게 한다.
+const ROW_HEIGHT = 38;
 
 export function MoneyFlowPanel({
   days,
@@ -25,7 +32,11 @@ export function MoneyFlowPanel({
   // reversed the same way to stay aligned with the reversed day columns.
   const displayDays = [...days].reverse();
   const displayThemes = themes.map((t) => ({ ...t, dailyTotals: [...t.dailyTotals].reverse() }));
-  const cols = `1.2fr repeat(${displayDays.length}, 1fr) 1.1fr`;
+  // 테마명 칸은 max-content로 — 1.2fr처럼 비율로 두면 "반도체 팹 물류자동화"
+  // 같은 긴 이름이 칸 안에서 줄바꿈되고, 그러면 그 아래 순위들이 다 밀려서
+  // 짝을 이루는 MoneyFlowStocksPanel과 줄이 어긋난다. 넘치면 아래 overflowX:auto
+  // 로 패널 전체가 가로 스크롤된다.
+  const cols = `max-content repeat(${displayDays.length}, 1fr) 1.1fr`;
 
   return (
     <section
@@ -82,27 +93,12 @@ function ThemeRow({ theme, rank }: { theme: ThemeMoneyFlowByDay; rank: number })
           display: "flex",
           alignItems: "center",
           gap: 8,
-          padding: "10px 0",
+          height: ROW_HEIGHT,
           borderTop: "1px solid var(--border)",
+          whiteSpace: "nowrap",
         }}
       >
-        <span
-          style={{
-            flexShrink: 0,
-            width: 18,
-            height: 18,
-            borderRadius: 5,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 10,
-            fontWeight: 700,
-            background: rank === 0 ? "var(--accent)" : "var(--panel2)",
-            color: rank === 0 ? "#0a0d13" : "var(--dim)",
-          }}
-        >
-          {rank + 1}
-        </span>
+        <RankBadge rank={rank + 1} />
         {theme.name}
       </div>
       {theme.dailyTotals.map((v, i) => (
@@ -111,8 +107,10 @@ function ThemeRow({ theme, rank }: { theme: ThemeMoneyFlowByDay; rank: number })
           style={{
             fontSize: 10.5,
             whiteSpace: "nowrap",
-            textAlign: "right",
-            padding: "10px 0",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            height: ROW_HEIGHT,
             borderTop: "1px solid var(--border)",
             color: v > 0 ? "var(--text)" : "var(--faint)",
           }}
@@ -125,8 +123,10 @@ function ThemeRow({ theme, rank }: { theme: ThemeMoneyFlowByDay; rank: number })
           fontSize: 11.5,
           fontWeight: 700,
           whiteSpace: "nowrap",
-          textAlign: "right",
-          padding: "10px 0",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          height: ROW_HEIGHT,
           borderTop: "1px solid var(--border)",
           color: "var(--accent)",
         }}

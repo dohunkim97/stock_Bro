@@ -1,11 +1,15 @@
-import { getLatestMoneyFlowTake } from "@/lib/money-flow-take";
+import Link from "next/link";
+import { getLatestMoneyFlowTake, parseMoneyFlowCandidates } from "@/lib/money-flow-take";
 import { renderBold } from "@/components/ui/rich-text";
+import { RankBadge } from "./rank-badge";
 
 // Self-contained like WeeklyPredictionPanel — reads whatever the latest
 // sync generated (lib/sync-runner.ts), not scoped to the date being browsed.
 export async function MoneyFlowTakePanel() {
   const take = await getLatestMoneyFlowTake();
   if (!take) return null;
+
+  const candidates = parseMoneyFlowCandidates(take.candidates);
 
   return (
     <section
@@ -46,9 +50,57 @@ export async function MoneyFlowTakePanel() {
         </span>
       </div>
 
-      <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.75, color: "var(--text)", maxWidth: 900 }}>
-        {renderBold(take.summary)}
-      </p>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: candidates.length > 0 ? "1fr 1fr" : "1fr",
+          gap: 16,
+        }}
+      >
+        <div
+          style={{
+            padding: "14px 16px",
+            background: "var(--panel)",
+            border: "1px solid var(--border)",
+            borderRadius: 10,
+          }}
+        >
+          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>설명</div>
+          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.7, color: "var(--text)" }}>{renderBold(take.summary)}</p>
+        </div>
+
+        {candidates.length > 0 && (
+          <div
+            style={{
+              padding: "14px 16px",
+              background: "var(--panel)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>추천 종목</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {candidates.map((c, i) => (
+                <Link
+                  key={c.name}
+                  href={c.code ? `/stock?code=${c.code}` : "/stock"}
+                  className="hover-accent-border"
+                  style={{ display: "flex", alignItems: "baseline", gap: 6, fontSize: 13, lineHeight: 1.55 }}
+                >
+                  <RankBadge rank={i + 1} />
+                  <span>
+                    <span style={{ fontWeight: 700, marginRight: 5 }}>{c.name}</span>
+                    <span style={{ color: "var(--text)" }}>{renderBold(c.reasoning)}</span>
+                    {c.chartNote && (
+                      <span style={{ color: "var(--faint)", fontSize: 11.5, marginLeft: 6 }}>· 차트: {c.chartNote}</span>
+                    )}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </section>
   );
 }

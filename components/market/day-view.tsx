@@ -75,8 +75,10 @@ export async function DayView({
     })),
     (e) => e.sector
   );
-  const moneyFlowThemes = rankMoneyFlowByDay(moneyFlowThemedEntries, moneyFlowDays);
-  const moneyFlowStockGroups = rankMoneyFlowStocks(moneyFlowThemedEntries, moneyFlowDays, 6, 6);
+  // 1~10위까지 — ThemeNetFlow 쪽(아래)과 동일한 개수로 맞춰서 두 자금흐름
+  // 섹션이 서로 비슷한 스케일로 보이도록.
+  const moneyFlowThemes = rankMoneyFlowByDay(moneyFlowThemedEntries, moneyFlowDays, 10);
+  const moneyFlowStockGroups = rankMoneyFlowStocks(moneyFlowThemedEntries, moneyFlowDays, 10, 6);
 
   // Same staleness problem as moneyFlowThemedEntries above, for ThemeNetFlow
   // (외국인+기관 순매수) instead of ThemeDailyFlow (거래대금/등락률) — a
@@ -93,7 +95,10 @@ export async function DayView({
     })),
     (e) => e.theme
   );
-  const netFlowRank = rankThemeNetFlow(netFlowThemedEntries, 5, 6);
+  // 5개씩만 보여주면 태양광처럼 순매수 상위권인 테마 말고는 대부분 잘려나가서
+  // (실제로 이 window엔 순매수 18개/순매도 27개 테마가 있다) 10개씩으로 늘려
+  // 다양성을 확보한다.
+  const netFlowRank = rankThemeNetFlow(netFlowThemedEntries, 10, 6);
 
   const todayEntries = dedupeByStock(
     [...gainerEntries, ...loserEntries, ...volumeEntries].map((e) => ({
@@ -158,12 +163,20 @@ export async function DayView({
         }
       />
 
-      {/* 자금 흐름 2x2 — [시장 관심 상위 테마|테마별 종목] 위, [순매수·순매도 상위|그 종목] 아래.
-          종목 칸(오른쪽)에 더 많은 종목을 보여주기 위해 왼쪽(데이터 표)보다 넓게 배분.
-          alignItems: stretch로 각 행 안의 두 칸 높이를 서로 맞춤. */}
+      {/* 자금 흐름 — [시장 관심 상위 테마|테마별 종목] 위, [순매수·순매도 상위|그 종목] 아래.
+          종목 칸(오른쪽)엔 종목 칩이 원래 넓게 필요해서 왼쪽(데이터 표)보다 넓게 배분.
+          alignItems: stretch로 각 행 안의 두 칸 높이를 서로 맞춤. 두 줄을 별도 그리드로
+          나눈 이유: 순매수·순매도 상위 테마는 칩이 없어 내용이 훨씬 좁아서, 같은 0.8fr을
+          주면 가로 스크롤이 생긴다 — 그 줄만 왼쪽 비중을 높여 스크롤 없이 들어가게 했다. */}
       <div style={{ display: "grid", gridTemplateColumns: "0.8fr 1.2fr", gap: 20, alignItems: "stretch" }}>
         <MoneyFlowPanel days={moneyFlowDays} themes={moneyFlowThemes} />
         <MoneyFlowStocksPanel themes={moneyFlowStockGroups} />
+      </div>
+      {/* 왼쪽은 max-content로 표 내용 폭에 딱 맞춰 카드가 늘어나고(빈 여백 없이),
+          남는 공간은 전부 오른쪽(1fr)이 가져간다 — 설명 문단에 maxWidth를 줘서
+          이 계산을 표 폭이 주도하게 만들었다(그 문단 자체가 원래 한 줄 폭으로
+          치면 표보다 넓어서, 안 그러면 카드가 쓸데없이 넓어진다). */}
+      <div style={{ display: "grid", gridTemplateColumns: "max-content 1fr", gap: 20, alignItems: "stretch" }}>
         <ThemeNetFlowPanel days={moneyFlowDays.length} buying={netFlowRank.buying} selling={netFlowRank.selling} />
         <ThemeNetFlowStocksPanel buying={netFlowRank.buying} selling={netFlowRank.selling} />
       </div>
