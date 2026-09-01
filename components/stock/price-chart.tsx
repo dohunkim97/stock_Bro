@@ -36,24 +36,33 @@ type HoverState = { info: HoverInfo; x: number; y: number };
 
 type Role = "support" | "resistance";
 
-type PickedLevel = { level: SupportResistanceLevel; role: Role; isKey: boolean };
+type PickedLevel = { level: SupportResistanceLevel; role: Role; isKey: boolean; labelIndex: number; color: string };
 
-type LevelSummary = {
-  role: Role;
-  price: number;
-  touches: number;
-  color: string;
-  isKey: boolean;
-  text: string;
-};
+type LevelLabel = { id: string; y: number; text: string; color: string };
 
 type TouchPoint = { id: string; x: number; y: number; index: number; color: string };
 
-const MOVING_AVERAGES: { period: number; color: string }[] = [
-  { period: 5, color: "#f59e0b" },
-  { period: 60, color: "#22c55e" },
-  { period: 200, color: "#9ca3af" },
-];
+type MaConfig = { period: number; color: string };
+
+const MA_COLOR_PALETTE = ["#f59e0b", "#22c55e", "#9ca3af", "#a78bfa", "#f472b6", "#22d3ee", "#fb7185", "#84cc16"];
+const DEFAULT_MA_PERIODS = [5, 60, 200];
+const MA_STORAGE_KEY = "golgoo-chart-ma-periods";
+
+function defaultMaList(): MaConfig[] {
+  return DEFAULT_MA_PERIODS.map((period, i) => ({ period, color: MA_COLOR_PALETTE[i % MA_COLOR_PALETTE.length] }));
+}
+
+// 500%(5배) 이상 전일 대비 거래량 급증 — lib/technical-signals.ts의 "거래량
+// 폭증" 시그널과 같은 기준. 그쪽은 "오늘"만 판단하지만, 여기선 지지/저항
+// 터치 지점처럼 화면에 보이는 기간 전체에서 몇 번이나 있었는지 다 표시한다.
+function findVolumeSpikes(candles: Candle[]): string[] {
+  const dates: string[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    const prev = candles[i - 1].volume;
+    if (prev > 0 && candles[i].volume / prev >= 5) dates.push(candles[i].date);
+  }
+  return dates;
+}
 
 // 국내 주가 표기 관례("71,200") — lightweight-charts 기본 포맷은 콤마를 안
 // 찍어줘서 커스텀 포매터로 교체한다. 캔들/이동평균선 시리즈 전부 같은
@@ -112,7 +121,9 @@ function computeSMA(candles: Candle[], period: number): { time: string; value: n
 // 고르고, 그다음으로 터치가 많아 신뢰도 높은 레벨 하나를 더 얹는다(최대 3개).
 // 역할(지지/저항)도 레벨 자체의 과거 타입이 아니라 "지금 가격보다 위냐
 // 아래냐"로 다시 정한다 — 저항이 뚫리면 지지가 되고 그 반대도 마찬가지라는
-// 실제 지지/저항 개념과 일치시키기 위함.
+// 실제 지지/저항 개념과 일치시키기 위함. labelIndex는 지지/저항 각각
+// 독립적으로 매기는 번호("1번 저항선", "2번 저항선", "1번 지지선"…) — 가격이
+// 높은 쪽이 1번.
 function pickRelevantLevels(levels: SupportResistanceLevel[], currentPrice: number | null): PickedLevel[] {
   if (levels.length === 0) return [];
 
@@ -146,7 +157,15 @@ function pickRelevantLevels(levels: SupportResistanceLevel[], currentPrice: numb
   for (let i = 1; i < picked.length; i++) {
     if (picked[i].level.touches > picked[keyIdx].level.touches) keyIdx = i;
   }
-  return picked.map((p, i) => ({ ...p, isKey: i === keyIdx }));
+
+  const withIndex: PickedLevel[] = picked.map((p, i) => ({ ...p, isKey: i === keyIdx, labelIndex: 0, color: "" }));
+  for (const role of ["support", "resistance"] as const) {
+    const group = withIndex.filter((p) => p.role === role).sort((a, b) => b.level.price - a.level.price);
+    group.forEach((p, i) => {
+      p.labelIndex = i + 1;
+    });
+  }
+  return withIndex;
 }
 
 function roleLabel(role: Role): string {
@@ -157,8 +176,8 @@ function roleLabel(role: Role): string {
 // 저항"이라는 규칙을 그대로 문구로 옮긴다.
 function strengthLabel(role: Role, touches: number): string {
   const word = role === "support" ? "지지" : "저항";
-  if (touches >= 3) return `강력한 ${word}받는중`;
-  if (touches === 2) return `${word} 확인 중`;
+  if (touches >= 3) return `강력${word}`;
+  if (touches === 2) return `${word} 확인`;
   return `약한 ${word}`;
 }
 
@@ -193,6 +212,9 @@ function cssVar(name: string, fallback: string): string {
   return v || fallback;
 }
 
+const CHART_HEIGHT = 360;
+const VOLUME_PANE_HEIGHT = 90;
+
 // A candlestick+volume chart is a canvas-driven widget with imperative
 // setup/teardown (lightweight-charts owns its own render loop) — doesn't
 // fit the server-component data flow the rest of the stock page uses, so
@@ -201,20 +223,74 @@ export function PriceChart({ code }: { code: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeMarkersApiRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const markersApiRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const latestDateRef = useRef<string | null>(null);
   const latestCloseRef = useRef<number | null>(null);
   const pickedLevelsRef = useRef<PickedLevel[]>([]);
+  const candlesRef = useRef<Candle[]>([]);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const [period, setPeriod] = useState<ChartPeriod>("D");
   const [loading, setLoading] = useState(true);
   const [empty, setEmpty] = useState(false);
   const [hover, setHover] = useState<HoverState | null>(null);
   const [chartTick, setChartTick] = useState(0);
-  const [levelSummaries, setLevelSummaries] = useState<LevelSummary[]>([]);
+  const [levelLabels, setLevelLabels] = useState<LevelLabel[]>([]);
   const [touchPoints, setTouchPoints] = useState<TouchPoint[]>([]);
-  const recomputeTouchPointsRef = useRef<() => void>(() => {});
+  const recomputeOverlayRef = useRef<() => void>(() => {});
+
+  // 개인 이동평균선 설정 — 기본은 5/60/200일이고, 사용자가 추가/삭제하면
+  // 브라우저에 저장해서 다음에 봐도 유지된다(계정/서버 저장 아님, 이 기기
+  // 이 브라우저 한정).
+  const [maList, setMaList] = useState<MaConfig[]>(defaultMaList);
+  const [maEditing, setMaEditing] = useState(false);
+  const [maInput, setMaInput] = useState("");
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(MA_STORAGE_KEY);
+      if (!raw) return;
+      const saved: unknown = JSON.parse(raw);
+      if (!Array.isArray(saved)) return;
+      const periods = saved.filter((p): p is number => typeof p === "number" && p > 0 && p <= 999);
+      if (periods.length === 0) return;
+      setMaList(periods.map((period, i) => ({ period, color: MA_COLOR_PALETTE[i % MA_COLOR_PALETTE.length] })));
+    } catch {
+      // localStorage unavailable (private mode 등) — 기본값 그대로 사용
+    }
+  }, []);
+
+  function persistMaList(list: MaConfig[]) {
+    try {
+      window.localStorage.setItem(MA_STORAGE_KEY, JSON.stringify(list.map((m) => m.period)));
+    } catch {
+      // best-effort — 저장 안 되면 이번 방문에서만 적용됨
+    }
+  }
+
+  function addMaPeriod() {
+    const n = Number(maInput);
+    if (!Number.isInteger(n) || n <= 0 || n > 999 || maList.some((m) => m.period === n)) {
+      setMaInput("");
+      setMaEditing(false);
+      return;
+    }
+    const next = [...maList, { period: n, color: MA_COLOR_PALETTE[maList.length % MA_COLOR_PALETTE.length] }].sort(
+      (a, b) => a.period - b.period
+    );
+    setMaList(next);
+    persistMaList(next);
+    setMaInput("");
+    setMaEditing(false);
+  }
+
+  function removeMaPeriod(period: number) {
+    const next = maList.filter((m) => m.period !== period);
+    setMaList(next);
+    persistMaList(next);
+  }
+
   // 골구 근거 토글 상태 + 시그널/지지·저항 데이터 — GolgooPanel이 불러오는
   // 대로 여기로 흘러들어와서, 켜져 있으면 아래 overlay effect가 차트 위에
   // 그려준다. 이 페이지에 GolgooProvider가 없으면 useGolgoo가 던지므로,
@@ -235,39 +311,49 @@ export function PriceChart({ code }: { code: string }) {
   const overlaySignals = golgooOpen ? golgooSignals : chartSignals;
   const overlayLevels = golgooOpen ? golgooLevels : chartLevels;
 
-  // 지지/저항선에 실제로 찍힌 터치 지점(빈 동그라미)의 화면 좌표를 다시
-  // 계산한다 — 팬/줌/리사이즈될 때마다 다시 불러야 해서 ref로 최신 버전을
-  // 항상 들고 있는다. 번호는 과거→최근 순으로(1회, 2회, …) 매기고, 화면이
-  // 붐비지 않게 레벨당 최근 6개까지만 그린다(번호 자체는 실제 누적 횟수를
-  // 그대로 유지 — 6개 넘게 터치된 레벨이면 "3회, 4회, 5회…"처럼 이어진다).
-  function recomputeTouchPoints() {
+  // 지지/저항선의 왼쪽 라벨(글자)과 터치 지점(빈 동그라미)의 화면 좌표를
+  // 다시 계산한다 — 팬/줌/리사이즈될 때마다 다시 불러야 해서 ref로 최신
+  // 버전을 항상 들고 있는다. 터치 번호는 과거→최근 순으로(1회, 2회, …)
+  // 매기고, 화면이 붐비지 않게 레벨당 최근 6개까지만 그린다(번호 자체는
+  // 실제 누적 횟수를 유지 — 6개 넘게 터치된 레벨이면 "3,4,5회…"로 이어짐).
+  function recomputeOverlay() {
     const chart = chartRef.current;
     const series = candleSeriesRef.current;
     const picked = pickedLevelsRef.current;
     if (!chart || !series || !overlayOpen || picked.length === 0) {
       setTouchPoints([]);
+      setLevelLabels([]);
       return;
     }
 
-    const upColor = cssVar("--up", "#f2434f");
-    const downColor = cssVar("--down", "#3b82f6");
-
     const points: TouchPoint[] = [];
+    const labels: LevelLabel[] = [];
+
     for (const p of picked) {
-      const color = p.role === "support" ? downColor : upColor;
+      const y = series.priceToCoordinate(p.level.price);
+      if (y !== null) {
+        labels.push({
+          id: `${p.role}-${p.level.price}`,
+          y: y as number,
+          text: `${p.labelIndex}번 ${roleLabel(p.role)} ${priceFormatter(p.level.price)}원 (${strengthLabel(p.role, p.level.touches)})`,
+          color: p.color,
+        });
+      }
+
       const chronological = [...p.level.touchDates].sort(); // touchDates는 최신순 저장이라 오래된 순으로 뒤집는다.
       const displayed = chronological.slice(-6);
       const startIndex = chronological.length - displayed.length + 1;
       displayed.forEach((date, i) => {
         const x = chart.timeScale().timeToCoordinate(date as Time);
-        const y = series.priceToCoordinate(p.level.price);
         if (x === null || y === null) return;
-        points.push({ id: `${p.level.price}-${date}`, x: x as number, y: y as number, index: startIndex + i, color });
+        points.push({ id: `${p.level.price}-${date}`, x: x as number, y: y as number, index: startIndex + i, color: p.color });
       });
     }
+
     setTouchPoints(points);
+    setLevelLabels(labels);
   }
-  recomputeTouchPointsRef.current = recomputeTouchPoints;
+  recomputeOverlayRef.current = recomputeOverlay;
 
   useEffect(() => {
     let cancelled = false;
@@ -280,6 +366,7 @@ export function PriceChart({ code }: { code: string }) {
       .then((data: { candles?: Candle[] }) => {
         if (cancelled || !containerRef.current) return;
         const candles = data.candles ?? [];
+        candlesRef.current = candles;
         if (candles.length === 0) {
           setEmpty(true);
           setLoading(false);
@@ -292,6 +379,7 @@ export function PriceChart({ code }: { code: string }) {
         chartRef.current?.remove();
         candleSeriesRef.current = null;
         markersApiRef.current = null;
+        volumeMarkersApiRef.current = null;
         priceLinesRef.current = [];
 
         const upColor = cssVar("--up", "#f2434f");
@@ -304,9 +392,15 @@ export function PriceChart({ code }: { code: string }) {
         // it creates its canvases at 0 width (confirmed via a real headless
         // render: canvases existed but measured 0px wide). autoSize wires up
         // a ResizeObserver on the container so it fills the same 100%-width,
-        // 360px-tall box the outer div already reserves.
+        // CHART_HEIGHT-tall box the outer div already reserves — that total
+        // stays fixed; only the split between the price/volume panes below
+        // is user-resizable (layout.panes.enableResize, on by default).
         const chart = createChart(containerRef.current, {
-          layout: { background: { color: "transparent" }, textColor },
+          layout: {
+            background: { color: "transparent" },
+            textColor,
+            panes: { enableResize: true, separatorColor: borderColor, separatorHoverColor: cssVar("--accent-soft", "rgba(224,170,62,0.14)") },
+          },
           grid: { vertLines: { color: borderColor }, horzLines: { color: borderColor } },
           timeScale: {
             borderColor,
@@ -353,7 +447,7 @@ export function PriceChart({ code }: { code: string }) {
         // has data from its own window onward (e.g. no 120일선 value for the
         // first 119 bars), so this is left sparse rather than backfilled.
         const maByDate = new Map<string, Record<number, number | undefined>>();
-        for (const ma of MOVING_AVERAGES) {
+        for (const ma of maList) {
           const points = computeSMA(candles, ma.period);
           if (points.length === 0) continue;
           const maSeries = chart.addSeries(LineSeries, {
@@ -370,23 +464,33 @@ export function PriceChart({ code }: { code: string }) {
           }
         }
 
-        const volumeSeries = chart.addSeries(HistogramSeries, {
-          priceFormat: { type: "volume" },
-          priceScaleId: "volume",
-        });
-        volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+        // 거래량은 캔들과 같은 판(pane)에 눌러 담던 것에서 아예 별도 판으로
+        // 분리 — layout.panes.enableResize 덕에 둘 사이 경계를 마우스로
+        // 드래그해서 비율을 바꿀 수 있다(전체 차트 높이는 CHART_HEIGHT로 고정).
+        const volumeSeries = chart.addSeries(
+          HistogramSeries,
+          { priceFormat: { type: "volume" } },
+          1
+        );
         volumeSeries.setData(
           candles.map((c) => ({ time: c.date, value: c.volume, color: c.close >= c.open ? upColor : downColor }))
         );
+        volumeMarkersApiRef.current = createSeriesMarkers(volumeSeries, []);
+
+        const panes = chart.panes();
+        panes[0]?.setHeight(CHART_HEIGHT - VOLUME_PANE_HEIGHT);
+        panes[1]?.setHeight(VOLUME_PANE_HEIGHT);
 
         chart.timeScale().fitContent();
 
-        // 팬/줌으로 시간축이 바뀌면 터치 지점(동그라미)의 화면 좌표도 다시
-        // 계산해야 한다 — ref로 항상 최신 recomputeTouchPoints를 부른다.
-        chart.timeScale().subscribeVisibleLogicalRangeChange(() => recomputeTouchPointsRef.current());
+        // 팬/줌으로 시간축이 바뀌면 라벨/터치 지점의 화면 좌표도 다시
+        // 계산해야 한다 — ref로 항상 최신 recomputeOverlay를 부른다.
+        chart.timeScale().subscribeVisibleLogicalRangeChange(() => recomputeOverlayRef.current());
 
         // 날짜/종가/거래량/이동평균값을 보여주는 호버 범례 — 커서가 실제로 봉 위에
-        //있을 때만 뜨고, 벗어나면 사라짐.
+        //있을 때만 뜨고, 벗어나면 사라짐. 캔들 판(0번)과 거래량 판(1번) 둘 다에서
+        // 뜨는데, 거래량 판 위에서는 point.y가 그 판 자체 기준 좌표라 전체 컨테이너
+        // 기준으로 보정해줘야 박스가 엉뚱한 위치(캔들 판 쪽)에 뜨지 않는다.
         const byDate = new Map(candles.map((c, i) => [c.date, { c, i }] as const));
         const hoverForDate = (date: string): HoverInfo | null => {
           const found = byDate.get(date);
@@ -408,7 +512,16 @@ export function PriceChart({ code }: { code: string }) {
           }
           const date = timeToDateStr(param.time);
           const info = date ? hoverForDate(date) : null;
-          setHover(info ? { info, x: param.point.x, y: param.point.y } : null);
+          if (!info) {
+            setHover(null);
+            return;
+          }
+          let y: number = param.point.y;
+          if (param.paneIndex === 1 && containerRef.current) {
+            const paneEl = chartRef.current?.panes()[1]?.getHTMLElement();
+            if (paneEl) y += paneEl.getBoundingClientRect().top - containerRef.current.getBoundingClientRect().top;
+          }
+          setHover({ info, x: param.point.x, y });
         });
 
         // autoSize keeps the canvas itself full-width on resize, but doesn't
@@ -423,7 +536,7 @@ export function PriceChart({ code }: { code: string }) {
           if (rafId !== null) cancelAnimationFrame(rafId);
           rafId = requestAnimationFrame(() => {
             chartRef.current?.timeScale().fitContent();
-            recomputeTouchPointsRef.current();
+            recomputeOverlayRef.current();
           });
         });
         resizeObserver.observe(containerRef.current);
@@ -431,7 +544,7 @@ export function PriceChart({ code }: { code: string }) {
 
         setLoading(false);
         setChartTick((v) => v + 1); // lets the overlay effect below (re)draw on a fresh series
-        recomputeTouchPointsRef.current();
+        recomputeOverlayRef.current();
       })
       .catch(() => {
         if (!cancelled) {
@@ -443,7 +556,7 @@ export function PriceChart({ code }: { code: string }) {
     return () => {
       cancelled = true;
     };
-  }, [code, period]);
+  }, [code, period, maList]);
 
   // Unmount cleanup only — separate from the fetch effect above so a period
   // switch doesn't tear down and immediately recreate on every keystroke of
@@ -456,18 +569,21 @@ export function PriceChart({ code }: { code: string }) {
       chartRef.current = null;
       candleSeriesRef.current = null;
       markersApiRef.current = null;
+      volumeMarkersApiRef.current = null;
       priceLinesRef.current = [];
     };
   }, []);
 
   // 골구 근거 또는 골구 차트분석 둘 중 하나라도 켜져 있으면(overlayOpen)
   // 지지/저항 레벨은 실선 가격선으로, 오늘 활성화된 시그널은 최근 봉 위에
-  // 동그라미 마커로 그린다 — 둘 다 꺼지면 지운다. chartTick은 기간(D/W/M)
-  // 전환으로 차트가 통째로 다시 만들어졌을 때도 이 effect가 새 시리즈에
-  // 다시 그리도록 하는 트리거.
+  // 동그라미 마커로, 전일 대비 거래량 500%+ 급증은 거래량 판에 동그라미로
+  // 그린다 — 둘 다 꺼지면 지운다. chartTick은 기간(D/W/M) 전환으로 차트가
+  // 통째로 다시 만들어졌을 때도 이 effect가 새 시리즈에 다시 그리도록
+  // 하는 트리거.
   useEffect(() => {
     const series = candleSeriesRef.current;
     const markersApi = markersApiRef.current;
+    const volumeMarkersApi = volumeMarkersApiRef.current;
     if (!series || !markersApi) return;
 
     for (const line of priceLinesRef.current) {
@@ -481,8 +597,9 @@ export function PriceChart({ code }: { code: string }) {
 
     if (!overlayOpen) {
       markersApi.setMarkers([]);
+      volumeMarkersApi?.setMarkers([]);
       pickedLevelsRef.current = [];
-      setLevelSummaries([]);
+      setLevelLabels([]);
       setTouchPoints([]);
       return;
     }
@@ -490,29 +607,23 @@ export function PriceChart({ code }: { code: string }) {
     const upColor = cssVar("--up", "#f2434f");
     const downColor = cssVar("--down", "#3b82f6");
     const dimColor = cssVar("--dim", "#8a92a3");
-    const roleColor = (role: Role) => (role === "support" ? downColor : upColor);
+    const accentColor = cssVar("--accent", "#e0aa3e"); // 저항선 = 노랑/골드
+    const textColor = cssVar("--text", "#e7eaf0"); // 지지선 = 다크모드 흰색, 라이트모드 검정
+    const roleColor = (role: Role) => (role === "resistance" ? accentColor : textColor);
 
-    const picked = overlayLevels ? pickRelevantLevels(overlayLevels, latestCloseRef.current) : [];
+    const picked = (overlayLevels ? pickRelevantLevels(overlayLevels, latestCloseRef.current) : []).map((p) => ({
+      ...p,
+      color: roleColor(p.role),
+    }));
     pickedLevelsRef.current = picked;
 
-    setLevelSummaries(
-      picked.map((p) => ({
-        role: p.role,
-        price: p.level.price,
-        touches: p.level.touches,
-        color: roleColor(p.role),
-        isKey: p.isKey,
-        text: `${roleLabel(p.role)} ${priceFormatter(p.level.price)}원 · ${p.level.touches}회 터치 · ${strengthLabel(p.role, p.level.touches)}`,
-      }))
-    );
-
-    // 라인 자체는 실선만 — 라벨은 축 옆에 겹쳐 쌓이는 대신 차트 위쪽
-    // 요약 줄(levelSummaries 렌더링)에서 보여준다.
+    // 라인 자체는 실선만 — 라벨은 축 옆에 겹쳐 쌓이는 대신 차트 왼쪽 위,
+    // 그 라인 높이에 바로 글자로만 적는다(칸/테두리 없이).
     for (const p of picked) {
       try {
         const line = series.createPriceLine({
           price: p.level.price,
-          color: roleColor(p.role),
+          color: p.color,
           lineWidth: p.isKey ? 3 : 2,
           lineStyle: LineStyle.Solid,
           axisLabelVisible: false,
@@ -542,7 +653,22 @@ export function PriceChart({ code }: { code: string }) {
 
     markers.sort((a, b) => String(a.time).localeCompare(String(b.time)));
     markersApi.setMarkers(markers);
-    recomputeTouchPoints();
+
+    // 전일 대비 거래량 500%+ 급증한 날 전부 거래량 판에 동그라미 체크.
+    if (volumeMarkersApi) {
+      const spikeDates = findVolumeSpikes(candlesRef.current);
+      const volMarkers: SeriesMarker<Time>[] = spikeDates.map((date) => ({
+        time: date as Time,
+        position: "aboveBar",
+        shape: "circle",
+        color: accentColor,
+        text: "거래량 500%+",
+        id: `vol-spike-${date}`,
+      }));
+      volumeMarkersApi.setMarkers(volMarkers);
+    }
+
+    recomputeOverlay();
   }, [overlayOpen, overlaySignals, overlayLevels, chartTick]);
 
   return (
@@ -554,20 +680,111 @@ export function PriceChart({ code }: { code: string }) {
           justifyContent: "space-between",
           padding: "14px 18px",
           borderBottom: "1px solid var(--border)",
+          flexWrap: "wrap",
+          gap: 8,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
           <span style={{ fontWeight: 700, fontSize: 15 }}>차트</span>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            {MOVING_AVERAGES.map((ma) => (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {maList.map((ma) => (
               <span
                 key={ma.period}
-                style={{ display: "flex", alignItems: "center", gap: 4, fontFamily: "var(--mono)", fontSize: 11, color: ma.color, fontWeight: 700 }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  fontFamily: "var(--mono)",
+                  fontSize: 11,
+                  color: ma.color,
+                  fontWeight: 700,
+                  background: "var(--panel2)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 20,
+                  padding: "3px 6px 3px 8px",
+                }}
               >
                 <span style={{ width: 7, height: 7, borderRadius: "50%", background: ma.color }} />
                 {ma.period}
+                <button
+                  onClick={() => removeMaPeriod(ma.period)}
+                  title="이동평균선 삭제"
+                  style={{
+                    border: "none",
+                    background: "none",
+                    color: "var(--faint)",
+                    cursor: "pointer",
+                    fontSize: 11,
+                    padding: 0,
+                    lineHeight: 1,
+                    marginLeft: 2,
+                  }}
+                >
+                  ✕
+                </button>
               </span>
             ))}
+            {maEditing ? (
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <input
+                  autoFocus
+                  type="number"
+                  min={1}
+                  max={999}
+                  value={maInput}
+                  onChange={(e) => setMaInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") addMaPeriod();
+                    if (e.key === "Escape") {
+                      setMaEditing(false);
+                      setMaInput("");
+                    }
+                  }}
+                  placeholder="일수"
+                  style={{
+                    width: 52,
+                    fontSize: 11,
+                    padding: "4px 6px",
+                    borderRadius: 6,
+                    border: "1px solid var(--border)",
+                    background: "var(--panel2)",
+                    color: "var(--text)",
+                  }}
+                />
+                <button
+                  onClick={addMaPeriod}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    padding: "4px 8px",
+                    borderRadius: 6,
+                    border: "none",
+                    background: "var(--accent)",
+                    color: "#0a0d13",
+                    cursor: "pointer",
+                  }}
+                >
+                  확인
+                </button>
+              </span>
+            ) : (
+              <button
+                onClick={() => setMaEditing(true)}
+                title="이동평균선 직접 추가"
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  padding: "4px 9px",
+                  borderRadius: 20,
+                  border: "1px dashed var(--border2)",
+                  background: "transparent",
+                  color: "var(--faint)",
+                  cursor: "pointer",
+                }}
+              >
+                + 이평선
+              </button>
+            )}
           </div>
         </div>
         <div style={{ display: "flex", gap: 2, background: "var(--panel2)", border: "1px solid var(--border)", borderRadius: 9, padding: 2 }}>
@@ -579,40 +796,33 @@ export function PriceChart({ code }: { code: string }) {
         </div>
       </div>
 
-      {levelSummaries.length > 0 && (
+      <div style={{ position: "relative", minHeight: CHART_HEIGHT }}>
         <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 5,
-            padding: "10px 18px",
-            borderBottom: "1px solid var(--border)",
-            background: "var(--panel2)",
-          }}
-        >
-          {levelSummaries.map((s) => (
-            <div key={`${s.role}-${s.price}`} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}>
-              <span
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                  background: s.color,
-                  flexShrink: 0,
-                  boxShadow: s.isKey ? `0 0 0 3px color-mix(in srgb, ${s.color} 25%, transparent)` : undefined,
-                }}
-              />
-              <span style={{ fontWeight: s.isKey ? 800 : 600, color: "var(--text)" }}>{s.text}</span>
-              {s.isKey && (
-                <span style={{ fontSize: 10, fontWeight: 700, color: s.color, fontFamily: "var(--mono)" }}>핵심</span>
-              )}
+          ref={containerRef}
+          style={{ width: "100%", height: CHART_HEIGHT, display: loading || empty ? "none" : "block" }}
+        />
+
+        {!loading &&
+          !empty &&
+          levelLabels.map((lb) => (
+            <div
+              key={lb.id}
+              style={{
+                position: "absolute",
+                left: 8,
+                top: lb.y - 8,
+                zIndex: 3,
+                pointerEvents: "none",
+                fontSize: 11,
+                fontWeight: 800,
+                color: lb.color,
+                textShadow: "0 1px 3px rgba(0,0,0,0.85), 0 0 6px rgba(0,0,0,0.6)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {lb.text}
             </div>
           ))}
-        </div>
-      )}
-
-      <div style={{ position: "relative", minHeight: 360 }}>
-        <div ref={containerRef} style={{ width: "100%", height: 360, display: loading || empty ? "none" : "block" }} />
 
         {!loading &&
           !empty &&
@@ -644,10 +854,11 @@ export function PriceChart({ code }: { code: string }) {
 
         {hover && !loading && !empty && (() => {
           const BOX_WIDTH = 172;
-          const BOX_HEIGHT = 26 * (3 + MOVING_AVERAGES.length) + 20;
+          const BOX_HEIGHT = 26 * (3 + maList.length) + 20;
           const containerWidth = containerRef.current?.clientWidth ?? 600;
+          const containerHeight = containerRef.current?.clientHeight ?? CHART_HEIGHT;
           const flipX = hover.x > containerWidth - BOX_WIDTH - 20;
-          const flipY = hover.y > 360 - BOX_HEIGHT - 20;
+          const flipY = hover.y > containerHeight - BOX_HEIGHT - 20;
           const info = hover.info;
           return (
             <div
@@ -687,7 +898,7 @@ export function PriceChart({ code }: { code: string }) {
                 <span style={{ color: "var(--faint)" }}>거래량</span>
                 <span style={{ fontWeight: 700 }}>{info.volume.toLocaleString()}</span>
               </div>
-              {MOVING_AVERAGES.map((ma) => {
+              {maList.map((ma) => {
                 const v = info.mas[ma.period];
                 return (
                   <div key={ma.period} style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
@@ -705,7 +916,7 @@ export function PriceChart({ code }: { code: string }) {
         {(loading || empty) && (
           <div
             style={{
-              height: 360,
+              height: CHART_HEIGHT,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
