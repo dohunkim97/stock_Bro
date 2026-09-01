@@ -34,22 +34,33 @@ type HoverInfo = {
 
 type HoverState = { info: HoverInfo; x: number; y: number };
 
-type StoryBox = {
-  id: string;
-  x: number;
-  y: number;
-  above: boolean;
-  stepNumber: number;
-  badgeLabel: string;
-  description: string;
+type Role = "support" | "resistance";
+
+type PickedLevel = { level: SupportResistanceLevel; role: Role; isKey: boolean };
+
+type LevelSummary = {
+  role: Role;
+  price: number;
+  touches: number;
   color: string;
+  isKey: boolean;
+  text: string;
 };
+
+type TouchPoint = { id: string; x: number; y: number; index: number; color: string };
 
 const MOVING_AVERAGES: { period: number; color: string }[] = [
   { period: 5, color: "#f59e0b" },
   { period: 60, color: "#22c55e" },
   { period: 200, color: "#9ca3af" },
 ];
+
+// 국내 주가 표기 관례("71,200") — lightweight-charts 기본 포맷은 콤마를 안
+// 찍어줘서 커스텀 포매터로 교체한다. 캔들/이동평균선 시리즈 전부 같은
+// 오른쪽 가격축을 공유하니 포맷도 통일해야 눈금이 어긋나 보이지 않는다.
+function priceFormatter(price: number): string {
+  return Math.round(price).toLocaleString();
+}
 
 // lightweight-charts' crosshair callback hands back Time in whatever shape
 // the series was given — for whole-day (non-intraday) series like ours that
@@ -95,6 +106,62 @@ function computeSMA(candles: Candle[], period: number): { time: string; value: n
   return points;
 }
 
+// 지지/저항은 "지금 가격 대비 어디에 있는지"가 핵심이라, 과거에 아무리 많이
+// 부딪힌 레벨이라도 지금 가격과 동떨어져 있으면 당장의 매수/매도 판단에는
+// 안 쓸모가 없다 — 현재가에 가장 가까운 지지선 1개 + 저항선 1개를 우선
+// 고르고, 그다음으로 터치가 많아 신뢰도 높은 레벨 하나를 더 얹는다(최대 3개).
+// 역할(지지/저항)도 레벨 자체의 과거 타입이 아니라 "지금 가격보다 위냐
+// 아래냐"로 다시 정한다 — 저항이 뚫리면 지지가 되고 그 반대도 마찬가지라는
+// 실제 지지/저항 개념과 일치시키기 위함.
+function pickRelevantLevels(levels: SupportResistanceLevel[], currentPrice: number | null): PickedLevel[] {
+  if (levels.length === 0) return [];
+
+  const withRole: { level: SupportResistanceLevel; role: Role }[] = levels.map((level) => ({
+    level,
+    role:
+      currentPrice === null
+        ? level.type === "support"
+          ? "support"
+          : "resistance"
+        : level.price > currentPrice
+          ? "resistance"
+          : "support",
+  }));
+
+  const supports = withRole.filter((x) => x.role === "support").sort((a, b) => b.level.price - a.level.price);
+  const resistances = withRole.filter((x) => x.role === "resistance").sort((a, b) => a.level.price - b.level.price);
+
+  const picked: { level: SupportResistanceLevel; role: Role }[] = [];
+  if (supports[0]) picked.push(supports[0]);
+  if (resistances[0]) picked.push(resistances[0]);
+
+  const secondCandidates = [supports[1], resistances[1]].filter(
+    (x): x is { level: SupportResistanceLevel; role: Role } => !!x
+  );
+  secondCandidates.sort((a, b) => b.level.touches - a.level.touches);
+  if (secondCandidates[0]) picked.push(secondCandidates[0]);
+
+  if (picked.length === 0) return [];
+  let keyIdx = 0;
+  for (let i = 1; i < picked.length; i++) {
+    if (picked[i].level.touches > picked[keyIdx].level.touches) keyIdx = i;
+  }
+  return picked.map((p, i) => ({ ...p, isKey: i === keyIdx }));
+}
+
+function roleLabel(role: Role): string {
+  return role === "support" ? "지지선" : "저항선";
+}
+
+// "많이 지지 받을수록 강한 거고, 저항도 많이 부딪히고 못 뚫으면 강력한
+// 저항"이라는 규칙을 그대로 문구로 옮긴다.
+function strengthLabel(role: Role, touches: number): string {
+  const word = role === "support" ? "지지" : "저항";
+  if (touches >= 3) return `강력한 ${word}받는중`;
+  if (touches === 2) return `${word} 확인 중`;
+  return `약한 ${word}`;
+}
+
 const panelStyle: React.CSSProperties = {
   background: "var(--panel)",
   border: "1px solid var(--border)",
@@ -138,14 +205,16 @@ export function PriceChart({ code }: { code: string }) {
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const latestDateRef = useRef<string | null>(null);
   const latestCloseRef = useRef<number | null>(null);
+  const pickedLevelsRef = useRef<PickedLevel[]>([]);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const [period, setPeriod] = useState<ChartPeriod>("D");
   const [loading, setLoading] = useState(true);
   const [empty, setEmpty] = useState(false);
   const [hover, setHover] = useState<HoverState | null>(null);
   const [chartTick, setChartTick] = useState(0);
-  const [storyBoxes, setStoryBoxes] = useState<StoryBox[]>([]);
-  const recomputeStoryBoxesRef = useRef<() => void>(() => {});
+  const [levelSummaries, setLevelSummaries] = useState<LevelSummary[]>([]);
+  const [touchPoints, setTouchPoints] = useState<TouchPoint[]>([]);
+  const recomputeTouchPointsRef = useRef<() => void>(() => {});
   // 골구 근거 토글 상태 + 시그널/지지·저항 데이터 — GolgooPanel이 불러오는
   // 대로 여기로 흘러들어와서, 켜져 있으면 아래 overlay effect가 차트 위에
   // 그려준다. 이 페이지에 GolgooProvider가 없으면 useGolgoo가 던지므로,
@@ -158,57 +227,47 @@ export function PriceChart({ code }: { code: string }) {
     open: golgooOpen,
     signals: golgooSignals,
     levels: golgooLevels,
-    story: golgooStory,
     chartOpen,
     chartSignals,
     chartLevels,
-    chartStory,
   } = useGolgoo();
   const overlayOpen = golgooOpen || chartOpen;
   const overlaySignals = golgooOpen ? golgooSignals : chartSignals;
   const overlayLevels = golgooOpen ? golgooLevels : chartLevels;
-  const overlayStory = golgooOpen ? golgooStory : chartStory;
 
-  // ①②③ 콜아웃 박스를 차트 좌표로 다시 계산 — lightweight-charts 마커는
-  // 짧은 글자 하나만 붙일 수 있어서, 전체 설명(배지+description)은 이
-  // 함수가 계산한 x/y에 얹는 별도 HTML 오버레이(아래 storyBoxes 렌더링)로
-  // 보여준다. 리렌더마다 새로 만들어지는 함수라 overlayStory를 항상 최신
-  // 값으로 캡처하고, ref에 담아둬서 차트 생성 시점에 한 번만 거는 pan/zoom/
-  // resize 구독에서도 항상 최신 버전을 부를 수 있게 한다.
-  function recomputeStoryBoxes() {
+  // 지지/저항선에 실제로 찍힌 터치 지점(빈 동그라미)의 화면 좌표를 다시
+  // 계산한다 — 팬/줌/리사이즈될 때마다 다시 불러야 해서 ref로 최신 버전을
+  // 항상 들고 있는다. 번호는 과거→최근 순으로(1회, 2회, …) 매기고, 화면이
+  // 붐비지 않게 레벨당 최근 6개까지만 그린다(번호 자체는 실제 누적 횟수를
+  // 그대로 유지 — 6개 넘게 터치된 레벨이면 "3회, 4회, 5회…"처럼 이어진다).
+  function recomputeTouchPoints() {
     const chart = chartRef.current;
     const series = candleSeriesRef.current;
-    if (!chart || !series || !overlayOpen || !overlayStory || overlayStory.length === 0) {
-      setStoryBoxes([]);
+    const picked = pickedLevelsRef.current;
+    if (!chart || !series || !overlayOpen || picked.length === 0) {
+      setTouchPoints([]);
       return;
     }
 
     const upColor = cssVar("--up", "#f2434f");
     const downColor = cssVar("--down", "#3b82f6");
-    const accentColor = cssVar("--accent", "#e0aa3e");
-    const containerHeight = containerRef.current?.clientHeight ?? 360;
 
-    const boxes = overlayStory
-      .map((ev) => {
-        const x = chart.timeScale().timeToCoordinate(ev.date as Time);
-        const y = series.priceToCoordinate(ev.price);
-        if (x === null || y === null) return null;
-        return {
-          id: `${ev.stepNumber}-${ev.date}`,
-          x: x as number,
-          y: y as number,
-          above: y > containerHeight / 2,
-          stepNumber: ev.stepNumber,
-          badgeLabel: ev.badgeLabel,
-          description: ev.description,
-          color: ev.direction === "bullish" ? upColor : ev.direction === "bearish" ? downColor : accentColor,
-        };
-      })
-      .filter((b): b is StoryBox => b !== null);
-
-    setStoryBoxes(boxes);
+    const points: TouchPoint[] = [];
+    for (const p of picked) {
+      const color = p.role === "support" ? downColor : upColor;
+      const chronological = [...p.level.touchDates].sort(); // touchDates는 최신순 저장이라 오래된 순으로 뒤집는다.
+      const displayed = chronological.slice(-6);
+      const startIndex = chronological.length - displayed.length + 1;
+      displayed.forEach((date, i) => {
+        const x = chart.timeScale().timeToCoordinate(date as Time);
+        const y = series.priceToCoordinate(p.level.price);
+        if (x === null || y === null) return;
+        points.push({ id: `${p.level.price}-${date}`, x: x as number, y: y as number, index: startIndex + i, color });
+      });
+    }
+    setTouchPoints(points);
   }
-  recomputeStoryBoxesRef.current = recomputeStoryBoxes;
+  recomputeTouchPointsRef.current = recomputeTouchPoints;
 
   useEffect(() => {
     let cancelled = false;
@@ -277,8 +336,8 @@ export function PriceChart({ code }: { code: string }) {
           borderDownColor: downColor,
           wickUpColor: upColor,
           wickDownColor: downColor,
-          // 국내 주가는 항상 원 단위 정수 — 네이버증권처럼 소수점 없이 "71,200" 식으로.
-          priceFormat: { type: "price", precision: 0, minMove: 1 },
+          // 국내 주가는 항상 원 단위 정수 — 네이버증권처럼 "71,200"처럼 콤마 포함.
+          priceFormat: { type: "custom", formatter: priceFormatter, minMove: 1 },
         });
         candleSeries.setData(
           candles.map((c) => ({ time: c.date, open: c.open, high: c.high, low: c.low, close: c.close }))
@@ -303,7 +362,7 @@ export function PriceChart({ code }: { code: string }) {
             priceLineVisible: false,
             lastValueVisible: false,
             crosshairMarkerVisible: false,
-            priceFormat: { type: "price", precision: 0, minMove: 1 },
+            priceFormat: { type: "custom", formatter: priceFormatter, minMove: 1 },
           });
           maSeries.setData(points);
           for (const p of points) {
@@ -322,9 +381,9 @@ export function PriceChart({ code }: { code: string }) {
 
         chart.timeScale().fitContent();
 
-        // 팬/줌으로 시간축이 바뀌면 ①②③ 콜아웃 박스의 화면 좌표도 다시
-        // 계산해야 한다 — ref로 항상 최신 recomputeStoryBoxes를 부른다.
-        chart.timeScale().subscribeVisibleLogicalRangeChange(() => recomputeStoryBoxesRef.current());
+        // 팬/줌으로 시간축이 바뀌면 터치 지점(동그라미)의 화면 좌표도 다시
+        // 계산해야 한다 — ref로 항상 최신 recomputeTouchPoints를 부른다.
+        chart.timeScale().subscribeVisibleLogicalRangeChange(() => recomputeTouchPointsRef.current());
 
         // 날짜/종가/거래량/이동평균값을 보여주는 호버 범례 — 커서가 실제로 봉 위에
         //있을 때만 뜨고, 벗어나면 사라짐.
@@ -364,7 +423,7 @@ export function PriceChart({ code }: { code: string }) {
           if (rafId !== null) cancelAnimationFrame(rafId);
           rafId = requestAnimationFrame(() => {
             chartRef.current?.timeScale().fitContent();
-            recomputeStoryBoxesRef.current();
+            recomputeTouchPointsRef.current();
           });
         });
         resizeObserver.observe(containerRef.current);
@@ -372,7 +431,7 @@ export function PriceChart({ code }: { code: string }) {
 
         setLoading(false);
         setChartTick((v) => v + 1); // lets the overlay effect below (re)draw on a fresh series
-        recomputeStoryBoxesRef.current();
+        recomputeTouchPointsRef.current();
       })
       .catch(() => {
         if (!cancelled) {
@@ -402,10 +461,10 @@ export function PriceChart({ code }: { code: string }) {
   }, []);
 
   // 골구 근거 또는 골구 차트분석 둘 중 하나라도 켜져 있으면(overlayOpen)
-  // 지지/저항 레벨은 가격선으로, 오늘 활성화된 시그널은 최근 봉 위에
+  // 지지/저항 레벨은 실선 가격선으로, 오늘 활성화된 시그널은 최근 봉 위에
   // 동그라미 마커로 그린다 — 둘 다 꺼지면 지운다. chartTick은 기간(D/W/M)
-  // 전환으로 차트가 통째로 다시
-  // 만들어졌을 때도 이 effect가 새 시리즈에 다시 그리도록 하는 트리거.
+  // 전환으로 차트가 통째로 다시 만들어졌을 때도 이 effect가 새 시리즈에
+  // 다시 그리도록 하는 트리거.
   useEffect(() => {
     const series = candleSeriesRef.current;
     const markersApi = markersApiRef.current;
@@ -422,120 +481,52 @@ export function PriceChart({ code }: { code: string }) {
 
     if (!overlayOpen) {
       markersApi.setMarkers([]);
-      setStoryBoxes([]);
+      pickedLevelsRef.current = [];
+      setLevelSummaries([]);
+      setTouchPoints([]);
       return;
     }
 
     const upColor = cssVar("--up", "#f2434f");
     const downColor = cssVar("--down", "#3b82f6");
     const dimColor = cssVar("--dim", "#8a92a3");
-    const accentColor = cssVar("--accent", "#e0aa3e");
+    const roleColor = (role: Role) => (role === "support" ? downColor : upColor);
 
-    // 스윙 고점/저점이 같은 가격대에서 병합되면 type이 "both"(지지도 저항도
-    // 됐던 자리)로 나올 수 있는데, "지지/저항선"이라고 뭉뚱그려 표시하면
-    // 뭘 보여주는 건지 애매해진다 — 지금 종가가 그 레벨 위/아래 어디 있는지로
-    // 딱 하나(지지 또는 저항)로 확정해서 라벨/색을 정한다.
-    function resolveRole(level: SupportResistanceLevel): "support" | "resistance" {
-      if (level.type !== "both") return level.type;
-      const latest = latestCloseRef.current;
-      return latest !== null && level.price > latest ? "resistance" : "support";
-    }
-    function roleLabel(role: "support" | "resistance"): string {
-      return role === "support" ? "지지선" : "저항선";
-    }
-    function roleColor(role: "support" | "resistance"): string {
-      return role === "support" ? downColor : upColor;
-    }
+    const picked = overlayLevels ? pickRelevantLevels(overlayLevels, latestCloseRef.current) : [];
+    pickedLevelsRef.current = picked;
 
-    const markers: SeriesMarker<Time>[] = [];
+    setLevelSummaries(
+      picked.map((p) => ({
+        role: p.role,
+        price: p.level.price,
+        touches: p.level.touches,
+        color: roleColor(p.role),
+        isKey: p.isKey,
+        text: `${roleLabel(p.role)} ${priceFormatter(p.level.price)}원 · ${p.level.touches}회 터치 · ${strengthLabel(p.role, p.level.touches)}`,
+      }))
+    );
 
-    // 터치 횟수 상위 3개만 — 다 그리면 오른쪽 가격축 라벨이 겹쳐서 못 읽는다.
-    // 그중 가장 많이 터치된 첫 번째 레벨은 "핵심 기준선"(S/R 전환의 중심)으로
-    // 강조색(--accent)에 별도 라벨을 붙이고, 그 레벨의 터치 이력은
-    // overlayStory(사후 분류된 실제 사건들)를 ①②③ 번호 마커로 대신 그린다 —
-    // 나머지 2개 레벨은 기존처럼 화살표+터치 횟수만 표시. 선은 가늘게(2px)
-    // 유지해서 캔들을 가리지 않게 한다.
-    if (overlayLevels && overlayLevels.length > 0) {
-      const [keyLevel, ...otherLevels] = overlayLevels.slice(0, 3);
-      const keyRole = resolveRole(keyLevel);
-
+    // 라인 자체는 실선만 — 라벨은 축 옆에 겹쳐 쌓이는 대신 차트 위쪽
+    // 요약 줄(levelSummaries 렌더링)에서 보여준다.
+    for (const p of picked) {
       try {
         const line = series.createPriceLine({
-          price: keyLevel.price,
-          color: accentColor,
-          lineWidth: 2,
+          price: p.level.price,
+          color: roleColor(p.role),
+          lineWidth: p.isKey ? 3 : 2,
           lineStyle: LineStyle.Solid,
-          axisLabelVisible: true,
-          title: `핵심 ${roleLabel(keyRole)} · ${keyLevel.touches}회 터치`,
+          axisLabelVisible: false,
         });
         priceLinesRef.current.push(line);
       } catch {
         // stale series from a just-torn-down chart — next tick redraws
       }
-
-      if (overlayStory && overlayStory.length > 0) {
-        // 이벤트가 시간상 가까이 몰리면 배지 글자까지 다 그릴 때 서로 겹쳐서
-        // 안 읽히므로, 차트 위에는 번호만 찍고 전체 설명은
-        // GolgooPanel의 "차트 스토리" 목록(번호로 1:1 매칭)에서 보여준다.
-        const STEP_CIRCLE = ["①", "②", "③", "④", "⑤"];
-        for (const ev of overlayStory) {
-          const color = ev.direction === "bullish" ? upColor : ev.direction === "bearish" ? downColor : accentColor;
-          markers.push({
-            time: ev.date as Time,
-            position: ev.direction === "bearish" ? "belowBar" : "aboveBar",
-            shape: ev.type === "GOLDEN_CROSS" ? "arrowUp" : "circle",
-            color,
-            text: STEP_CIRCLE[ev.stepNumber - 1] ?? String(ev.stepNumber),
-            id: `golgoo-story-${ev.stepNumber}-${ev.date}`,
-          });
-        }
-      } else {
-        keyLevel.touchDates.slice(0, 2).forEach((date, idx) => {
-          markers.push({
-            time: date as Time,
-            position: keyRole === "support" ? "belowBar" : "aboveBar",
-            shape: keyRole === "support" ? "arrowUp" : "arrowDown",
-            color: accentColor,
-            text: idx === 0 ? "핵심 기준선 터치" : "",
-            id: `golgoo-level-key-${date}`,
-          });
-        });
-      }
-
-      for (const level of otherLevels) {
-        const role = resolveRole(level);
-        const color = roleColor(role);
-        const label = roleLabel(role);
-        const shape = role === "support" ? "arrowUp" : "arrowDown";
-        try {
-          const line = series.createPriceLine({
-            price: level.price,
-            color,
-            lineWidth: 2,
-            lineStyle: LineStyle.Solid,
-            axisLabelVisible: true,
-            title: `${label} · ${level.touches}회`,
-          });
-          priceLinesRef.current.push(line);
-        } catch {
-          // stale series from a just-torn-down chart — next tick redraws
-        }
-
-        level.touchDates.slice(0, 2).forEach((date, idx) => {
-          markers.push({
-            time: date as Time,
-            position: role === "support" ? "belowBar" : "aboveBar",
-            shape,
-            color,
-            text: idx === 0 ? `${label} 터치` : "",
-            id: `golgoo-level-${level.price}-${date}`,
-          });
-        });
-      }
     }
 
+    const markers: SeriesMarker<Time>[] = [];
+
     // 오늘 기준으로 활성화된 시그널(거래량/이동평균선 등)은 최근 봉 위에
-    // 별도 동그라미로 — 위 지지/저항 터치와 구분되게 그대로 둔다.
+    // 동그라미로 — 위 지지/저항 터치(빈 동그라미, HTML로 따로 그림)와 구분되게 둔다.
     if (overlaySignals && overlaySignals.length > 0 && latestDateRef.current) {
       for (const s of overlaySignals) {
         markers.push({
@@ -549,11 +540,10 @@ export function PriceChart({ code }: { code: string }) {
       }
     }
 
-    // lightweight-charts requires markers sorted ascending by time.
     markers.sort((a, b) => String(a.time).localeCompare(String(b.time)));
     markersApi.setMarkers(markers);
-    recomputeStoryBoxes();
-  }, [overlayOpen, overlaySignals, overlayLevels, overlayStory, chartTick]);
+    recomputeTouchPoints();
+  }, [overlayOpen, overlaySignals, overlayLevels, chartTick]);
 
   return (
     <section style={panelStyle}>
@@ -589,45 +579,68 @@ export function PriceChart({ code }: { code: string }) {
         </div>
       </div>
 
+      {levelSummaries.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 5,
+            padding: "10px 18px",
+            borderBottom: "1px solid var(--border)",
+            background: "var(--panel2)",
+          }}
+        >
+          {levelSummaries.map((s) => (
+            <div key={`${s.role}-${s.price}`} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}>
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: s.color,
+                  flexShrink: 0,
+                  boxShadow: s.isKey ? `0 0 0 3px color-mix(in srgb, ${s.color} 25%, transparent)` : undefined,
+                }}
+              />
+              <span style={{ fontWeight: s.isKey ? 800 : 600, color: "var(--text)" }}>{s.text}</span>
+              {s.isKey && (
+                <span style={{ fontSize: 10, fontWeight: 700, color: s.color, fontFamily: "var(--mono)" }}>핵심</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={{ position: "relative", minHeight: 360 }}>
         <div ref={containerRef} style={{ width: "100%", height: 360, display: loading || empty ? "none" : "block" }} />
 
         {!loading &&
           !empty &&
-          storyBoxes.map((box) => {
-            const BOX_WIDTH = 176;
-            const containerWidth = containerRef.current?.clientWidth ?? 600;
-            const left = Math.min(Math.max(box.x - BOX_WIDTH / 2, 4), containerWidth - BOX_WIDTH - 4);
-            return (
-              <div
-                key={box.id}
-                style={{
-                  position: "absolute",
-                  left,
-                  ...(box.above ? { bottom: 360 - box.y + 10 } : { top: box.y + 10 }),
-                  width: BOX_WIDTH,
-                  zIndex: 4,
-                  pointerEvents: "none",
-                  background: "color-mix(in srgb, var(--panel) 94%, transparent)",
-                  border: "1px solid var(--border)",
-                  borderLeft: `3px solid ${box.color}`,
-                  borderRadius: 8,
-                  padding: "7px 9px",
-                  boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
-                  <span style={{ fontWeight: 800, fontSize: 11, color: box.color }}>
-                    {["①", "②", "③", "④", "⑤"][box.stepNumber - 1] ?? box.stepNumber}
-                  </span>
-                  <span style={{ fontWeight: 700, fontSize: 11, color: "var(--text)" }}>{box.badgeLabel}</span>
-                </div>
-                <div style={{ fontSize: 10.5, lineHeight: 1.45, color: "var(--dim)", marginTop: 3 }}>
-                  {box.description}
-                </div>
-              </div>
-            );
-          })}
+          touchPoints.map((pt) => (
+            <div
+              key={pt.id}
+              title={`${pt.index}회 터치`}
+              style={{
+                position: "absolute",
+                left: pt.x - 7,
+                top: pt.y - 7,
+                width: 14,
+                height: 14,
+                borderRadius: "50%",
+                border: `2px solid ${pt.color}`,
+                background: "var(--panel)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 3,
+                pointerEvents: "none",
+              }}
+            >
+              <span style={{ fontSize: 8, fontWeight: 800, color: pt.color, fontFamily: "var(--mono)" }}>
+                {pt.index}
+              </span>
+            </div>
+          ))}
 
         {hover && !loading && !empty && (() => {
           const BOX_WIDTH = 172;
