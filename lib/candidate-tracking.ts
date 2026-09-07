@@ -7,6 +7,7 @@ export const TRACKING_WINDOW_DAYS = 5;
 export type DailyChangePoint = {
   date: string; // YYYY-MM-DD
   dayIndex: number; // 1-based trading-day count since the prediction's forDate
+  price: number; // that day's actual closing price — lets callers compare directly against a stop-loss/target price without reconstructing it from changePct
   changePct: number; // cumulative % vs forDate's own closing price
 };
 
@@ -32,6 +33,7 @@ export function getDailyChangeSeries(candles: ChartCandle[], forDate: string): D
   return after.map((c, i) => ({
     date: c.date,
     dayIndex: i + 1,
+    price: c.close,
     changePct: ((c.close - basePrice) / basePrice) * 100,
   }));
 }

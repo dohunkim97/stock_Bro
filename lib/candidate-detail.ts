@@ -238,15 +238,15 @@ export async function getCandidateDetails(candidates: CandidatePrediction[]): Pr
   for (const g of grounded) {
     const llm = narratives.get(g.candidate.name);
     const currentPrice = g.currentPrice;
-    // 최근 고점이 현재가보다 낮으면(이미 신고가 갱신 중) 저항선 역할을 못 하니,
-    // 그럴 땐 현재가 대비 보수적인 +5%를 대신 쓴다 — 이 경우도 LLM 추측이 아니라
-    // 규칙 기반 값.
+    // 목표가는 최소 +5% 기대수익은 보장한다 — 최근 고점(저항선)이 현재가보다
+    // 낮으면(이미 신고가 갱신 중) 저항선 역할을 못 하니 +5%를 쓰고, 저항선이
+    // 있어도 그게 현재가 대비 5% 미만 상승분이면(너무 가까운 저항선) 그대로
+    // 쓰지 않고 역시 +5%로 올려 잡는다 — 어느 경우든 LLM 추측이 아니라 규칙
+    // 기반 값.
     const target =
-      g.chart.recentHigh !== null && currentPrice !== null && g.chart.recentHigh > currentPrice
-        ? g.chart.recentHigh
-        : currentPrice !== null
-          ? currentPrice * 1.05
-          : null;
+      currentPrice !== null && currentPrice > 0
+        ? Math.max(currentPrice * 1.05, g.chart.recentHigh ?? 0)
+        : null;
     detailsByName.set(g.candidate.name, {
       name: g.candidate.name,
       code: g.candidate.code,

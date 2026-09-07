@@ -198,23 +198,33 @@ export function DetailCard({
 
       {series && series.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 2 }}>
-          {series.map((p) => (
-            <span
-              key={p.date}
-              title={p.date}
-              style={{
-                fontSize: 10,
-                fontFamily: "var(--mono)",
-                fontWeight: 600,
-                padding: "3px 7px",
-                borderRadius: 6,
-                background: "var(--panel2)",
-                color: chgColorVar(p.changePct),
-              }}
-            >
-              {p.dayIndex}일차 {formatChg(p.changePct)}
-            </span>
-          ))}
+          {series.map((p) => {
+            // 그날 종가가 손절/목표가에 닿았는지 — 이 앱 전체가 종가 기준으로만
+            // 추적하니(매수도 종가, 손익도 종가) 여기도 종가로 판단한다.
+            const hitStop = d.strategy.stopLossPrice !== null && p.price <= d.strategy.stopLossPrice;
+            const hitTarget = d.strategy.targetPrice !== null && p.price >= d.strategy.targetPrice;
+            const markColor = hitStop ? "var(--down)" : hitTarget ? "var(--up)" : chgColorVar(p.changePct);
+            return (
+              <span
+                key={p.date}
+                title={p.date}
+                style={{
+                  fontSize: 10,
+                  fontFamily: "var(--mono)",
+                  fontWeight: 700,
+                  padding: "3px 7px",
+                  borderRadius: 6,
+                  background: hitStop || hitTarget ? "transparent" : "var(--panel2)",
+                  border: hitStop || hitTarget ? `1px solid ${markColor}` : "1px solid transparent",
+                  color: markColor,
+                }}
+              >
+                {p.dayIndex}일차 {formatChg(p.changePct)}
+                {hitStop && " · 손절가 도달"}
+                {hitTarget && " · 목표수익 돌파"}
+              </span>
+            );
+          })}
         </div>
       )}
 
