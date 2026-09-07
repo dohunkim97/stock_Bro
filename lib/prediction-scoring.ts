@@ -6,7 +6,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { fetchKisChart } from "@/lib/kis-chart";
-import { getDailyChangeSeries, TRACKING_WINDOW_DAYS } from "@/lib/candidate-tracking";
+import { getDailyChangeSeries, TRACKING_WINDOW_DAYS, type DailyChangePoint } from "@/lib/candidate-tracking";
 import { formatDateLabel, todayISO } from "@/lib/dates";
 
 export type SectorPrediction = { name: string; reasoning: string };
@@ -158,6 +158,28 @@ export type PredictionDay = {
   candidates: (CandidatePrediction & { series: Awaited<ReturnType<typeof getDailyChangeSeries>> })[];
 };
 
+// KIS chart calls are each internally 1-3 sequential requests (paging, see
+// lib/kis-chart.ts), so firing all of a 14-day archive page's candidates at
+// once (up to 14 rows × 5 candidates = ~70 concurrent fetches) bursts well
+// past KIS's rate limit — confirmed live: isolated/sequential fetches for a
+// row always returned real data, but the same row's chart silently came
+// back empty ([] candles, fetchKisChart's own catch-and-return-[] design)
+// when fetched as part of the full unbounded Promise.all, leaving that
+// candidate with no day chips in the archive UI despite real data existing.
+// Even a concurrency of 6 still left ~30% of candidates empty in testing —
+// so this stays low, and an empty result gets one retry after a short delay
+// (a real, currently-listed stock's chart coming back with zero candles is
+// almost always the rate limit, not an actual absence of data).
+const CHART_FETCH_CONCURRENCY = 3;
+const EMPTY_CHART_RETRY_DELAY_MS = 1500;
+
+async function fetchChartWithRetry(code: string) {
+  const first = await fetchKisChart(code, "D");
+  if (first.length > 0) return first;
+  await new Promise((resolve) => setTimeout(resolve, EMPTY_CHART_RETRY_DELAY_MS));
+  return fetchKisChart(code, "D");
+}
+
 // Every past prediction day, most recent first, each candidate carrying
 // whatever cumulative-return data is available right now (1-5 days —
 // however much of the 5-trading-day window has actually elapsed since
@@ -171,22 +193,29 @@ export async function getRecentPredictionDays(limit = 14): Promise<PredictionDay
     take: limit,
   });
 
-  return Promise.all(
-    rows.map(async (row) => {
-      const candidates = parsePredictionCandidates(row.candidates);
-      const withSeries = await Promise.all(
-        candidates.map(async (c) => {
-          const candles = c.code ? await fetchKisChart(c.code, "D") : [];
-          return { ...c, series: getDailyChangeSeries(candles, row.forDate) };
-        })
-      );
-      return {
-        forDate: row.forDate,
-        label: formatDateLabel(row.forDate),
-        summary: row.summary,
-        sectors: parsePredictionSectors(row.sectors),
-        candidates: withSeries,
-      };
-    })
-  );
+  const parsedRows = rows.map((row) => ({ row, candidates: parsePredictionCandidates(row.candidates) }));
+
+  // Flatten every (day, candidate) pair needing a chart fetch into one list
+  // and rate-limit across the WHOLE batch, not per day — fetching row-by-row
+  // still bursts to `candidates-per-row` concurrent calls per row and just
+  // moves the problem, not fixes it.
+  const flat = parsedRows.flatMap(({ row, candidates }) => candidates.map((candidate) => ({ row, candidate })));
+  const seriesByKey = new Map<string, DailyChangePoint[]>();
+  for (let i = 0; i < flat.length; i += CHART_FETCH_CONCURRENCY) {
+    const batch = flat.slice(i, i + CHART_FETCH_CONCURRENCY);
+    await Promise.all(
+      batch.map(async ({ row, candidate }) => {
+        const candles = candidate.code ? await fetchChartWithRetry(candidate.code) : [];
+        seriesByKey.set(`${row.forDate}:${candidate.name}`, getDailyChangeSeries(candles, row.forDate));
+      })
+    );
+  }
+
+  return parsedRows.map(({ row, candidates }) => ({
+    forDate: row.forDate,
+    label: formatDateLabel(row.forDate),
+    summary: row.summary,
+    sectors: parsePredictionSectors(row.sectors),
+    candidates: candidates.map((c) => ({ ...c, series: seriesByKey.get(`${row.forDate}:${c.name}`) ?? [] })),
+  }));
 }

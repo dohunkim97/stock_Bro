@@ -80,6 +80,34 @@ function signalColor(direction: TechnicalSignal["direction"]): string {
   return "var(--dim)";
 }
 
+type DayMark = DailyChangePoint & { hitStopToday: boolean; hitTargetToday: boolean };
+
+// 손절가/목표가 "도달"은 그 상태가 계속 이어지는 동안 매일 반복 표시하지
+// 않는다 — 처음 닿은 그 날짜 하루만 표시하고, 손절가는 매수가(changePct
+// 0% 이상, 즉 원금 회복) 위로 복귀하면 상태를 리셋해 나중에 다시 손절가에
+// 닿으면 그날을 새로운 사건으로 다시 표시한다. 목표가는 한 번 찍으면
+// 그걸로 확정(반복/리셋 없이 최초 1회만)이라 되돌아와도 다시 표시하지
+// 않는다 — 이미 목표수익을 넘긴 사실 자체는 되돌릴 수 없는 성과라서.
+function markDays(series: DailyChangePoint[], stopLossPrice: number | null, targetPrice: number | null): DayMark[] {
+  let belowStop = false;
+  let targetAlreadyHit = false;
+
+  return series.map((p) => {
+    const touchedStop = stopLossPrice !== null && p.price <= stopLossPrice;
+    const touchedTarget = targetPrice !== null && p.price >= targetPrice;
+
+    const hitStopToday = touchedStop && !belowStop;
+    const hitTargetToday = touchedTarget && !targetAlreadyHit;
+
+    if (touchedStop) belowStop = true;
+    else if (p.changePct >= 0) belowStop = false; // 매수가 복귀 — 다음 이탈은 새 사건
+
+    if (hitTargetToday) targetAlreadyHit = true;
+
+    return { ...p, hitStopToday, hitTargetToday };
+  });
+}
+
 export function DetailCard({
   d,
   series,
@@ -198,12 +226,9 @@ export function DetailCard({
 
       {series && series.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 2 }}>
-          {series.map((p) => {
-            // 그날 종가가 손절/목표가에 닿았는지 — 이 앱 전체가 종가 기준으로만
-            // 추적하니(매수도 종가, 손익도 종가) 여기도 종가로 판단한다.
-            const hitStop = d.strategy.stopLossPrice !== null && p.price <= d.strategy.stopLossPrice;
-            const hitTarget = d.strategy.targetPrice !== null && p.price >= d.strategy.targetPrice;
-            const markColor = hitStop ? "var(--down)" : hitTarget ? "var(--up)" : chgColorVar(p.changePct);
+          {markDays(series, d.strategy.stopLossPrice, d.strategy.targetPrice).map((p) => {
+            const marked = p.hitStopToday || p.hitTargetToday;
+            const markColor = p.hitStopToday ? "var(--down)" : p.hitTargetToday ? "var(--up)" : chgColorVar(p.changePct);
             return (
               <span
                 key={p.date}
@@ -214,14 +239,14 @@ export function DetailCard({
                   fontWeight: 700,
                   padding: "3px 7px",
                   borderRadius: 6,
-                  background: hitStop || hitTarget ? "transparent" : "var(--panel2)",
-                  border: hitStop || hitTarget ? `1px solid ${markColor}` : "1px solid transparent",
+                  background: marked ? "transparent" : "var(--panel2)",
+                  border: marked ? `1px solid ${markColor}` : "1px solid transparent",
                   color: markColor,
                 }}
               >
                 {p.dayIndex}일차 {formatChg(p.changePct)}
-                {hitStop && " · 손절가 도달"}
-                {hitTarget && " · 목표수익 돌파"}
+                {p.hitStopToday && " · 손절가 도달"}
+                {p.hitTargetToday && " · 목표수익 돌파"}
               </span>
             );
           })}
@@ -229,8 +254,13 @@ export function DetailCard({
       )}
 
       {/* 5거래일 추적이 다 끝난 뒤에만 "최종 결과"로 확정해서 기대수익(전략
-          가이드의 목표구간 기준)과 실제 5일차 수익률을 나란히 비교해 보여준다
-          — 진행 중인 예측은 아직 최종이 아니므로 이 줄 자체를 숨긴다. */}
+          가이드의 목표구간 기준)과 매수가 대비 5일 누적 수익률을 나란히
+          비교해 보여준다 — 진행 중인 예측은 아직 최종이 아니므로 이 줄
+          자체를 숨긴다. series의 마지막 changePct는 이미 1일차 매수가 대비
+          누적값이라(각 날짜 칩 자체가 그날까지의 누적 % — 매일 갈아 끼우는
+          "당일 등락률"이 아니다) 그대로 쓰면 곧 5일 총 수익률이다 — 별도로
+          더하거나 다시 계산할 필요가 없다.
+      */}
       {series && series.length >= TRACKING_WINDOW_DAYS && (
         <div
           style={{
@@ -243,9 +273,9 @@ export function DetailCard({
             border: "1px solid var(--border2)",
           }}
         >
-          🏁 {TRACKING_WINDOW_DAYS}일차 최종 —{" "}
+          🏁 {TRACKING_WINDOW_DAYS}거래일 누적 최종 —{" "}
           <span style={{ fontFamily: "var(--mono)", color: chgColorVar(series[series.length - 1].changePct) }}>
-            실제 {formatChg(series[series.length - 1].changePct)}
+            매수가 대비 총 {formatChg(series[series.length - 1].changePct)}
           </span>
           {d.strategy.targetPct !== null && (
             <>
