@@ -3,6 +3,7 @@ import { chgColorVar, formatChg } from "@/lib/format";
 import type { CandidateDetail } from "@/lib/candidate-detail";
 import { TRACKING_WINDOW_DAYS, type DailyChangePoint } from "@/lib/candidate-tracking";
 import type { TechnicalSignal } from "@/lib/technical-signals";
+import { SENTIMENT_REGEX, sentimentColorVar } from "@/lib/sentiment";
 
 // Shared "종목 근거" block styling + DetailCard — used by both today's live
 // report (components/bro/prediction-report.tsx) and 기록보관소's past-day
@@ -68,29 +69,25 @@ const fieldLabelStyle: React.CSSProperties = {
 
 // 국내 증시 관례(상승=빨강/하락=파랑)에 맞춰 근거 문장 안의 좋은 단어(매수·
 // 흑자·증가·상승)는 빨간색, 나쁜 단어(매도·적자·감소·하락)는 파란색으로 한눈에
-// 보이게 강조한다. "순매수/순매도"처럼 더 긴 표현을 먼저 매칭해야 "매수/매도"
-// 부분만 따로 잘려서 색칠되는 일이 없다(길이 내림차순 정렬).
-const POSITIVE_WORDS = ["순매수", "매수", "흑자", "증가", "상승"];
-const NEGATIVE_WORDS = ["순매도", "매도", "적자", "감소", "하락"];
-const SENTIMENT_WORDS = [...POSITIVE_WORDS, ...NEGATIVE_WORDS].sort((a, b) => b.length - a.length);
-const SENTIMENT_REGEX = new RegExp(`(${SENTIMENT_WORDS.join("|")})`, "g");
-
-function sentimentColor(word: string): string | null {
-  if (POSITIVE_WORDS.includes(word)) return "var(--up)";
-  if (NEGATIVE_WORDS.includes(word)) return "var(--down)";
-  return null;
+// 보이게 강조한다 — 단어 목록/판정 기준은 lib/candidate-detail.ts의 O/X
+// 판단(재료 항목)과 같은 lib/sentiment.ts를 공유해서 색깔과 O/X가 서로
+// 어긋나지 않게 한다. "92억 매수"처럼 단어 바로 앞 숫자·단위까지 한 덩어리로
+// 같이 색칠된다(SENTIMENT_REGEX가 이미 그렇게 잡아줌).
+function sentimentStyle(token: string): string | null {
+  const c = sentimentColorVar(token);
+  return c === "up" ? "var(--up)" : c === "down" ? "var(--down)" : null;
 }
 
 // **강조** 마크다운(lib/weekly-prediction.ts가 심어줌)을 굵게 살리고, 그 안팎
-// 텍스트에서 위 긍정/부정 단어를 색칠한다. 근거 필드 전체(사업요약~매수타이밍)가
-// 전부 이 함수를 거쳐서 렌더링된다.
+// 텍스트에서 위 긍정/부정 단어(+수치)를 색칠한다. 근거 필드 전체(사업요약~
+// 매수타이밍)가 전부 이 함수를 거쳐서 렌더링된다.
 function renderFieldValue(text: string): React.ReactNode {
   const boldParts = text.split(/(\*\*[^*]+\*\*)/g);
   return boldParts.map((part, i) => {
     const isBold = part.startsWith("**") && part.endsWith("**") && part.length > 4;
     const inner = isBold ? part.slice(2, -2) : part;
     const tokens = inner.split(SENTIMENT_REGEX).map((tok, j) => {
-      const color = sentimentColor(tok);
+      const color = sentimentStyle(tok);
       return color ? (
         <span key={j} style={{ color, fontWeight: 700 }}>
           {tok}
@@ -109,11 +106,18 @@ function renderFieldValue(text: string): React.ReactNode {
   });
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+// verdict: 이 항목이 실제로 매수에 우호적인 신호인지(true=O/빨강),
+// 아닌지(false=X/파랑) — 판단 불가(null/undefined)면 아예 안 띄운다.
+function Field({ label, value, verdict }: { label: string; value: string; verdict?: boolean | null }) {
   return (
     <div style={fieldLineStyle}>
       <span style={fieldLabelStyle}>■ {label}: </span>
       {renderFieldValue(value)}
+      {verdict !== undefined && verdict !== null && (
+        <strong style={{ marginLeft: 6, color: verdict ? "var(--up)" : "var(--down)" }}>
+          {verdict ? "(O)" : "(X)"}
+        </strong>
+      )}
     </div>
   );
 }
@@ -246,12 +250,12 @@ export function DetailCard({
       </div>
 
       <Field label="사업 요약" value={d.businessSummary} />
-      <Field label="1. 시황" value={d.marketContext} />
-      <Field label="2. 거래량" value={d.volumeNote} />
-      <Field label="3. 차트" value={d.chartNote} />
-      <Field label="4. 재료" value={d.aiReasoning} />
-      <Field label="5. 수급" value={d.supplyDemand} />
-      <Field label="6. 재무" value={d.financialSummary} />
+      <Field label="1. 시황" value={d.marketContext} verdict={d.verdicts.marketContext} />
+      <Field label="2. 거래량" value={d.volumeNote} verdict={d.verdicts.volume} />
+      <Field label="3. 차트" value={d.chartNote} verdict={d.verdicts.chart} />
+      <Field label="4. 재료" value={d.aiReasoning} verdict={d.verdicts.material} />
+      <Field label="5. 수급" value={d.supplyDemand} verdict={d.verdicts.supplyDemand} />
+      <Field label="6. 재무" value={d.financialSummary} verdict={d.verdicts.financial} />
       <Field label="7. 매수타이밍" value={buyTimingText(d.strategy)} />
 
       {series && series.length > 0 && (

@@ -93,10 +93,10 @@ async function signalShortlistBlock(): Promise<string> {
   const lines = ["[관심 종목군의 기술적 시그널 및 거래량]"];
   let any = false;
   for (const p of perStock) {
-    if (p.signals.length === 0 && p.volumeNote === "내용 없음") continue;
+    if (p.signals.length === 0 && p.volumeNote.note === "내용 없음") continue;
     any = true;
     const sigPart = p.signals.length > 0 ? p.signals.map((s) => `${s.name}(${s.direction})`).join(", ") : "시그널 없음";
-    lines.push(`- ${p.name}: ${sigPart} / 거래량: ${p.volumeNote}`);
+    lines.push(`- ${p.name}: ${sigPart} / 거래량: ${p.volumeNote.note}`);
   }
   return any ? lines.join("\n") : "";
 }
@@ -185,7 +185,7 @@ export async function generateWeeklyPrediction(): Promise<void> {
   // 실시간 시세·수급·재무·LLM을 다시 불러서 새로고침할 때마다 값이 나타났다
   // 사라졌다 바뀌는 문제가 생긴다. 컴포넌트는 이제 이 저장된 값을 그대로
   // 보여주기만 하고, 다음 날 새 리포트가 나와야만 갱신된다.
-  const details = candidateList.length > 0 ? JSON.stringify(await getCandidateDetails(candidateList)) : "[]";
+  const details = candidateList.length > 0 ? JSON.stringify(await getCandidateDetails(candidateList, forDate)) : "[]";
 
   await prisma.weeklyPrediction.upsert({
     where: { forDate },
