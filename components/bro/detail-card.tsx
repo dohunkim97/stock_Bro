@@ -66,11 +66,54 @@ const fieldLabelStyle: React.CSSProperties = {
   fontWeight: 700,
 };
 
+// 국내 증시 관례(상승=빨강/하락=파랑)에 맞춰 근거 문장 안의 좋은 단어(매수·
+// 흑자·증가·상승)는 빨간색, 나쁜 단어(매도·적자·감소·하락)는 파란색으로 한눈에
+// 보이게 강조한다. "순매수/순매도"처럼 더 긴 표현을 먼저 매칭해야 "매수/매도"
+// 부분만 따로 잘려서 색칠되는 일이 없다(길이 내림차순 정렬).
+const POSITIVE_WORDS = ["순매수", "매수", "흑자", "증가", "상승"];
+const NEGATIVE_WORDS = ["순매도", "매도", "적자", "감소", "하락"];
+const SENTIMENT_WORDS = [...POSITIVE_WORDS, ...NEGATIVE_WORDS].sort((a, b) => b.length - a.length);
+const SENTIMENT_REGEX = new RegExp(`(${SENTIMENT_WORDS.join("|")})`, "g");
+
+function sentimentColor(word: string): string | null {
+  if (POSITIVE_WORDS.includes(word)) return "var(--up)";
+  if (NEGATIVE_WORDS.includes(word)) return "var(--down)";
+  return null;
+}
+
+// **강조** 마크다운(lib/weekly-prediction.ts가 심어줌)을 굵게 살리고, 그 안팎
+// 텍스트에서 위 긍정/부정 단어를 색칠한다. 근거 필드 전체(사업요약~매수타이밍)가
+// 전부 이 함수를 거쳐서 렌더링된다.
+function renderFieldValue(text: string): React.ReactNode {
+  const boldParts = text.split(/(\*\*[^*]+\*\*)/g);
+  return boldParts.map((part, i) => {
+    const isBold = part.startsWith("**") && part.endsWith("**") && part.length > 4;
+    const inner = isBold ? part.slice(2, -2) : part;
+    const tokens = inner.split(SENTIMENT_REGEX).map((tok, j) => {
+      const color = sentimentColor(tok);
+      return color ? (
+        <span key={j} style={{ color, fontWeight: 700 }}>
+          {tok}
+        </span>
+      ) : (
+        tok
+      );
+    });
+    return isBold ? (
+      <strong key={i} style={{ fontWeight: 800 }}>
+        {tokens}
+      </strong>
+    ) : (
+      <span key={i}>{tokens}</span>
+    );
+  });
+}
+
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div style={fieldLineStyle}>
       <span style={fieldLabelStyle}>■ {label}: </span>
-      {value}
+      {renderFieldValue(value)}
     </div>
   );
 }
@@ -231,7 +274,8 @@ export function DetailCard({
                   color: markColor,
                 }}
               >
-                {p.dayIndex}일차 {formatChg(p.changePct)}
+                {p.dayIndex}일차 종가 {Math.round(p.price).toLocaleString()} · {p.dayIndex}일차 누적{" "}
+                {formatChg(p.changePct)}
                 {p.hitStopToday && " · 손절가 도달"}
                 {p.hitTargetToday && " · 목표수익 돌파"}
               </span>
