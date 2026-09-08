@@ -51,7 +51,7 @@ export async function PredictionReport() {
   // 기술적 시그널(CandidateTracker와 동일)은 순수 차트 계산이라 라이브로 유지.
   const stored = parseStoredCandidateDetails(latest.details);
   const [details, candles] = await Promise.all([
-    stored ?? (candidates.length > 0 ? getCandidateDetails(candidates) : Promise.resolve([])),
+    stored ?? (candidates.length > 0 ? getCandidateDetails(candidates, latest.forDate) : Promise.resolve([])),
     Promise.all(candidates.map((c) => (c.code ? fetchKisChart(c.code, "D", LONG_TERM_SIGNAL_CANDLES) : Promise.resolve([])))),
   ]);
   const signalsByName = new Map(candidates.map((c, i) => [c.name, computeTechnicalSignals(candles[i])]));

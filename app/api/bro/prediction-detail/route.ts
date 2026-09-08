@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   const candidates = parsePredictionCandidates(row.candidates);
   const stored = parseStoredCandidateDetails(row.details);
   const [details, candlesList] = await Promise.all([
-    stored ?? getCandidateDetails(candidates),
+    stored ?? getCandidateDetails(candidates, row.forDate),
     Promise.all(candidates.map((c) => (c.code ? fetchKisChart(c.code, "D", LONG_TERM_SIGNAL_CANDLES) : Promise.resolve([])))),
   ]);
 

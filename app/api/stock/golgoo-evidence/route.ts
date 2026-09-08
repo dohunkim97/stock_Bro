@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
 
   const [candles, details] = await Promise.all([
     fetchKisChart(code, "D", LONG_TERM_SIGNAL_CANDLES),
-    stored ? Promise.resolve([stored]) : getCandidateDetails([candidate]),
+    stored ? Promise.resolve([stored]) : getCandidateDetails([candidate], latest.forDate),
   ]);
 
   return NextResponse.json({
