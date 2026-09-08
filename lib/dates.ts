@@ -84,16 +84,42 @@ export function recentBusinessDays(endIso: string, count: number): string[] {
   return days.reverse();
 }
 
+// Asia/Seoul "now" as both its calendar date and minutes-since-midnight —
+// shared by latestBusinessDay/currentMarketStatus so both agree on what
+// time it actually is in Korea regardless of the server's own timezone.
+function nowInSeoul(): { iso: string; minutes: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return {
+    iso: `${get("year")}-${get("month")}-${get("day")}`,
+    minutes: Number(get("hour")) * 60 + Number(get("minute")),
+  };
+}
+
+// sync-market (lib/sync-runner.ts) runs at 20:00 KST, right after the NXT
+// 애프터마켓 close — until that cron actually runs, "today" has zero
+// DailyEntry rows even on a normal trading day.
+const DATA_READY_MINUTES = 20 * 60; // 20:00
+
 // The date /market should default to when no ?date= is in the URL — today
-// itself on a trading day, or the most recent completed trading day when
-// today is a weekend/holiday (there's no synced data for a day that hasn't
-// traded yet, so landing there would just show an empty page). The prev/next
-// arrows in the date nav already skip weekends via prevBusinessDay/
-// nextBusinessDay; this covers the one path that didn't — the initial
-// landing date.
+// itself once today's sync has actually run, otherwise the most recent day
+// that does have synced data (weekend/holiday, or simply too early in the
+// day). Landing on a date with no rows yet would just show an empty page.
+// The prev/next arrows in the date nav already skip weekends via
+// prevBusinessDay/nextBusinessDay; this covers the one path that didn't —
+// the initial landing date.
 export function latestBusinessDay(): string {
-  const today = todayISO();
-  return isMarketClosed(fromISO(today)) ? prevBusinessDay(today) : today;
+  const { iso: today, minutes } = nowInSeoul();
+  if (isMarketClosed(fromISO(today))) return prevBusinessDay(today);
+  return minutes >= DATA_READY_MINUTES ? today : prevBusinessDay(today);
 }
 
 const MARKET_OPEN_MINUTES = 9 * 60; // 09:00
@@ -106,18 +132,7 @@ export type MarketStatus = { isOpen: boolean; label: string };
 // it derives Asia/Seoul time explicitly rather than relying on the
 // viewer's local timezone, which would misreport the session outside Korea.
 export function currentMarketStatus(): MarketStatus {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date());
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-  const iso = `${get("year")}-${get("month")}-${get("day")}`;
-  const minutesNow = Number(get("hour")) * 60 + Number(get("minute"));
+  const { iso, minutes: minutesNow } = nowInSeoul();
 
   const tradingDay = !isMarketClosed(fromISO(iso));
   const withinHours = minutesNow >= MARKET_OPEN_MINUTES && minutesNow <= MARKET_CLOSE_MINUTES;
