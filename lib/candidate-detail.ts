@@ -14,23 +14,33 @@ import { recentIssuesBlock, telegramBlock } from "@/lib/bro-context";
 import { prisma } from "@/lib/prisma";
 import { formatWon } from "@/lib/format";
 
+// 골구 종목예상 "종목 근거"는 항상 이 7항목 틀로 고정한다 — 시황/거래량/차트/
+// 재료/수급/재무/매수타이밍 순서로 번호를 매겨 누가 봐도 같은 순서로 훑을 수
+// 있게 하고, 데이터가 없는 항목은 지어내지 않고 그대로 "내용 없음"이라 적는다.
+// 항목별 실데이터 소스는 매일 자동으로 갱신되니 이 틀 자체를 건드릴 필요 없이
+// 계속 최신 값으로 채워진다.
 export type CandidateDetail = {
   name: string;
   code?: string;
   themeTags: string[];
   isThemeLeader: boolean;
   businessSummary: string;
-  aiReasoning: string;
-  marketContext: string;
-  supplyDemand: string;
-  chartNote: string;
-  financialSummary: string;
+  aiReasoning: string; // 4. 재료
+  marketContext: string; // 1. 시황
+  volumeNote: string; // 2. 거래량
+  supplyDemand: string; // 5. 수급
+  chartNote: string; // 3. 차트
+  financialSummary: string; // 6. 재무
   strategy: {
-    targetPrice: number | null;
+    support: number | null; // 지지선(실제 차트 지지 레벨)
+    resistance: number | null; // 저항선(실제 차트 저항 레벨 = 최근 고점)
+    targetPrice: number | null; // 목표가 = max(현재가*1.06, 저항선)
     targetPct: number | null;
-    stopLossPrice: number | null;
+    stopLossPrice: number | null; // 손절가 = 현재가*0.96(고정 -4%)
   };
 };
+
+const NO_DATA = "내용 없음";
 
 function sma(closes: number[], period: number): number | null {
   if (closes.length < period) return null;
@@ -43,7 +53,7 @@ function sma(closes: number[], period: number): number | null {
 // 추천 종목의 차트 근거를 붙일 때 이 함수를 그대로 재사용한다 — 같은 계산을
 // 두 곳에서 따로 구현하면 언젠가 서로 다른 말을 하게 된다.
 export function buildChartNote(closes: number[]): { note: string; recentHigh: number | null; support: number | null } {
-  if (closes.length < 5) return { note: "차트 데이터가 아직 부족해요.", recentHigh: null, support: null };
+  if (closes.length < 5) return { note: NO_DATA, recentHigh: null, support: null };
 
   const current = closes[closes.length - 1];
   const s5 = sma(closes, 5);
@@ -56,7 +66,7 @@ export function buildChartNote(closes: number[]): { note: string; recentHigh: nu
 
   let note: string;
   if (s5 === null) {
-    note = "5일선을 계산하기엔 데이터가 부족해요.";
+    note = NO_DATA;
   } else if (s20 === null) {
     note = current >= s5 ? "5일선 위에서 움직이는 중" : "5일선 아래로 내려온 상태";
   } else if (current >= s5 && current >= s20) {
@@ -72,9 +82,29 @@ export function buildChartNote(closes: number[]): { note: string; recentHigh: nu
   return { note, recentHigh, support };
 }
 
+// 실데이터 기반 — "원래 평균 얼마였는데 최근 5거래일 거래량이 몇% 늘었는지"를
+// 그대로 계산한다. 최근 5거래일은 비교 대상에서 빼고 그 직전 20거래일을
+// "평소" 기준으로 삼는다 — lib/weekly-prediction.ts의 종목 선정 단계에서도
+// 그대로 재사용해서 선정 근거와 상세 카드가 같은 숫자를 말하게 한다.
+export function buildVolumeNote(candles: { volume: number }[]): string {
+  if (candles.length < 10) return NO_DATA;
+
+  const recent = candles.slice(-5);
+  const recentAvg = recent.reduce((sum, c) => sum + c.volume, 0) / recent.length;
+
+  const baseline = candles.slice(0, -5).slice(-20);
+  if (baseline.length === 0) return NO_DATA;
+  const baselineAvg = baseline.reduce((sum, c) => sum + c.volume, 0) / baseline.length;
+  if (baselineAvg <= 0) return NO_DATA;
+
+  const pct = ((recentAvg - baselineAvg) / baselineAvg) * 100;
+  const dir = pct >= 0 ? "증가" : "감소";
+  return `평소(직전 ${baseline.length}거래일) 평균 ${Math.round(baselineAvg).toLocaleString()}주 → 최근 5거래일 평균 ${Math.round(recentAvg).toLocaleString()}주 (${Math.abs(pct).toFixed(0)}% ${dir})`;
+}
+
 // 실데이터 기반 — 최근 5거래일 연속 순매수 일수 + 누적 금액.
 function buildSupplyDemandNote(rows: { foreign: number; institution: number }[]): string {
-  if (rows.length === 0) return "수급 데이터를 가져오지 못했어요.";
+  if (rows.length === 0) return NO_DATA;
 
   function streak(pick: (r: { foreign: number; institution: number }) => number): number {
     let n = 0;
@@ -109,7 +139,7 @@ function buildSupplyDemandNote(rows: { foreign: number; institution: number }[])
 function buildFinancialSummary(
   history: { year: number; revenue: number; operatingProfit: number; netIncome: number }[]
 ): string {
-  if (history.length === 0) return "재무 데이터를 확인하지 못했어요.";
+  if (history.length === 0) return NO_DATA;
   const latest = history[history.length - 1];
   const prev = history.length > 1 ? history[history.length - 2] : null;
 
@@ -130,6 +160,7 @@ type GroundedInput = {
   sector?: string;
   theme?: string;
   chart: { note: string; recentHigh: number | null; support: number | null };
+  volumeNote: string;
   supplyDemand: string;
   financials: string;
   currentPrice: number | null;
@@ -227,6 +258,7 @@ export async function getCandidateDetails(candidates: CandidatePrediction[]): Pr
     sector: quotes[i]?.sector,
     theme: themeByName.get(c.name),
     chart: buildChartNote(charts[i].map((k) => k.close)),
+    volumeNote: buildVolumeNote(charts[i]),
     supplyDemand: buildSupplyDemandNote(trends[i]),
     financials: buildFinancialSummary(financials[i]),
     currentPrice: quotes[i]?.price ?? (charts[i].length > 0 ? charts[i][charts[i].length - 1].close : null),
@@ -238,30 +270,33 @@ export async function getCandidateDetails(candidates: CandidatePrediction[]): Pr
   for (const g of grounded) {
     const llm = narratives.get(g.candidate.name);
     const currentPrice = g.currentPrice;
-    // 목표가는 최소 +5% 기대수익은 보장한다 — 최근 고점(저항선)이 현재가보다
-    // 낮으면(이미 신고가 갱신 중) 저항선 역할을 못 하니 +5%를 쓰고, 저항선이
-    // 있어도 그게 현재가 대비 5% 미만 상승분이면(너무 가까운 저항선) 그대로
-    // 쓰지 않고 역시 +5%로 올려 잡는다 — 어느 경우든 LLM 추측이 아니라 규칙
-    // 기반 값.
+    // 매수타이밍(7번)은 항상 같은 규칙: 목표가는 최소 +6% 기대수익을 보장하고
+    // (저항선이 현재가보다 낮거나 5% 미만 위쪽이면 저항선 대신 +6%를 씀),
+    // 손절가는 현재가 대비 고정 -4% — 둘 다 LLM 추측이 아니라 규칙 기반 값.
+    // 지지선/저항선 자체는 buildChartNote가 계산한 실제 차트 레벨을 그대로 보여준다.
     const target =
       currentPrice !== null && currentPrice > 0
-        ? Math.max(currentPrice * 1.05, g.chart.recentHigh ?? 0)
+        ? Math.max(currentPrice * 1.06, g.chart.recentHigh ?? 0)
         : null;
+    const stopLoss = currentPrice !== null && currentPrice > 0 ? currentPrice * 0.96 : null;
     detailsByName.set(g.candidate.name, {
       name: g.candidate.name,
       code: g.candidate.code,
       themeTags: [g.sector, g.theme].filter((v, i, arr): v is string => !!v && arr.indexOf(v) === i),
       isThemeLeader: llm?.isThemeLeader ?? false,
-      businessSummary: llm?.businessSummary || "사업 정보를 아직 확인하지 못했어요.",
-      aiReasoning: g.candidate.reasoning,
-      marketContext: llm?.marketContext || "최근 관련 시황 정보가 부족해요.",
+      businessSummary: llm?.businessSummary || NO_DATA,
+      aiReasoning: g.candidate.reasoning || NO_DATA,
+      marketContext: llm?.marketContext || NO_DATA,
+      volumeNote: g.volumeNote,
       supplyDemand: g.supplyDemand,
       chartNote: g.chart.note,
       financialSummary: g.financials,
       strategy: {
+        support: g.chart.support,
+        resistance: g.chart.recentHigh,
         targetPrice: target,
         targetPct: target !== null && currentPrice ? ((target - currentPrice) / currentPrice) * 100 : null,
-        stopLossPrice: g.chart.support,
+        stopLossPrice: stopLoss,
       },
     });
   }
@@ -274,13 +309,14 @@ export async function getCandidateDetails(candidates: CandidatePrediction[]): Pr
         code: c.code,
         themeTags: [],
         isThemeLeader: false,
-        businessSummary: "종목코드가 확인되지 않아 상세 정보를 불러오지 못했어요.",
-        aiReasoning: c.reasoning,
-        marketContext: "-",
-        supplyDemand: "-",
-        chartNote: "-",
-        financialSummary: "-",
-        strategy: { targetPrice: null, targetPct: null, stopLossPrice: null },
+        businessSummary: NO_DATA,
+        aiReasoning: c.reasoning || NO_DATA,
+        marketContext: NO_DATA,
+        volumeNote: NO_DATA,
+        supplyDemand: NO_DATA,
+        chartNote: NO_DATA,
+        financialSummary: NO_DATA,
+        strategy: { support: null, resistance: null, targetPrice: null, targetPct: null, stopLossPrice: null },
       }
   );
 }
