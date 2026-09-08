@@ -7,9 +7,11 @@ import type { TechnicalSignal } from "@/lib/technical-signals";
 // Shared "종목 근거" block styling + DetailCard — used by both today's live
 // report (components/bro/prediction-report.tsx) and 기록보관소's past-day
 // detail view (components/bro/archive-prediction-detail.tsx), so opening an
-// archived day shows the exact same rich per-candidate breakdown (사업요약,
-// AI 추천 근거, 시황, 수급, 차트, 재무, 전략 가이드) plus the day-by-day
-// 누적수익률과 기술적 시그널, instead of a thin summary-only version.
+// archived day shows the exact same rich per-candidate breakdown plus the
+// day-by-day 누적수익률과 기술적 시그널, instead of a thin summary-only version.
+// 근거는 항상 사업 요약 + 1~7번 고정 순서(시황/거래량/차트/재료/수급/재무/
+// 매수타이밍) — 데이터 없는 항목은 "내용 없음"으로 그대로 보여준다
+// (lib/candidate-detail.ts의 CandidateDetail이 이 틀에 맞춰 채워줌).
 
 export const blockStyle: React.CSSProperties = {
   background: "var(--panel2)",
@@ -71,6 +73,23 @@ function Field({ label, value }: { label: string; value: string }) {
       {value}
     </div>
   );
+}
+
+// 7번 "매수타이밍" 한 줄 — 지지선/저항선은 실제 차트 레벨을 그대로, 목표/손절은
+// 항상 같은 규칙(기대수익 최소 +6%, 손절 -4%)이라 종목마다 문구가 달라지지
+// 않는다. 데이터가 아예 없는 후보(코드 미확인 등)는 통째로 "내용 없음".
+function buyTimingText(s: CandidateDetail["strategy"]): string {
+  if (s.support === null && s.resistance === null && s.targetPrice === null && s.stopLossPrice === null) {
+    return "내용 없음";
+  }
+  const supportPart = s.support !== null ? `지지선 ${Math.round(s.support).toLocaleString()}원` : "지지선 내용 없음";
+  const resistancePart =
+    s.resistance !== null ? `저항선 ${Math.round(s.resistance).toLocaleString()}원` : "저항선 내용 없음";
+  const rulePart =
+    s.targetPrice !== null && s.stopLossPrice !== null
+      ? `기대수익 최소 +6%(목표 ${Math.round(s.targetPrice).toLocaleString()}원) · 손절 -4%(${Math.round(s.stopLossPrice).toLocaleString()}원)`
+      : null;
+  return [supportPart, resistancePart, rulePart].filter(Boolean).join(" / ");
 }
 
 // 상승=빨강/하락=파랑 규칙 — components/bro/candidate-tracker.tsx와 동일.
@@ -183,46 +202,14 @@ export function DetailCard({
         )}
       </div>
 
-      <Field label="사업 한 줄 요약" value={d.businessSummary} />
-      <Field label="AI 추천 근거" value={d.aiReasoning} />
-      <Field label="시황" value={d.marketContext} />
-      <Field label="수급 상태" value={d.supplyDemand} />
-      <Field label="차트" value={d.chartNote} />
-      <Field label="재무요약" value={d.financialSummary} />
-
-      <div style={fieldLineStyle}>
-        <span style={fieldLabelStyle}>■ 전략 가이드:</span>
-        <div style={{ paddingLeft: 14, marginTop: 4, display: "flex", flexDirection: "column", gap: 3 }}>
-          <div>
-            - 목표 구간:{" "}
-            {d.strategy.targetPrice !== null ? (
-              <>
-                <span style={{ fontFamily: "var(--mono)", fontWeight: 700 }}>
-                  {Math.round(d.strategy.targetPrice).toLocaleString()}원
-                </span>{" "}
-                {d.strategy.targetPct !== null && (
-                  <span style={{ fontFamily: "var(--mono)", color: chgColorVar(d.strategy.targetPct) }}>
-                    (기대수익 {formatChg(d.strategy.targetPct)})
-                  </span>
-                )}
-              </>
-            ) : (
-              "데이터 부족"
-            )}
-          </div>
-          <div>
-            - 지지/손절선:{" "}
-            {d.strategy.stopLossPrice !== null ? (
-              <span style={{ fontFamily: "var(--mono)", fontWeight: 700 }}>
-                {Math.round(d.strategy.stopLossPrice).toLocaleString()}원
-              </span>
-            ) : (
-              "데이터 부족"
-            )}{" "}
-            이탈 시 비중 축소
-          </div>
-        </div>
-      </div>
+      <Field label="사업 요약" value={d.businessSummary} />
+      <Field label="1. 시황" value={d.marketContext} />
+      <Field label="2. 거래량" value={d.volumeNote} />
+      <Field label="3. 차트" value={d.chartNote} />
+      <Field label="4. 재료" value={d.aiReasoning} />
+      <Field label="5. 수급" value={d.supplyDemand} />
+      <Field label="6. 재무" value={d.financialSummary} />
+      <Field label="7. 매수타이밍" value={buyTimingText(d.strategy)} />
 
       {series && series.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 2 }}>
