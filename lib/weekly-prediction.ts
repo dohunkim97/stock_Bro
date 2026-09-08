@@ -7,7 +7,7 @@ import { resolveStock } from "@/lib/market-data";
 import { fetchKisCodeMaster, findInCodeMaster } from "@/lib/kis-code-master";
 import { fetchKisChart } from "@/lib/kis-chart";
 import { computeTechnicalSignals, LONG_TERM_SIGNAL_CANDLES } from "@/lib/technical-signals";
-import { buildVolumeNote } from "@/lib/candidate-detail";
+import { buildVolumeNote, getCandidateDetails } from "@/lib/candidate-detail";
 
 const SYSTEM_PROMPT = [
   "너는 한국 주식시장의 향후 5거래일 유망 종목을 뽑는 애널리스트야.",
@@ -180,9 +180,16 @@ export async function generateWeeklyPrediction(): Promise<void> {
   const candidateList: CandidatePrediction[] = rawCandidates.map((c) => ({ ...c, code: codeByName.get(c.name) }));
   const candidates = JSON.stringify(candidateList);
 
+  // 종목별 근거(시황/거래량/차트/재료/수급/재무/매수타이밍)를 여기서 딱 한
+  // 번만 신중하게 계산해서 그대로 저장해둔다 — 안 그러면 리포트를 볼 때마다
+  // 실시간 시세·수급·재무·LLM을 다시 불러서 새로고침할 때마다 값이 나타났다
+  // 사라졌다 바뀌는 문제가 생긴다. 컴포넌트는 이제 이 저장된 값을 그대로
+  // 보여주기만 하고, 다음 날 새 리포트가 나와야만 갱신된다.
+  const details = candidateList.length > 0 ? JSON.stringify(await getCandidateDetails(candidateList)) : "[]";
+
   await prisma.weeklyPrediction.upsert({
     where: { forDate },
-    create: { forDate, summary: parsed.summary, sectors, candidates },
-    update: { summary: parsed.summary, sectors, candidates },
+    create: { forDate, summary: parsed.summary, sectors, candidates, details },
+    update: { summary: parsed.summary, sectors, candidates, details },
   });
 }

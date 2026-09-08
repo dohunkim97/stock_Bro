@@ -1,7 +1,7 @@
 import { getLatestPrediction, parsePredictionCandidates, parsePredictionSectors } from "@/lib/prediction-scoring";
 import { formatDateLabel } from "@/lib/dates";
 import { renderBold } from "@/components/ui/rich-text";
-import { getCandidateDetails } from "@/lib/candidate-detail";
+import { getCandidateDetails, parseStoredCandidateDetails } from "@/lib/candidate-detail";
 import { fetchKisChart } from "@/lib/kis-chart";
 import { computeTechnicalSignals, LONG_TERM_SIGNAL_CANDLES } from "@/lib/technical-signals";
 import { blockStyle, blockHeaderStyle, badgeStyle, blockLabelStyle, DetailCard } from "./detail-card";
@@ -44,11 +44,14 @@ export async function PredictionReport() {
 
   const sectors = parsePredictionSectors(latest.sectors);
   const candidates = parsePredictionCandidates(latest.candidates);
-  // 종목 근거 카드 안에 CandidateTracker(우측 예상종목 위젯)와 동일한 기술적
-  // 시그널을 같이 보여준다 — 같은 근거를 두 군데서 다르게 보이지 않게, 차트
-  // 데이터도 같은 fetchKisChart+computeTechnicalSignals로 계산한다.
+  // 종목 근거는 생성 시점에 딱 한 번 계산해 저장해둔 값을 그대로 쓴다 —
+  // 매번 실시간 시세/수급/재무/LLM을 다시 불러서 값이 나타났다 사라졌다
+  // 바뀌지 않게 하기 위함(lib/weekly-prediction.ts가 저장). 저장된 값이
+  // 없는 옛 레코드(마이그레이션 이전)만 그때 즉석에서 계산한다.
+  // 기술적 시그널(CandidateTracker와 동일)은 순수 차트 계산이라 라이브로 유지.
+  const stored = parseStoredCandidateDetails(latest.details);
   const [details, candles] = await Promise.all([
-    candidates.length > 0 ? getCandidateDetails(candidates) : Promise.resolve([]),
+    stored ?? (candidates.length > 0 ? getCandidateDetails(candidates) : Promise.resolve([])),
     Promise.all(candidates.map((c) => (c.code ? fetchKisChart(c.code, "D", LONG_TERM_SIGNAL_CANDLES) : Promise.resolve([])))),
   ]);
   const signalsByName = new Map(candidates.map((c, i) => [c.name, computeTechnicalSignals(candles[i])]));

@@ -42,6 +42,20 @@ export type CandidateDetail = {
 
 const NO_DATA = "내용 없음";
 
+// WeeklyPrediction.details에 생성 시점 딱 한 번 저장해둔 JSON을 다시 읽어올
+// 때 쓴다 — 형태가 살짝 어긋난 옛 레코드나 파싱 실패는 null로 돌려줘서
+// 호출부가 그때만 라이브로 다시 계산하도록 유도한다(완전히 깨지진 않게).
+export function parseStoredCandidateDetails(raw: string | null | undefined): CandidateDetail[] | null {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed as CandidateDetail[];
+  } catch {
+    return null;
+  }
+}
+
 function sma(closes: number[], period: number): number | null {
   if (closes.length < period) return null;
   const slice = closes.slice(closes.length - period);

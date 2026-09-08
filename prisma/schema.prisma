@@ -175,6 +175,12 @@ model WeeklyPrediction {
   summary    String
   sectors    String
   candidates String
+  // 종목별 근거(사업요약/시황/거래량/차트/재료/수급/재무/매수타이밍)를 생성
+  // 시점에 딱 한 번 계산해서 그대로 굳혀 저장한 JSON(CandidateDetail[]) —
+  // 페이지를 새로고침할 때마다 실시간 시세/수급/LLM을 다시 불러서 값이
+  // 나타났다 사라졌다 바뀌는 걸 막기 위함. null이면(마이그레이션 이전 옛
+  // 레코드) 호출부가 그때만 예전처럼 즉석에서 계산해 보여준다.
+  details    String?
   createdAt  DateTime @default(now())
 }
 
