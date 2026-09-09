@@ -27,6 +27,19 @@ function todayKst(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date()).replaceAll("-", "");
 }
 
+// list.json/document.xml 콜 자체는 실측 1초 안쪽(icn1 프로덕션에서 각각
+// 900ms/600ms대)이라 15초 같은 고정 타임아웃을 걸면 오히려 위험하다 —
+// 콜드 스타트(람다 인스턴스가 이 라우트를 처음 맡을 때, 핸들러가 실행되기
+// 전 초기화에 드는 시간)가 실측 15초 이상 걸릴 수 있어서, 핸들러 안에서
+// 시작하는 각 fetch가 그 여유 시간을 다 못 받으면 실제로는 멀쩡히 응답
+// 올 콜이 중간에 잘려 "찾지 못했어요"로 잘못 보이게 된다(실측). 그래서
+// 개별 고정 타임아웃 대신, /api/bro/field-detail의 maxDuration(30초) 안에서
+// LLM 요약 몫을 남겨두고 남은 시간을 그때그때 나눠 쓰는 공유 데드라인을
+// 쓴다.
+function remainingMs(deadlineAt: number, floor = 3000): number {
+  return Math.max(floor, deadlineAt - Date.now());
+}
+
 // ---------- 1) corp_code 매핑 (종목코드 → DART 고유번호) ----------
 //
 // corpCode.xml은 비상장사까지 다 합쳐 3.6MB 압축/30MB 해제 크기라, 요청마다
@@ -45,7 +58,7 @@ const STATIC_CORP_MAP: Record<string, CorpEntry> = corpCodeSnapshot as Record<st
 let liveCorpMapCache: { byStockCode: Map<string, CorpEntry>; fetchedAt: number } | null = null;
 const LIVE_CORP_MAP_TTL_MS = 24 * 60 * 60 * 1000;
 
-async function loadLiveCorpMap(): Promise<Map<string, CorpEntry>> {
+async function loadLiveCorpMap(deadlineAt: number): Promise<Map<string, CorpEntry>> {
   if (liveCorpMapCache && Date.now() - liveCorpMapCache.fetchedAt < LIVE_CORP_MAP_TTL_MS) {
     return liveCorpMapCache.byStockCode;
   }
@@ -53,7 +66,9 @@ async function loadLiveCorpMap(): Promise<Map<string, CorpEntry>> {
   if (!key) return liveCorpMapCache?.byStockCode ?? new Map();
 
   try {
-    const res = await fetch(`${DART_BASE}/corpCode.xml?crtfc_key=${key}`, { signal: AbortSignal.timeout(15000) });
+    const res = await fetch(`${DART_BASE}/corpCode.xml?crtfc_key=${key}`, {
+      signal: AbortSignal.timeout(remainingMs(deadlineAt, 5000)),
+    });
     if (!res.ok) return liveCorpMapCache?.byStockCode ?? new Map();
     const buf = Buffer.from(await res.arrayBuffer());
     const zip = new AdmZip(buf);
@@ -77,12 +92,12 @@ async function loadLiveCorpMap(): Promise<Map<string, CorpEntry>> {
   }
 }
 
-export async function getCorpCode(stockCode: string): Promise<string | null> {
+export async function getCorpCode(stockCode: string, deadlineAt: number = Date.now() + 20000): Promise<string | null> {
   const fromSnapshot = STATIC_CORP_MAP[stockCode];
   if (fromSnapshot) return fromSnapshot.corpCode;
   // 스냅샷 이후 새로 상장된 종목일 때만 라이브 조회로 보정 — 흔치 않은
   // 경로라 여기서만 느린 전체 목록 다운로드 비용을 감수한다.
-  const live = await loadLiveCorpMap();
+  const live = await loadLiveCorpMap(deadlineAt);
   return live.get(stockCode)?.corpCode ?? null;
 }
 
@@ -90,7 +105,7 @@ export async function getCorpCode(stockCode: string): Promise<string | null> {
 
 export type PeriodicReport = { rceptNo: string; reportName: string; reportDate: string };
 
-export async function fetchLatestPeriodicReport(corpCode: string): Promise<PeriodicReport | null> {
+export async function fetchLatestPeriodicReport(corpCode: string, deadlineAt: number): Promise<PeriodicReport | null> {
   const key = apiKey();
   if (!key) return null;
   const end = todayKst();
@@ -105,7 +120,9 @@ export async function fetchLatestPeriodicReport(corpCode: string): Promise<Perio
       pblntty: "A",
       page_count: "100",
     });
-    const res = await fetch(`${DART_BASE}/list.json?${params.toString()}`, { signal: AbortSignal.timeout(15000) });
+    const res = await fetch(`${DART_BASE}/list.json?${params.toString()}`, {
+      signal: AbortSignal.timeout(remainingMs(deadlineAt)),
+    });
     if (!res.ok) return null;
     const json = await res.json();
     if (json.status !== "000" || !Array.isArray(json.list)) return null;
@@ -196,12 +213,12 @@ export function dartTablesToText(tables: DartTable[], maxChars = 3500): string {
   return joined.length > maxChars ? joined.slice(0, maxChars) + " …(생략)" : joined;
 }
 
-async function fetchDocumentXml(rceptNo: string): Promise<string | null> {
+async function fetchDocumentXml(rceptNo: string, deadlineAt: number): Promise<string | null> {
   const key = apiKey();
   if (!key) return null;
   try {
     const res = await fetch(`${DART_BASE}/document.xml?crtfc_key=${key}&rcept_no=${rceptNo}`, {
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(remainingMs(deadlineAt)),
     });
     if (!res.ok) return null;
     const buf = Buffer.from(await res.arrayBuffer());
@@ -213,8 +230,8 @@ async function fetchDocumentXml(rceptNo: string): Promise<string | null> {
   }
 }
 
-export async function fetchDartBusinessRaw(rceptNo: string): Promise<DartBusinessRaw | null> {
-  const xml = await fetchDocumentXml(rceptNo);
+export async function fetchDartBusinessRaw(rceptNo: string, deadlineAt: number): Promise<DartBusinessRaw | null> {
+  const xml = await fetchDocumentXml(rceptNo, deadlineAt);
   if (!xml) return null;
 
   const overviewRaw = sectionBetween(xml, "1\\. 사업의 개요", "2\\. 주요 제품 및 서비스");
@@ -246,13 +263,21 @@ export type DartBusinessBundle = {
   raw: DartBusinessRaw;
 };
 
+// /api/bro/field-detail의 maxDuration은 30초지만 그 뒤에 LLM 요약 호출이
+// 하나 더 있어서(lib/field-detail.ts) 이 함수 혼자 30초를 다 쓰면 안 된다 —
+// 20초까지만 쓰고 나머지는 LLM 몫으로 남긴다. candidate-detail.ts처럼
+// 여러 종목을 병렬로 부르는 호출부는 그쪽 자체 예산이 있어 이 20초가
+// 넉넉한 상한이 된다.
+const BUNDLE_BUDGET_MS = 20000;
+
 export async function fetchDartBusinessBundle(stockCode: string): Promise<DartBusinessBundle | null> {
   if (!apiKey()) return null;
-  const corpCode = await getCorpCode(stockCode);
+  const deadlineAt = Date.now() + BUNDLE_BUDGET_MS;
+  const corpCode = await getCorpCode(stockCode, deadlineAt);
   if (!corpCode) return null;
-  const report = await fetchLatestPeriodicReport(corpCode);
+  const report = await fetchLatestPeriodicReport(corpCode, deadlineAt);
   if (!report) return null;
-  const raw = await fetchDartBusinessRaw(report.rceptNo);
+  const raw = await fetchDartBusinessRaw(report.rceptNo, deadlineAt);
   if (!raw) return null;
   return { reportName: report.reportName, reportDate: report.reportDate, dartUrl: dartDocumentUrl(report.rceptNo), raw };
 }
