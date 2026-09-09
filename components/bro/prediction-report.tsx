@@ -1,10 +1,9 @@
-import { getLatestPrediction, parsePredictionCandidates, parsePredictionSectors } from "@/lib/prediction-scoring";
+import { getLatestPrediction, parsePredictionCandidates } from "@/lib/prediction-scoring";
 import { formatDateLabel } from "@/lib/dates";
-import { renderBold } from "@/components/ui/rich-text";
 import { getCandidateDetails, parseStoredCandidateDetails } from "@/lib/candidate-detail";
 import { fetchKisChart } from "@/lib/kis-chart";
 import { computeTechnicalSignals, LONG_TERM_SIGNAL_CANDLES } from "@/lib/technical-signals";
-import { blockStyle, blockHeaderStyle, badgeStyle, blockLabelStyle, DetailCard } from "./detail-card";
+import { DetailCard } from "./detail-card";
 
 const panelStyle: React.CSSProperties = {
   background: "var(--panel)",
@@ -25,10 +24,12 @@ const sectionTitleStyle: React.CSSProperties = {
   marginBottom: 14,
 };
 
-// 이번 주 Golgoo 예상 리포트 — CandidateTracker(4번, 예상종목 라이브 위젯)의
-// 근거가 되는 전체 글: 이번 주 요약 + 섹터별 예상 근거 + 종목별 상세 근거.
-// 기록보관소(ArchiveHub의 예상리포트 탭, 지난 주들의 채점 결과)와는 별개로
-// "이번 주" 예측 한 건만 보여준다.
+// 오늘 Golgoo 예상 리포트 — 요약/주목 섹터 없이 예상 종목(DetailCard) 카드만
+// 보여준다(사용자 요청: 내용/주목 섹터는 빼고 예상 종목에 집중). 각 카드의
+// 7항목(사업요약/시황/거래량/차트/재료/수급/재무)을 클릭하면
+// components/bro/field-detail-modal.tsx가 그 항목 하나만 전문 분석가 수준으로
+// 파고드는 모달을 연다. 기록보관소(ArchiveHub의 예상리포트 탭, 지난 날들의
+// 채점 결과)와는 별개로 "오늘" 예측 한 건만 보여준다.
 export async function PredictionReport() {
   const latest = await getLatestPrediction();
   if (!latest) {
@@ -42,7 +43,6 @@ export async function PredictionReport() {
     );
   }
 
-  const sectors = parsePredictionSectors(latest.sectors);
   const candidates = parsePredictionCandidates(latest.candidates);
   // 종목 근거는 생성 시점에 딱 한 번 계산해 저장해둔 값을 그대로 쓴다 —
   // 매번 실시간 시세/수급/재무/LLM을 다시 불러서 값이 나타났다 사라졌다
@@ -60,48 +60,15 @@ export async function PredictionReport() {
     <section style={panelStyle}>
       <div style={sectionTitleStyle}>📝 Golgoo 예상 리포트 · {formatDateLabel(latest.forDate)} (5거래일 추적)</div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <div style={blockStyle}>
-          <div style={blockHeaderStyle}>
-            <span style={badgeStyle}>1</span>
-            <span style={blockLabelStyle}>내용</span>
-          </div>
-          <p style={{ fontSize: 13, lineHeight: 1.7, color: "var(--text)", margin: 0 }}>
-            {renderBold(latest.summary)}
-          </p>
+      {candidates.length > 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {details.map((d) => (
+            <DetailCard key={d.name} d={d} signals={signalsByName.get(d.name)} />
+          ))}
         </div>
-
-        {sectors.length > 0 && (
-          <div style={blockStyle}>
-            <div style={blockHeaderStyle}>
-              <span style={badgeStyle}>2</span>
-              <span style={blockLabelStyle}>주목 섹터</span>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {sectors.map((s) => (
-                <div key={s.name} style={{ fontSize: 12, lineHeight: 1.6 }}>
-                  <span style={{ fontWeight: 700, color: "var(--accent)" }}>{s.name}</span>
-                  <span style={{ color: "var(--dim)" }}> — {renderBold(s.reasoning)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {candidates.length > 0 && (
-          <div style={blockStyle}>
-            <div style={blockHeaderStyle}>
-              <span style={badgeStyle}>3</span>
-              <span style={blockLabelStyle}>종목 근거</span>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {details.map((d) => (
-                <DetailCard key={d.name} d={d} signals={signalsByName.get(d.name)} />
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+      ) : (
+        <div style={{ fontSize: 12.5, color: "var(--faint)" }}>오늘 예상 종목이 아직 없어요.</div>
+      )}
     </section>
   );
 }

@@ -1,9 +1,14 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
 import { chgColorVar, formatChg } from "@/lib/format";
 import type { CandidateDetail } from "@/lib/candidate-detail";
 import { TRACKING_WINDOW_DAYS, type DailyChangePoint } from "@/lib/candidate-tracking";
 import type { TechnicalSignal } from "@/lib/technical-signals";
 import { SENTIMENT_REGEX, sentimentColorVar } from "@/lib/sentiment";
+import type { FieldKey } from "@/lib/field-detail";
+import { FieldDetailModal } from "./field-detail-modal";
 
 // Shared "종목 근거" block styling + DetailCard — used by both today's live
 // report (components/bro/prediction-report.tsx) and 기록보관소's past-day
@@ -108,9 +113,22 @@ function renderFieldValue(text: string): React.ReactNode {
 
 // verdict: 이 항목이 실제로 매수에 우호적인 신호인지(true=O/빨강),
 // 아닌지(false=X/파랑) — 판단 불가(null/undefined)면 아예 안 띄운다.
-function Field({ label, value, verdict }: { label: string; value: string; verdict?: boolean | null }) {
-  return (
-    <div style={fieldLineStyle}>
+// onClick이 있으면(7항목 중 실제로 심층 모달이 있는 것들) 이 줄 전체가
+// 버튼이 되어 클릭 시 그 항목만 전문가 수준으로 파고드는 모달을 연다 —
+// components/bro/field-detail-modal.tsx.
+function Field({
+  label,
+  value,
+  verdict,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  verdict?: boolean | null;
+  onClick?: () => void;
+}) {
+  const content = (
+    <>
       <span style={fieldLabelStyle}>■ {label}: </span>
       {renderFieldValue(value)}
       {verdict !== undefined && verdict !== null && (
@@ -118,7 +136,33 @@ function Field({ label, value, verdict }: { label: string; value: string; verdic
           {verdict ? "(O)" : "(X)"}
         </strong>
       )}
-    </div>
+      {onClick && <span style={{ marginLeft: 6, color: "var(--faint)", fontSize: 10.5 }}>자세히 보기 ›</span>}
+    </>
+  );
+
+  if (!onClick) return <div style={fieldLineStyle}>{content}</div>;
+
+  return (
+    <button
+      onClick={onClick}
+      className="hover-accent-border"
+      style={{
+        ...fieldLineStyle,
+        display: "block",
+        width: "100%",
+        textAlign: "left",
+        background: "none",
+        border: "1px solid transparent",
+        borderRadius: 6,
+        padding: "2px 4px",
+        margin: "-2px -4px",
+        cursor: "pointer",
+        font: "inherit",
+        color: "inherit",
+      }}
+    >
+      {content}
+    </button>
   );
 }
 
@@ -183,6 +227,9 @@ export function DetailCard({
   series?: DailyChangePoint[];
   signals?: TechnicalSignal[];
 }) {
+  const [openField, setOpenField] = useState<FieldKey | null>(null);
+  const openFieldModal = (field: FieldKey) => () => setOpenField(field);
+
   const nameBlock = (
     <span style={{ fontWeight: 800, fontSize: 13.5 }}>
       {d.name}
@@ -249,13 +296,13 @@ export function DetailCard({
         )}
       </div>
 
-      <Field label="사업 요약" value={d.businessSummary} />
-      <Field label="1. 시황" value={d.marketContext} verdict={d.verdicts.marketContext} />
-      <Field label="2. 거래량" value={d.volumeNote} verdict={d.verdicts.volume} />
-      <Field label="3. 차트" value={d.chartNote} verdict={d.verdicts.chart} />
-      <Field label="4. 재료" value={d.aiReasoning} verdict={d.verdicts.material} />
-      <Field label="5. 수급" value={d.supplyDemand} verdict={d.verdicts.supplyDemand} />
-      <Field label="6. 재무" value={d.financialSummary} verdict={d.verdicts.financial} />
+      <Field label="사업 요약" value={d.businessSummary} onClick={openFieldModal("business")} />
+      <Field label="1. 시황" value={d.marketContext} verdict={d.verdicts.marketContext} onClick={openFieldModal("market")} />
+      <Field label="2. 거래량" value={d.volumeNote} verdict={d.verdicts.volume} onClick={openFieldModal("volume")} />
+      <Field label="3. 차트" value={d.chartNote} verdict={d.verdicts.chart} onClick={openFieldModal("chart")} />
+      <Field label="4. 재료" value={d.aiReasoning} verdict={d.verdicts.material} onClick={openFieldModal("material")} />
+      <Field label="5. 수급" value={d.supplyDemand} verdict={d.verdicts.supplyDemand} onClick={openFieldModal("supply")} />
+      <Field label="6. 재무" value={d.financialSummary} verdict={d.verdicts.financial} onClick={openFieldModal("financial")} />
       <Field label="7. 매수타이밍" value={buyTimingText(d.strategy)} />
 
       {series && series.length > 0 && (
@@ -344,6 +391,15 @@ export function DetailCard({
           ))}
         </div>
       )}
+
+      <FieldDetailModal
+        open={openField !== null}
+        onClose={() => setOpenField(null)}
+        field={openField}
+        code={d.code}
+        name={d.name}
+        reasoning={d.aiReasoning}
+      />
     </div>
   );
 }

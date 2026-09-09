@@ -215,6 +215,23 @@ export function findSupportResistanceLevels(candles: ChartCandle[], tolerancePct
   return levels.sort((a, b) => b.touches - a.touches);
 }
 
+// findSupportResistanceLevels 자체는 터치 횟수 순으로 정렬돼 있어서, 그냥
+// [0]/[1]을 집으면 "예전에 아무리 많이 부딪혔어도 지금 가격과 동떨어진"
+// 레벨이 나올 수 있다(예: 1년 전 4,000원대 레벨이 9회 터치로 1위인데 지금은
+// 13,000원대) — components/stock/price-chart.tsx가 이미 "현재가에 가장
+// 가까운 지지/저항" 기준으로 역할을 다시 매기는 것과 같은 원리를, 매수
+// 타이밍 계산처럼 라벨/색상 없이 값만 필요한 곳에서 쓰기 위해 간단한
+// 버전으로 뽑아둔다.
+export function nearestSupportResistance(
+  levels: SupportResistanceLevel[],
+  currentPrice: number | null
+): { support: SupportResistanceLevel | null; resistance: SupportResistanceLevel | null } {
+  if (currentPrice === null || levels.length === 0) return { support: null, resistance: null };
+  const supports = levels.filter((l) => l.price <= currentPrice).sort((a, b) => b.price - a.price);
+  const resistances = levels.filter((l) => l.price > currentPrice).sort((a, b) => a.price - b.price);
+  return { support: supports[0] ?? null, resistance: resistances[0] ?? null };
+}
+
 // --- 지지/저항 신호: 저항 강력 돌파(1,3), 지지 확인(1,2) ---
 function supportResistanceSignals(candles: ChartCandle[]): TechnicalSignal[] {
   if (candles.length < 30) return [];
