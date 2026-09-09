@@ -28,50 +28,62 @@ function todayKst(): string {
 }
 
 // ---------- 1) corp_code 매핑 (종목코드 → DART 고유번호) ----------
+//
+// corpCode.xml은 비상장사까지 다 합쳐 3.6MB 압축/30MB 해제 크기라, 요청마다
+// (혹은 콜드 스타트마다) 받아서 파싱하면 서버리스 함수 제한 시간(30초)을
+// 넘길 수 있다(실측: 프로덕션에서 FUNCTION_INVOCATION_TIMEOUT 발생, 로컬
+// 개발 서버에서는 몇 초로 멀쩡했던 것과 대조적 — 네트워크/CPU 여유가 다른
+// 서버리스 환경 특성). 그래서 상장사만(비상장은 stock_code가 공백이라
+// 애초에 필요 없음) 걸러낸 매핑을 lib/data/dart-corp-codes.json으로 미리
+// 만들어 저장소에 커밋해두고, 요청 때는 이 정적 파일만 읽는다(즉시 응답).
+// 최근 상장해서 이 스냅샷에 아직 없는 종목만 라이브 API로 한 번 보정한다.
+import corpCodeSnapshot from "@/lib/data/dart-corp-codes.json";
 
-type CorpEntry = { corpCode: string; corpName: string; stockCode: string };
+type CorpEntry = { corpCode: string; corpName: string };
+const STATIC_CORP_MAP: Record<string, CorpEntry> = corpCodeSnapshot as Record<string, CorpEntry>;
 
-let corpMapCache: { byStockCode: Map<string, CorpEntry>; fetchedAt: number } | null = null;
-const CORP_MAP_TTL_MS = 24 * 60 * 60 * 1000;
+let liveCorpMapCache: { byStockCode: Map<string, CorpEntry>; fetchedAt: number } | null = null;
+const LIVE_CORP_MAP_TTL_MS = 24 * 60 * 60 * 1000;
 
-async function loadCorpMap(): Promise<Map<string, CorpEntry>> {
-  if (corpMapCache && Date.now() - corpMapCache.fetchedAt < CORP_MAP_TTL_MS) {
-    return corpMapCache.byStockCode;
+async function loadLiveCorpMap(): Promise<Map<string, CorpEntry>> {
+  if (liveCorpMapCache && Date.now() - liveCorpMapCache.fetchedAt < LIVE_CORP_MAP_TTL_MS) {
+    return liveCorpMapCache.byStockCode;
   }
   const key = apiKey();
-  if (!key) return corpMapCache?.byStockCode ?? new Map();
+  if (!key) return liveCorpMapCache?.byStockCode ?? new Map();
 
   try {
-    const res = await fetch(`${DART_BASE}/corpCode.xml?crtfc_key=${key}`);
-    if (!res.ok) return corpMapCache?.byStockCode ?? new Map();
+    const res = await fetch(`${DART_BASE}/corpCode.xml?crtfc_key=${key}`, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) return liveCorpMapCache?.byStockCode ?? new Map();
     const buf = Buffer.from(await res.arrayBuffer());
     const zip = new AdmZip(buf);
     const entry = zip.getEntries()[0];
-    if (!entry) return corpMapCache?.byStockCode ?? new Map();
+    if (!entry) return liveCorpMapCache?.byStockCode ?? new Map();
     const xml = zip.readAsText(entry);
 
     const byStockCode = new Map<string, CorpEntry>();
-    // 개별 XML 파싱 라이브러리 없이도 <list>...</list> 반복 구조가 단순해서
-    // 블록 단위로 잘라 정규식으로 세 필드만 뽑는다(3.6MB 전체를 DOM으로
-    // 파싱하는 것보다 훨씬 가볍다).
     const blocks = xml.split("<list>").slice(1);
     for (const b of blocks) {
       const stockCode = b.match(/<stock_code>([^<]*)<\/stock_code>/)?.[1]?.trim() ?? "";
-      if (!stockCode) continue; // 상장사만(비상장은 stock_code가 공백)
+      if (!stockCode) continue;
       const corpCode = b.match(/<corp_code>([^<]*)<\/corp_code>/)?.[1] ?? "";
       const corpName = b.match(/<corp_name>([^<]*)<\/corp_name>/)?.[1] ?? "";
-      if (corpCode) byStockCode.set(stockCode, { corpCode, corpName, stockCode });
+      if (corpCode) byStockCode.set(stockCode, { corpCode, corpName });
     }
-    corpMapCache = { byStockCode, fetchedAt: Date.now() };
+    liveCorpMapCache = { byStockCode, fetchedAt: Date.now() };
     return byStockCode;
   } catch {
-    return corpMapCache?.byStockCode ?? new Map();
+    return liveCorpMapCache?.byStockCode ?? new Map();
   }
 }
 
 export async function getCorpCode(stockCode: string): Promise<string | null> {
-  const map = await loadCorpMap();
-  return map.get(stockCode)?.corpCode ?? null;
+  const fromSnapshot = STATIC_CORP_MAP[stockCode];
+  if (fromSnapshot) return fromSnapshot.corpCode;
+  // 스냅샷 이후 새로 상장된 종목일 때만 라이브 조회로 보정 — 흔치 않은
+  // 경로라 여기서만 느린 전체 목록 다운로드 비용을 감수한다.
+  const live = await loadLiveCorpMap();
+  return live.get(stockCode)?.corpCode ?? null;
 }
 
 // ---------- 2) 최신 정기보고서(사업/반기/분기보고서) 찾기 ----------
@@ -93,7 +105,7 @@ export async function fetchLatestPeriodicReport(corpCode: string): Promise<Perio
       pblntty: "A",
       page_count: "100",
     });
-    const res = await fetch(`${DART_BASE}/list.json?${params.toString()}`);
+    const res = await fetch(`${DART_BASE}/list.json?${params.toString()}`, { signal: AbortSignal.timeout(15000) });
     if (!res.ok) return null;
     const json = await res.json();
     if (json.status !== "000" || !Array.isArray(json.list)) return null;
@@ -188,7 +200,9 @@ async function fetchDocumentXml(rceptNo: string): Promise<string | null> {
   const key = apiKey();
   if (!key) return null;
   try {
-    const res = await fetch(`${DART_BASE}/document.xml?crtfc_key=${key}&rcept_no=${rceptNo}`);
+    const res = await fetch(`${DART_BASE}/document.xml?crtfc_key=${key}&rcept_no=${rceptNo}`, {
+      signal: AbortSignal.timeout(15000),
+    });
     if (!res.ok) return null;
     const buf = Buffer.from(await res.arrayBuffer());
     const zip = new AdmZip(buf);
