@@ -273,7 +273,18 @@ export type DartBusinessBundle = {
 // 확실히 위인 22초를 준다.
 const BUNDLE_BUDGET_MS = 22000;
 
+// document.xml 왕복이 이 경로에서 고정적으로 ~18~20초라(위 주석), 매 클릭마다
+// 새로 받으면 사용자가 매번 그 시간을 기다려야 한다 — 같은 분기/반기 보고서는
+// 다음 정기공시 전까지 안 바뀌니, 웜 람다 인스턴스가 살아있는 동안은 재사용
+// 해도 안전하다(어차피 최신 정기보고서 자체를 다시 확인하려면 콜드 스타트로
+// 캐시가 비워질 때 자연스럽게 새로 받아온다).
+const bundleCache = new Map<string, { bundle: DartBusinessBundle; fetchedAt: number }>();
+const BUNDLE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
 export async function fetchDartBusinessBundle(stockCode: string): Promise<DartBusinessBundle | null> {
+  const cached = bundleCache.get(stockCode);
+  if (cached && Date.now() - cached.fetchedAt < BUNDLE_CACHE_TTL_MS) return cached.bundle;
+
   if (!apiKey()) return null;
   const deadlineAt = Date.now() + BUNDLE_BUDGET_MS;
   const corpCode = await getCorpCode(stockCode, deadlineAt);
@@ -282,5 +293,7 @@ export async function fetchDartBusinessBundle(stockCode: string): Promise<DartBu
   if (!report) return null;
   const raw = await fetchDartBusinessRaw(report.rceptNo, deadlineAt);
   if (!raw) return null;
-  return { reportName: report.reportName, reportDate: report.reportDate, dartUrl: dartDocumentUrl(report.rceptNo), raw };
+  const bundle = { reportName: report.reportName, reportDate: report.reportDate, dartUrl: dartDocumentUrl(report.rceptNo), raw };
+  bundleCache.set(stockCode, { bundle, fetchedAt: Date.now() });
+  return bundle;
 }

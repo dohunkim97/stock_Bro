@@ -89,7 +89,17 @@ export type BusinessDetail = {
 const DART_UNAVAILABLE_NOTE =
   "DART 공시에서 사업 내용을 찾지 못했어요 — 종목코드가 없거나 최근 2년 내 정기보고서(사업/반기/분기보고서)가 아직 없는 경우예요.";
 
+// DART 원문 fetch(lib/dart.ts, 자체 캐시 있음)에 LLM 정리까지 더하면 첫
+// 요청은 왕복이 길다 — 같은 종목을 다시 클릭했을 때(모달을 닫았다 다시
+// 열거나, 다른 사람이 같은 종목을 볼 때) 매번 LLM까지 다시 부르지 않도록
+// 최종 결과(BusinessDetail) 자체를 웜 인스턴스 동안 재사용한다.
+const businessDetailCache = new Map<string, { detail: BusinessDetail; fetchedAt: number }>();
+const BUSINESS_DETAIL_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
 export async function getBusinessDetail(name: string, code: string): Promise<BusinessDetail> {
+  const cached = code ? businessDetailCache.get(code) : undefined;
+  if (cached && Date.now() - cached.fetchedAt < BUSINESS_DETAIL_CACHE_TTL_MS) return cached.detail;
+
   const bundle = code ? await fetchDartBusinessBundle(code) : null;
 
   if (!bundle) {
@@ -114,7 +124,7 @@ export async function getBusinessDetail(name: string, code: string): Promise<Bus
 
   const parsed = await llmWriteJson<{ overview?: string; products?: string; newBusiness?: string }>(system, userPrompt);
 
-  return {
+  const detail: BusinessDetail = {
     // LLM 요약이 실패해도 원문 자체는 이미 확보돼 있으니, 다듬어지지 않은
     // 원문 그대로라도 보여주는 게(빈 화면보다) "팩트 기반"에 더 맞는다.
     overview: parsed?.overview || bundle.raw.overviewText || "사업 개요를 원문에서 찾지 못했어요.",
@@ -124,6 +134,8 @@ export async function getBusinessDetail(name: string, code: string): Promise<Bus
     reportDate: bundle.reportDate,
     dartUrl: bundle.dartUrl,
   };
+  if (code) businessDetailCache.set(code, { detail, fetchedAt: Date.now() });
+  return detail;
 }
 
 // 2. 시황 — 지금 이 종목/섹터를 둘러싼 시장 상황을 골구가 깊게 분석.
