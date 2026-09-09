@@ -157,7 +157,7 @@ function Field({
         padding: "2px 4px",
         margin: "-2px -4px",
         cursor: "pointer",
-        font: "inherit",
+        fontFamily: "inherit",
         color: "inherit",
       }}
     >
