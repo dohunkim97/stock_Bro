@@ -266,3 +266,25 @@ model CompanyKeywords {
   keywords  String
   updatedAt DateTime @updatedAt
 }
+
+// 기록보관소의 주간분석/월간분석 — 그 기간에 나온 모든 일간 예상종목의
+// 5거래일 추적이 전부 끝난 뒤(lib/prediction-scoring.ts의 scorePrediction이
+// 전부 non-null을 반환해야) 한 번만 생성된다(lib/period-analysis.ts).
+// week/month를 별도 테이블로 나누지 않고 periodType으로 구분하는 이유는
+// 두 종류가 스키마·생성 로직이 완전히 동일하고 periodKey 포맷만 다르기
+// 때문(주: lib/week.ts의 "YYYY-MM-W", 월: "YYYY-MM"). results는 그 기간
+// 모든 후보의 실제 결과(오른 이유/내린 이유 포함) JSON 배열.
+model PeriodAnalysis {
+  id               String   @id @default(cuid())
+  periodType       String // "week" | "month"
+  periodKey        String
+  label            String // "9월 1주" | "2026년 9월"
+  startDate        String
+  endDate          String
+  summary          String
+  candidateHitRate Float?
+  results          String // JSON PeriodCandidateResult[]
+  createdAt        DateTime @default(now())
+
+  @@unique([periodType, periodKey])
+}

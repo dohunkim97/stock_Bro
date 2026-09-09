@@ -1,11 +1,13 @@
 import { getRecentPredictionDays } from "@/lib/prediction-scoring";
 import { getRecentBriefingDays, parseSectorNote, parseCandidates, SLOT_TITLE, type BriefingSlot } from "@/lib/market-briefing";
 import { getRecentChatDays } from "@/lib/chat-history";
+import { getPeriodAnalyses, type PeriodAnalysisData } from "@/lib/period-analysis";
 import { formatDateLabel } from "@/lib/dates";
 import { renderBold } from "@/components/ui/rich-text";
 import { formatChg } from "@/lib/format";
 import { ArchiveHubClient, type ArchiveRow } from "./archive-hub-client";
 import { ArchivePredictionDetail } from "./archive-prediction-detail";
+import { PeriodAnalysisDetail } from "./period-analysis-detail";
 
 // Strips the **bold** markers LLM-written summaries use — fine inside the
 // expanded detail (rendered via renderBold there), but the collapsed row's
@@ -19,9 +21,11 @@ function plainPreview(text: string): string {
 // (ArchiveHubClient). Replaces the three separate, differently-styled
 // archive sections that used to be scattered around /bro.
 export async function ArchiveHub() {
-  const [predictions, dailyDays, chatDays] = await Promise.all([
+  const [predictions, dailyDays, weeklyAnalyses, monthlyAnalyses, chatDays] = await Promise.all([
     getRecentPredictionDays(14),
     getRecentBriefingDays(14),
+    getPeriodAnalyses("week"),
+    getPeriodAnalyses("month"),
     getRecentChatDays(14),
   ]);
 
@@ -90,6 +94,17 @@ export async function ArchiveHub() {
     ),
   }));
 
+  const buildPeriodRows = (periods: PeriodAnalysisData[]): ArchiveRow[] =>
+    periods.map((p) => ({
+      key: p.periodKey,
+      date: p.label,
+      summary: plainPreview(p.summary),
+      meta: p.candidateHitRate !== null ? `적중률 ${Math.round(p.candidateHitRate * 100)}%` : undefined,
+      detail: <PeriodAnalysisDetail summary={p.summary} candidateHitRate={p.candidateHitRate} results={p.results} />,
+    }));
+  const weeklyRows = buildPeriodRows(weeklyAnalyses);
+  const monthlyRows = buildPeriodRows(monthlyAnalyses);
+
   const chatRows: ArchiveRow[] = chatDays.map((day) => {
     const firstUser = day.messages.find((m) => m.role === "user");
     return {
@@ -123,5 +138,13 @@ export async function ArchiveHub() {
     };
   });
 
-  return <ArchiveHubClient predictions={predictionRows} dailyReports={dailyRows} chats={chatRows} />;
+  return (
+    <ArchiveHubClient
+      predictions={predictionRows}
+      dailyReports={dailyRows}
+      weeklyAnalyses={weeklyRows}
+      monthlyAnalyses={monthlyRows}
+      chats={chatRows}
+    />
+  );
 }

@@ -110,7 +110,15 @@ export async function scorePrediction(row: PredictionRow): Promise<ScoredPredict
   const candidates: ScoredCandidate[] = await Promise.all(
     rawCandidates.map(async (c) => {
       if (!c.code) return { ...c, hit: false, finalChangePct: null };
-      const candles = await fetchKisChart(c.code, "D");
+      // fetchChartWithRetry (not the plain fetchKisChart) — a real, currently
+      // listed stock's chart coming back empty under concurrent KIS load is
+      // almost always a transient rate limit, not an actual absence of data
+      // (see its definition below for the live-verified detail). Without
+      // this, scorePrediction's own unguarded per-candidate fetch is exactly
+      // the failure mode that made lib/period-analysis.ts's week vs. month
+      // analysis of the SAME August rows silently disagree on which
+      // candidates had real results — caught by comparing the two live.
+      const candles = await fetchChartWithRetry(c.code);
       const series = getDailyChangeSeries(candles, row.forDate);
       const final = series.length > 0 ? series[series.length - 1].changePct : null;
       return { ...c, hit: final !== null && final > 0, finalChangePct: final };

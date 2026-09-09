@@ -11,17 +11,21 @@ export type ArchiveRow = {
   detail: React.ReactNode;
 };
 
-type TabKey = "predictions" | "daily" | "chat";
+type TabKey = "predictions" | "daily" | "weekly" | "monthly" | "chat";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "predictions", label: "예상리포트" },
   { key: "daily", label: "일간리포트" },
+  { key: "weekly", label: "주간분석" },
+  { key: "monthly", label: "월간분석" },
   { key: "chat", label: "대화기록" },
 ];
 
 const EMPTY_MESSAGE: Record<TabKey, string> = {
   predictions: "아직 지난 예상 리포트가 없어요 — 오늘 리포트가 하루 지나면 여기 쌓이기 시작해요.",
   daily: "아직 쌓인 일간 리포트가 없어요.",
+  weekly: "아직 주간분석이 없어요 — 한 주치 예상종목들의 5거래일 추적이 다 끝나면 자동으로 올라와요.",
+  monthly: "아직 월간분석이 없어요 — 한 달치 예상종목들의 5거래일 추적이 다 끝나면 자동으로 올라와요.",
   chat: "아직 Golgoo와 나눈 대화 기록이 없어요.",
 };
 
@@ -57,15 +61,26 @@ function tabStyle(active: boolean): React.CSSProperties {
 export function ArchiveHubClient({
   predictions,
   dailyReports,
+  weeklyAnalyses,
+  monthlyAnalyses,
   chats,
 }: {
   predictions: ArchiveRow[];
   dailyReports: ArchiveRow[];
+  weeklyAnalyses: ArchiveRow[];
+  monthlyAnalyses: ArchiveRow[];
   chats: ArchiveRow[];
 }) {
   const [tab, setTab] = useState<TabKey>("predictions");
   const [openRow, setOpenRow] = useState<ArchiveRow | null>(null);
-  const rows = tab === "predictions" ? predictions : tab === "daily" ? dailyReports : chats;
+  const rowsByTab: Record<TabKey, ArchiveRow[]> = {
+    predictions,
+    daily: dailyReports,
+    weekly: weeklyAnalyses,
+    monthly: monthlyAnalyses,
+    chat: chats,
+  };
+  const rows = rowsByTab[tab];
   const activeTabLabel = TABS.find((t) => t.key === tab)!.label;
 
   return (
