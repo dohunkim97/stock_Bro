@@ -38,18 +38,18 @@ function won(n: number): string {
 }
 
 function BusinessView({ data }: { data: BusinessDetail }) {
-  return <p style={{ margin: 0, fontSize: 13, lineHeight: 1.8 }}>{renderBold(data.content)}</p>;
+  return <p style={{ margin: 0, fontSize: 12, lineHeight: 1.8 }}>{renderBold(data.content)}</p>;
 }
 
 function MarketView({ data }: { data: MarketDetail }) {
-  return <p style={{ margin: 0, fontSize: 13, lineHeight: 1.8 }}>{renderBold(data.content)}</p>;
+  return <p style={{ margin: 0, fontSize: 12, lineHeight: 1.8 }}>{renderBold(data.content)}</p>;
 }
 
 function VolumeView({ data }: { data: VolumeDetail }) {
   const maxVol = Math.max(...data.rows.map((r) => r.volume), 1);
   return (
     <div>
-      <p style={{ margin: "0 0 12px", fontSize: 12.5, color: "var(--text)" }}>{data.note}</p>
+      <p style={{ margin: "0 0 12px", fontSize: 11.5, color: "var(--text)" }}>{data.note}</p>
       <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 140 }}>
         {data.rows.map((r) => (
           <div key={r.date} title={`${r.date}: ${r.volume.toLocaleString()}주`} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
@@ -57,7 +57,7 @@ function VolumeView({ data }: { data: VolumeDetail }) {
           </div>
         ))}
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--faint)", marginTop: 6, fontFamily: "var(--mono)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9.5, color: "var(--faint)", marginTop: 6, fontFamily: "var(--mono)" }}>
         <span>{data.rows[0]?.date}</span>
         <span>{data.rows[data.rows.length - 1]?.date}</span>
       </div>
@@ -72,8 +72,8 @@ function ChartView({ data }: { data: ChartDetail }) {
       <MiniPriceChart candles={data.candles} buyTiming={data.buyTiming} story={data.story} />
 
       <div style={cardStyle}>
-        <div style={{ fontWeight: 800, fontSize: 12.5, marginBottom: 8 }}>매수타이밍</div>
-        <div style={{ fontSize: 12, lineHeight: 1.8, color: "var(--text)" }}>
+        <div style={{ fontWeight: 800, fontSize: 11.5, marginBottom: 8 }}>매수타이밍</div>
+        <div style={{ fontSize: 11, lineHeight: 1.8, color: "var(--text)" }}>
           <div>현재가: <b style={{ fontFamily: "var(--mono)" }}>{t.currentPrice !== null ? `${Math.round(t.currentPrice).toLocaleString()}원` : "-"}</b></div>
           <div>지지선: <b style={{ fontFamily: "var(--mono)" }}>{t.support !== null ? `${Math.round(t.support).toLocaleString()}원` : "-"}</b></div>
           <div>저항선: <b style={{ fontFamily: "var(--mono)" }}>{t.resistance !== null ? `${Math.round(t.resistance).toLocaleString()}원` : "-"}</b></div>
@@ -84,10 +84,10 @@ function ChartView({ data }: { data: ChartDetail }) {
 
       {data.signals.length > 0 && (
         <div style={cardStyle}>
-          <div style={{ fontWeight: 800, fontSize: 12.5, marginBottom: 8 }}>오늘의 기술적 시그널</div>
+          <div style={{ fontWeight: 800, fontSize: 11.5, marginBottom: 8 }}>오늘의 기술적 시그널</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
             {data.signals.map((s) => (
-              <div key={s.name} style={{ fontSize: 11.5, lineHeight: 1.5 }}>
+              <div key={s.name} style={{ fontSize: 10.5, lineHeight: 1.5 }}>
                 <span style={{ fontWeight: 700, color: s.direction === "bullish" ? "var(--up)" : s.direction === "bearish" ? "var(--down)" : "var(--dim)" }}>
                   {s.name}
                 </span>
@@ -101,10 +101,10 @@ function ChartView({ data }: { data: ChartDetail }) {
 
       {data.story.length > 0 && (
         <div style={cardStyle}>
-          <div style={{ fontWeight: 800, fontSize: 12.5, marginBottom: 8 }}>차트 스토리 (지지/저항 흐름)</div>
+          <div style={{ fontWeight: 800, fontSize: 11.5, marginBottom: 8 }}>차트 스토리 (지지/저항 흐름)</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {data.story.map((ev) => (
-              <div key={ev.stepNumber} style={{ fontSize: 11.5, lineHeight: 1.5 }}>
+              <div key={ev.stepNumber} style={{ fontSize: 10.5, lineHeight: 1.5 }}>
                 <b style={{ color: ev.direction === "bullish" ? "var(--up)" : ev.direction === "bearish" ? "var(--down)" : "var(--accent)" }}>
                   {["①", "②", "③", "④", "⑤"][ev.stepNumber - 1]} {ev.badgeLabel}
                 </b>{" "}
@@ -122,15 +122,15 @@ function ChartView({ data }: { data: ChartDetail }) {
 function MaterialView({ data }: { data: MaterialDetail }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.8 }}>{renderBold(data.narrative)}</p>
+      <p style={{ margin: 0, fontSize: 12, lineHeight: 1.8 }}>{renderBold(data.narrative)}</p>
       {data.news.length > 0 && (
         <div>
-          <div style={{ fontWeight: 800, fontSize: 12.5, marginBottom: 8 }}>참고 뉴스</div>
+          <div style={{ fontWeight: 800, fontSize: 11.5, marginBottom: 8 }}>참고 뉴스</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {data.news.map((n) => (
               <a key={n.link} href={n.link} target="_blank" rel="noopener noreferrer" className="hover-accent-border" style={{ ...cardStyle, display: "block", textDecoration: "none", color: "inherit" }}>
-                <div style={{ fontSize: 12.5, fontWeight: 600 }}>{n.title}</div>
-                <div style={{ fontSize: 10.5, color: "var(--faint)", marginTop: 3 }}>{n.source} · {n.pubDate.slice(0, 10)}</div>
+                <div style={{ fontSize: 11.5, fontWeight: 600 }}>{n.title}</div>
+                <div style={{ fontSize: 10, color: "var(--faint)", marginTop: 3 }}>{n.source} · {n.pubDate.slice(0, 10)}</div>
               </a>
             ))}
           </div>
@@ -144,13 +144,13 @@ function SupplyTable({ title, rows }: { title: string; rows: { label: string; fo
   if (rows.length === 0) return null;
   return (
     <div style={cardStyle}>
-      <div style={{ fontWeight: 800, fontSize: 12.5, marginBottom: 8 }}>{title}</div>
+      <div style={{ fontWeight: 800, fontSize: 11.5, marginBottom: 8 }}>{title}</div>
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5, whiteSpace: "nowrap" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10.5, whiteSpace: "nowrap" }}>
           <thead>
             <tr style={{ borderBottom: "1px solid var(--border)" }}>
               {["기간", "외국인", "기관", "개인"].map((h) => (
-                <th key={h} style={{ textAlign: "left", padding: "5px 8px", color: "var(--faint)", fontWeight: 600, fontSize: 10.5 }}>{h}</th>
+                <th key={h} style={{ textAlign: "left", padding: "5px 8px", color: "var(--faint)", fontWeight: 600, fontSize: 9.5 }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -177,7 +177,7 @@ function SupplyView({ data }: { data: SupplyDetail }) {
       <SupplyTable title="일간 (최근 15거래일)" rows={dailyRows} />
       <SupplyTable title="주간" rows={data.weekly} />
       <SupplyTable title="월간" rows={data.monthly} />
-      {data.daily.length === 0 && <div style={{ fontSize: 12.5, color: "var(--faint)" }}>수급 데이터를 가져오지 못했어요.</div>}
+      {data.daily.length === 0 && <div style={{ fontSize: 11.5, color: "var(--faint)" }}>수급 데이터를 가져오지 못했어요.</div>}
     </div>
   );
 }
@@ -186,14 +186,14 @@ function FinancialView({ data }: { data: FinancialDetail }) {
   return (
     <div>
       {data.annual.length === 0 ? (
-        <div style={{ fontSize: 12.5, color: "var(--faint)" }}>재무 데이터를 가져오지 못했어요.</div>
+        <div style={{ fontSize: 11.5, color: "var(--faint)" }}>재무 데이터를 가져오지 못했어요.</div>
       ) : (
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, whiteSpace: "nowrap" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border)" }}>
                 {["연도", "매출액", "영업이익", "순이익", "부채비율"].map((h) => (
-                  <th key={h} style={{ textAlign: "left", padding: "7px 10px", color: "var(--faint)", fontWeight: 600, fontSize: 10.5 }}>{h}</th>
+                  <th key={h} style={{ textAlign: "left", padding: "7px 10px", color: "var(--faint)", fontWeight: 600, fontSize: 9.5 }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -211,7 +211,7 @@ function FinancialView({ data }: { data: FinancialDetail }) {
           </table>
         </div>
       )}
-      <div style={{ fontSize: 11, color: "var(--faint)", marginTop: 10 }}>
+      <div style={{ fontSize: 10, color: "var(--faint)", marginTop: 10 }}>
         * 분기별 재무제표는 현재 데이터 소스(data.go.kr)가 제공하지 않아요 — 연간 실적만 제공돼요.
       </div>
     </div>
@@ -257,8 +257,8 @@ export function FieldDetailModal({
 
   return (
     <Modal open={open} onClose={onClose} title={field ? `${name} · ${FIELD_LABEL[field]}` : ""}>
-      {loading && <div style={{ padding: "30px 0", textAlign: "center", color: "var(--faint)", fontSize: 12.5 }}>불러오는 중...</div>}
-      {!loading && failed && <div style={{ fontSize: 12.5, color: "var(--faint)" }}>불러오지 못했어요. 다시 눌러주세요.</div>}
+      {loading && <div style={{ padding: "30px 0", textAlign: "center", color: "var(--faint)", fontSize: 11.5 }}>불러오는 중...</div>}
+      {!loading && failed && <div style={{ fontSize: 11.5, color: "var(--faint)" }}>불러오지 못했어요. 다시 눌러주세요.</div>}
       {!loading && !failed && result?.field === "business" && <BusinessView data={result.data} />}
       {!loading && !failed && result?.field === "market" && <MarketView data={result.data} />}
       {!loading && !failed && result?.field === "volume" && <VolumeView data={result.data} />}
