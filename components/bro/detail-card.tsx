@@ -62,8 +62,8 @@ const detailCardStyle: React.CSSProperties = {
 };
 
 const fieldLineStyle: React.CSSProperties = {
-  fontSize: 12,
-  lineHeight: 1.65,
+  fontSize: 11,
+  lineHeight: 1.6,
   color: "var(--text)",
 };
 
@@ -136,7 +136,7 @@ function Field({
           {verdict ? "(O)" : "(X)"}
         </strong>
       )}
-      {onClick && <span style={{ marginLeft: 6, color: "var(--faint)", fontSize: 10.5 }}>자세히 보기 ›</span>}
+      {onClick && <span style={{ marginLeft: 6, color: "var(--faint)", fontSize: 9.5 }}>자세히 보기 ›</span>}
     </>
   );
 
@@ -231,10 +231,10 @@ export function DetailCard({
   const openFieldModal = (field: FieldKey) => () => setOpenField(field);
 
   const nameBlock = (
-    <span style={{ fontWeight: 800, fontSize: 13.5 }}>
+    <span style={{ fontWeight: 800, fontSize: 13 }}>
       {d.name}
       {d.code && (
-        <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)", marginLeft: 5 }}>
+        <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--faint)", marginLeft: 5 }}>
           ({d.code})
         </span>
       )}
@@ -269,7 +269,7 @@ export function DetailCard({
           <span
             key={t}
             style={{
-              fontSize: 10.5,
+              fontSize: 9.5,
               fontWeight: 600,
               color: "var(--accent)",
               background: "var(--accent-soft)",
@@ -283,7 +283,7 @@ export function DetailCard({
         {d.isThemeLeader && (
           <span
             style={{
-              fontSize: 10.5,
+              fontSize: 9.5,
               fontWeight: 800,
               color: "var(--up)",
               background: "var(--up-soft)",
@@ -315,7 +315,7 @@ export function DetailCard({
                 key={p.date}
                 title={p.date}
                 style={{
-                  fontSize: 10,
+                  fontSize: 9.5,
                   fontFamily: "var(--mono)",
                   fontWeight: 700,
                   padding: "3px 7px",
@@ -346,7 +346,7 @@ export function DetailCard({
       {series && series.length >= TRACKING_WINDOW_DAYS && (
         <div
           style={{
-            fontSize: 11.5,
+            fontSize: 10.5,
             fontWeight: 700,
             lineHeight: 1.6,
             padding: "7px 10px",
@@ -383,7 +383,7 @@ export function DetailCard({
           }}
         >
           {signals.map((s) => (
-            <div key={s.name} style={{ fontSize: 11.5, lineHeight: 1.55, fontWeight: 700, color: "var(--text)" }}>
+            <div key={s.name} style={{ fontSize: 10.5, lineHeight: 1.55, fontWeight: 700, color: "var(--text)" }}>
               <span style={{ color: signalColor(s.direction) }}>시그널: {s.name}</span>
               {" — "}
               {s.detail}
