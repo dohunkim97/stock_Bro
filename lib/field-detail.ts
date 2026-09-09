@@ -29,13 +29,23 @@ async function llmWrite(system: string, userPrompt: string, maxTokens = 900): Pr
   if (!process.env.ANTHROPIC_API_KEY) return null;
   try {
     const client = new Anthropic();
-    const response = await client.messages.create({
-      model: "claude-sonnet-5",
-      max_tokens: maxTokens,
-      output_config: { effort: "low" },
-      system,
-      messages: [{ role: "user", content: userPrompt }],
-    });
+    // 이 라우트(/api/bro/field-detail) 전체 예산이 30초라 SDK 기본값(10분
+    // 타임아웃 + 자동 재시도)에 맡기면 안 된다 — 실측: getBusinessDetail의
+    // 프롬프트(DART 원문 최대 9500자)가 다른 필드보다 훨씬 커서 응답이
+    // 느려질 때 SDK가 조용히 재시도까지 하면서 30초 하드 타임아웃까지
+    // 끌고 가 FUNCTION_INVOCATION_TIMEOUT을 냈다. 여기서 실패해도
+    // llmWriteJson/각 getXDetail 호출부가 이미 폴백(원문 그대로 보여주기
+    // 등)을 갖고 있어서 null로 빨리 끝나는 게 사용자 입장에서 훨씬 낫다.
+    const response = await client.messages.create(
+      {
+        model: "claude-sonnet-5",
+        max_tokens: maxTokens,
+        output_config: { effort: "low" },
+        system,
+        messages: [{ role: "user", content: userPrompt }],
+      },
+      { timeout: 15000, maxRetries: 0 }
+    );
     const text = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
       .map((b) => b.text)

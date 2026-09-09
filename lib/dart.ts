@@ -264,11 +264,11 @@ export type DartBusinessBundle = {
 };
 
 // /api/bro/field-detail의 maxDuration은 30초지만 그 뒤에 LLM 요약 호출이
-// 하나 더 있어서(lib/field-detail.ts) 이 함수 혼자 30초를 다 쓰면 안 된다 —
-// 20초까지만 쓰고 나머지는 LLM 몫으로 남긴다. candidate-detail.ts처럼
-// 여러 종목을 병렬로 부르는 호출부는 그쪽 자체 예산이 있어 이 20초가
-// 넉넉한 상한이 된다.
-const BUNDLE_BUDGET_MS = 20000;
+// 하나 더 있어서(lib/field-detail.ts, 자체 15초 타임아웃) 이 함수 혼자
+// 예산을 다 쓰면 안 된다. 실측(icn1 프로덕션): list.json~900ms,
+// document.xml~600ms — 넉넉히 10초만 줘도 충분하고, 남은 시간을 LLM
+// 호출에 넘겨준다.
+const BUNDLE_BUDGET_MS = 10000;
 
 export async function fetchDartBusinessBundle(stockCode: string): Promise<DartBusinessBundle | null> {
   if (!apiKey()) return null;
