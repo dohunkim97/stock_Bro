@@ -1,4 +1,5 @@
 import { fetchNews } from "@/lib/naver-news";
+import { fetchDartBusinessBundle } from "@/lib/dart";
 import { NewsList } from "@/components/news-list";
 import { EarningsAnalysis } from "./earnings-analysis";
 import { InvestorTrend } from "./investor-trend";
@@ -17,6 +18,44 @@ const infoNoteStyle: React.CSSProperties = {
   lineHeight: 1.6,
 };
 
+// 회사마다 표가 여러 개 걸릴 수 있어서(매출 비중표 외에 가격추이·생산능력
+// 등도 숫자를 포함) 그중 "매출"·"비중"·"비율"이 헤더에 있는 표를 우선
+// 고른다 — 없으면 행이 가장 많은 표(보통 품목별로 세분화된 표)를 쓴다.
+function pickPrimaryTable(tables: string[][][]): string[][] | null {
+  if (tables.length === 0) return null;
+  const bySalesHeader = tables.find((t) => /매출|비중|비율/.test(t[0]?.join(" ") ?? ""));
+  if (bySalesHeader) return bySalesHeader;
+  return tables.reduce((best, t) => (t.length > best.length ? t : best), tables[0]);
+}
+
+function DartProductsTable({ rows }: { rows: string[][] }) {
+  return (
+    <div style={{ overflowX: "auto", marginTop: 4 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
+              {row.map((cell, j) => (
+                <td
+                  key={j}
+                  style={{
+                    padding: "6px 10px",
+                    fontWeight: i === 0 ? 700 : 400,
+                    color: i === 0 ? "var(--faint)" : "var(--text)",
+                    fontFamily: /^[\d,.%△()-]+$/.test(cell) ? "var(--mono)" : undefined,
+                  }}
+                >
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export async function DetailSections({
   stockName,
   code,
@@ -26,7 +65,8 @@ export async function DetailSections({
   code: string;
   market: string;
 }) {
-  const news = await fetchNews(stockName);
+  const [news, dartBundle] = await Promise.all([fetchNews(stockName), fetchDartBusinessBundle(code)]);
+  const primaryTable = dartBundle ? pickPrimaryTable(dartBundle.raw.productsTables) : null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -38,13 +78,33 @@ export async function DetailSections({
         <InvestorTrend code={code} />
       </div>
 
-      {/* 사업/제품별 매출 비중 */}
+      {/* 사업/제품별 매출 비중 — DART 정기보고서(사업/반기/분기보고서) "2. 주요
+          제품 및 서비스" 표를 그대로 가져온다(lib/dart.ts). LLM 요약 없이 원문
+          표를 그대로 보여주는 게 이 패널의 취지(사실 그대로)에 더 맞는다. */}
       <section style={panelStyle}>
         <span style={{ fontWeight: 700, fontSize: 14.5 }}>사업·제품별 매출 비중</span>
-        <div style={infoNoteStyle}>
-          공시 데이터에는 종목별 사업부문·제품별 매출 비중이 표 형태로 제공되지 않아서, 이 항목은
-          아직 지원하지 않아요. 전체 매출액은 위 기업실적분석에서 확인할 수 있어요.
-        </div>
+        {primaryTable ? (
+          <>
+            <DartProductsTable rows={primaryTable} />
+            {dartBundle && (
+              <a
+                href={dartBundle.dartUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover-accent-border"
+                style={{ display: "inline-block", marginTop: 8, fontSize: 10.5, color: "var(--faint)", textDecoration: "none" }}
+              >
+                📄 출처: {dartBundle.reportName} ({dartBundle.reportDate.slice(0, 4)}.{dartBundle.reportDate.slice(4, 6)}.
+                {dartBundle.reportDate.slice(6, 8)}) · DART 공시 원문 보기 ›
+              </a>
+            )}
+          </>
+        ) : (
+          <div style={infoNoteStyle}>
+            DART 공시(사업/반기/분기보고서)에서 사업부문·제품별 매출 비중 표를 아직 찾지 못했어요. 전체
+            매출액은 위 기업실적분석에서 확인할 수 있어요.
+          </div>
+        )}
       </section>
 
       {/* 최근 이슈·뉴스 */}

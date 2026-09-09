@@ -11,6 +11,7 @@ import { fetchInvestorTrend, type InvestorTrendRow } from "@/lib/kis-investor-tr
 import { fetchFinancialHistoryByCode, type YearlyFinancials } from "@/lib/krx-financials";
 import { fetchNews, type NewsItem } from "@/lib/naver-news";
 import { recentIssuesBlock, telegramBlock, marketDataBlock } from "@/lib/bro-context";
+import { fetchDartBusinessBundle, dartTablesToText } from "@/lib/dart";
 import {
   computeTechnicalSignals,
   findSupportResistanceLevels,
@@ -46,24 +47,73 @@ async function llmWrite(system: string, userPrompt: string, maxTokens = 900): Pr
   }
 }
 
-// 1. 사업 요약 — 전문 애널리스트가 쓰는 기업 개요 수준의 자세한 설명.
-export type BusinessDetail = { content: string };
+// system이 JSON 객체 하나만 답하도록 지시했을 때 파싱까지 해주는 변형.
+// 파싱 실패(응답이 아예 없거나 JSON이 깨진 경우)엔 null을 돌려주고, 호출부가
+// "원문 그대로 보여주기" 같은 사실 기반 폴백을 알아서 하도록 맡긴다.
+async function llmWriteJson<T>(system: string, userPrompt: string, maxTokens = 1200): Promise<T | null> {
+  const text = await llmWrite(system, userPrompt, maxTokens);
+  if (!text) return null;
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[0]) as T;
+  } catch {
+    return null;
+  }
+}
+
+// 1. 사업 요약 — DART 정기보고서(사업/반기/분기보고서) "II. 사업의 내용"
+// 원문에서 사업 개요·주요 제품(매출 비중)·신규 사업목적을 그대로 가져와
+// 사실 근거로 삼는다(사용자 요청: "사업 분석 할 때 팩트를 기반으로
+// 해석해줘") — 뉴스나 LLM 추측이 아니라 실제 공시 원문이 출처다. LLM은
+// 그 원문을 요약·정리만 하고, 원문에 없는 수치는 언급하지 말라고 명시한다.
+export type BusinessDetail = {
+  overview: string;
+  products: string;
+  newBusiness: string;
+  reportName: string | null;
+  reportDate: string | null;
+  dartUrl: string | null;
+};
+
+const DART_UNAVAILABLE_NOTE =
+  "DART 공시에서 사업 내용을 찾지 못했어요 — 종목코드가 없거나 최근 2년 내 정기보고서(사업/반기/분기보고서)가 아직 없는 경우예요.";
 
 export async function getBusinessDetail(name: string, code: string): Promise<BusinessDetail> {
-  // "주가"를 덧붙여 검색 — "후성"처럼 흔한 단어 조각(후성유전학 등)과 겹치는
-  // 종목명이 실제로 있어서(라이브 검증으로 발견), 그냥 종목명만 검색하면
-  // 전혀 무관한 기사가 섞여 들어온다.
-  const news = await fetchNews(`${name} 주가`, 5);
-  const newsBlock = news.length > 0 ? news.map((n) => `- ${n.title}: ${n.description}`).join("\n") : "관련 뉴스 없음";
+  const bundle = code ? await fetchDartBusinessBundle(code) : null;
 
+  if (!bundle) {
+    return { overview: DART_UNAVAILABLE_NOTE, products: "", newBusiness: "", reportName: null, reportDate: null, dartUrl: null };
+  }
+
+  const productsText = dartTablesToText(bundle.raw.productsTables);
   const system = [
-    "너는 한국 주식시장 섹터 전문 애널리스트야. 아래 종목의 사업 내용을 4~6문장으로 자세히 설명해줘.",
-    "주요 사업부문·매출 구조, 핵심 제품/서비스, 산업 내 위치(경쟁사 대비), 최근 사업 관련 동향까지 포함해.",
-    "확실하지 않은 수치는 지어내지 말고 일반적으로 알려진 사실 위주로, 반말로 편하게 써.",
-    "다른 설명 없이 본문만 답해.",
+    "너는 한국 주식시장 섹터 전문 애널리스트야. 아래는 실제 DART 공시(정기보고서) 원문에서 그대로 발췌한 내용이야.",
+    "이 원문에 있는 사실만 근거로 세 가지를 정리해줘 — 원문에 없는 내용이나 수치는 절대 지어내지 마.",
+    "1) overview: 이 회사가 실제로 무슨 사업을 하는지 4~6문장으로 (사업부문 구조·핵심 제품/기술·산업 내 위치를 원문 근거로)",
+    "2) products: 주요 제품/서비스별 매출 비중을 원문 표 수치를 실제로 인용해서 정리 — 표에 비중 정보가 없으면 '매출 비중 정보가 표에 없음'이라고 써",
+    "3) newBusiness: 원문에 최근 추가된 사업목적/신규사업 내용이 있으면 정리, 전혀 없으면 정확히 '최근 신규 사업목적 추가 내역 없음'이라고 써",
+    "반말로 편하게. 다른 설명 없이 JSON 객체 하나만 답해: {\"overview\":\"...\",\"products\":\"...\",\"newBusiness\":\"...\"}",
   ].join("\n");
-  const content = await llmWrite(system, `종목: ${name} (${code})\n\n[관련 최근 뉴스]\n${newsBlock}`);
-  return { content: content ?? "사업 정보를 지금은 자세히 불러오지 못했어요." };
+  const userPrompt = [
+    `종목: ${name} (${code}) — 출처: ${bundle.reportName} (${bundle.reportDate})`,
+    `[1. 사업의 개요 원문]\n${bundle.raw.overviewText || "내용 없음"}`,
+    `[2. 주요 제품 및 서비스 - 표 원문]\n${productsText || "표 데이터 없음"}`,
+    `[5. 정관에 관한 사항 - 신규 사업목적 원문]\n${bundle.raw.newBusinessText || "해당 없음"}`,
+  ].join("\n\n");
+
+  const parsed = await llmWriteJson<{ overview?: string; products?: string; newBusiness?: string }>(system, userPrompt);
+
+  return {
+    // LLM 요약이 실패해도 원문 자체는 이미 확보돼 있으니, 다듬어지지 않은
+    // 원문 그대로라도 보여주는 게(빈 화면보다) "팩트 기반"에 더 맞는다.
+    overview: parsed?.overview || bundle.raw.overviewText || "사업 개요를 원문에서 찾지 못했어요.",
+    products: parsed?.products || (productsText ? "표 원문:\n" + productsText : "매출 비중 표를 찾지 못했어요."),
+    newBusiness: parsed?.newBusiness || bundle.raw.newBusinessText || "최근 신규 사업목적 추가 내역 없음",
+    reportName: bundle.reportName,
+    reportDate: bundle.reportDate,
+    dartUrl: bundle.dartUrl,
+  };
 }
 
 // 2. 시황 — 지금 이 종목/섹터를 둘러싼 시장 상황을 골구가 깊게 분석.

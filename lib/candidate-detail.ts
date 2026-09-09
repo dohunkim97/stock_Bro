@@ -11,6 +11,7 @@ import { fetchInvestorTrend } from "@/lib/kis-investor-trend";
 import { fetchKisChart, type ChartCandle } from "@/lib/kis-chart";
 import { fetchFinancialHistoryByCode } from "@/lib/krx-financials";
 import { recentIssuesBlock, telegramBlock } from "@/lib/bro-context";
+import { fetchDartBusinessBundle } from "@/lib/dart";
 import { prisma } from "@/lib/prisma";
 import { formatWon } from "@/lib/format";
 import { sentimentVerdict } from "@/lib/sentiment";
@@ -247,6 +248,9 @@ type GroundedInput = {
   supplyDemand: { note: string; positive: boolean | null };
   financials: { summary: string; positive: boolean | null };
   currentPrice: number | null;
+  // DART 정기보고서 "1. 사업의 개요" 원문(있으면) — businessSummary를 지어내지
+  // 않고 실제 공시 내용에 근거하게 만든다(사용자 요청: 사업 분석은 팩트 기반으로).
+  dartOverview: string | null;
 };
 
 type LlmOutput = {
@@ -264,15 +268,17 @@ async function synthesizeNarratives(inputs: GroundedInput[]): Promise<Map<string
   const [issuesBlock, tgBlock] = await Promise.all([recentIssuesBlock(10), telegramBlock()]);
 
   const stockBlocks = inputs
-    .map(
-      (i) =>
-        `- ${i.candidate.name}${i.sector ? ` (섹터: ${i.sector}${i.theme ? `, 테마: ${i.theme}` : ""})` : ""}: 예측 근거 "${i.candidate.reasoning}"`
-    )
+    .map((i) => {
+      const head = `- ${i.candidate.name}${i.sector ? ` (섹터: ${i.sector}${i.theme ? `, 테마: ${i.theme}` : ""})` : ""}: 예측 근거 "${i.candidate.reasoning}"`;
+      // DART 원문을 찾았으면 이 종목 블록 바로 아래에 붙여서, 그 종목의
+      // businessSummary는 반드시 이 원문에 근거하도록 한다.
+      return i.dartOverview ? `${head}\n  [DART 공시 "사업의 개요" 원문] ${i.dartOverview.slice(0, 600)}` : head;
+    })
     .join("\n");
 
   const system = [
     "너는 한국 주식시장 애널리스트야. 아래 종목별로 네 가지만 짧게 채워줘:",
-    "1) businessSummary: 이 회사가 뭐 하는 회사인지 한 문장 사업 요약",
+    "1) businessSummary: 이 회사가 뭐 하는 회사인지 한 문장 사업 요약 — [DART 공시 원문]이 주어졌으면 반드시 그 원문 내용에 근거해서 쓰고(지어내지 마), 원문이 없으면 일반적으로 알려진 사실 위주로",
     "2) marketContext: 최근 이슈/뉴스 흐름 중 이 종목과 관련된 시황을 반말로 한 문장 (데이터에 없으면 일반적인 섹터 흐름으로)",
     "3) marketContextPositive: 지금 이 섹터/시황이 실제로 매수하기에 우호적으로 주목받고 있으면 true, 애매하거나 오히려 부정적이면 false — 판단이 정말 안 서면 null",
     "4) isThemeLeader: 같이 언급된 테마 안에서 이 종목이 대표주(대장주)로 볼 만하면 true, 아니면 false",
@@ -335,7 +341,7 @@ export async function getCandidateDetails(
 ): Promise<CandidateDetail[]> {
   const withCode = candidates.filter((c) => c.code);
 
-  const [quotes, trends, charts, financials, themes] = await Promise.all([
+  const [quotes, trends, charts, financials, themes, dartBundles] = await Promise.all([
     Promise.all(withCode.map((c) => fetchKisQuote(c.code!))),
     Promise.all(withCode.map((c) => fetchInvestorTrend(c.code!, 5))),
     Promise.all(withCode.map((c) => fetchKisChart(c.code!, "D"))),
@@ -348,6 +354,10 @@ export async function getCandidateDetails(
       })
     ),
     prisma.stockTheme.findMany({ where: { name: { in: withCode.map((c) => c.name) } } }),
+    // 사업 요약을 DART 정기보고서 원문에 근거하게 만들기 위한 사전 조회 —
+    // 실패해도(신규 상장 등으로 공시가 아직 없는 경우) null만 돌아오고
+    // 전체 흐름은 그대로 진행된다(lib/dart.ts).
+    Promise.all(withCode.map((c) => fetchDartBusinessBundle(c.code!))),
   ]);
 
   const themeByName = new Map(themes.map((t) => [t.name, t.theme]));
@@ -365,6 +375,7 @@ export async function getCandidateDetails(
     // 그래도 차트에 forDate 데이터가 전혀 없는 극히 드문 경우에만 실시간
     // 시세로 폴백한다.
     currentPrice: anchorPrice(charts[i], forDate) ?? quotes[i]?.price ?? null,
+    dartOverview: dartBundles[i]?.raw.overviewText ?? null,
   }));
 
   const narratives = await synthesizeNarratives(grounded);

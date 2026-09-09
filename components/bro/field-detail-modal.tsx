@@ -38,7 +38,40 @@ function won(n: number): string {
 }
 
 function BusinessView({ data }: { data: BusinessDetail }) {
-  return <p style={{ margin: 0, fontSize: 12, lineHeight: 1.8 }}>{renderBold(data.content)}</p>;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div>
+        <div style={{ fontWeight: 800, fontSize: 11.5, marginBottom: 6 }}>사업 내용</div>
+        <p style={{ margin: 0, fontSize: 12, lineHeight: 1.8 }}>{renderBold(data.overview)}</p>
+      </div>
+      {data.products && (
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 11.5, marginBottom: 6 }}>주요 제품 · 매출 비중</div>
+          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.8, whiteSpace: "pre-wrap" }}>{renderBold(data.products)}</p>
+        </div>
+      )}
+      {data.newBusiness && (
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 11.5, marginBottom: 6 }}>신규 사업</div>
+          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.8 }}>{renderBold(data.newBusiness)}</p>
+        </div>
+      )}
+      {data.dartUrl && (
+        <a
+          href={data.dartUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover-accent-border"
+          style={{ ...cardStyle, display: "block", textDecoration: "none", color: "inherit", fontSize: 10.5 }}
+        >
+          <span style={{ color: "var(--accent)", fontWeight: 700 }}>📄 출처: {data.reportName}</span>
+          <span style={{ color: "var(--faint)", marginLeft: 6 }}>
+            ({data.reportDate?.slice(0, 4)}.{data.reportDate?.slice(4, 6)}.{data.reportDate?.slice(6, 8)}) · DART 공시 원문 보기 ›
+          </span>
+        </a>
+      )}
+    </div>
+  );
 }
 
 function MarketView({ data }: { data: MarketDetail }) {
