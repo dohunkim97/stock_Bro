@@ -264,11 +264,15 @@ export type DartBusinessBundle = {
 };
 
 // /api/bro/field-detail의 maxDuration은 30초지만 그 뒤에 LLM 요약 호출이
-// 하나 더 있어서(lib/field-detail.ts, 자체 15초 타임아웃) 이 함수 혼자
-// 예산을 다 쓰면 안 된다. 실측(icn1 프로덕션): list.json~900ms,
-// document.xml~600ms — 넉넉히 10초만 줘도 충분하고, 남은 시간을 LLM
-// 호출에 넘겨준다.
-const BUNDLE_BUDGET_MS = 10000;
+// 하나 더 있어서(lib/field-detail.ts, 자체 10초 타임아웃) 이 함수 혼자
+// 예산을 다 쓰면 안 된다. 실측(icn1 프로덕션) 결과 list.json은 항상
+// 1~1.5초로 빠른데, document.xml은 편차가 커서(같은 rcept_no로 반복
+// 호출해도 600ms일 때도, 18초 넘게 걸릴 때도 있었음 — DART 서버 쪽
+// 지연이지 우리 쪽 파싱/압축해제 비용이 아님: 압축해제·정규식 파싱은
+// 실측 전부 합쳐 10ms 안쪽) 넉넉히 18초까지 준다. 그래도 못 받으면(아주
+// 드문 최악의 경우) null로 빠르게 실패해서 폴백 문구를 보여주는 게
+// 30초 하드 타임아웃보다 낫다.
+const BUNDLE_BUDGET_MS = 18000;
 
 export async function fetchDartBusinessBundle(stockCode: string): Promise<DartBusinessBundle | null> {
   if (!apiKey()) return null;

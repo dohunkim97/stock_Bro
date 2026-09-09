@@ -44,7 +44,7 @@ async function llmWrite(system: string, userPrompt: string, maxTokens = 900): Pr
         system,
         messages: [{ role: "user", content: userPrompt }],
       },
-      { timeout: 15000, maxRetries: 0 }
+      { timeout: 10000, maxRetries: 0 }
     );
     const text = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
