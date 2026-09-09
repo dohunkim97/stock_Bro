@@ -9,8 +9,13 @@ import { AutoRefresh } from "@/components/market/auto-refresh";
 // CandidateTracker does a handful of live KIS quote lookups (one per
 // predicted candidate) on every render — cheap individually, but give this
 // page the same headroom the stock detail page gets rather than the
-// platform's short default.
-export const maxDuration = 30;
+// platform's short default. PredictionReport's rare live-fallback path
+// (records saved before the `details` column existed — see
+// lib/candidate-detail.ts) can also call the DART business-detail fetch
+// per candidate, which alone runs ~20s (see lib/dart.ts's
+// BUNDLE_BUDGET_MS), so this needs the same headroom as
+// app/api/bro/field-detail/route.ts.
+export const maxDuration = 45;
 
 // This page has no searchParams/cookies to read, so Next would otherwise
 // statically prerender it at build time and freeze CandidateTracker's live

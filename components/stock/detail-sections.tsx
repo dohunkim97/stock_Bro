@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { fetchNews } from "@/lib/naver-news";
 import { fetchDartBusinessBundle } from "@/lib/dart";
 import { NewsList } from "@/components/news-list";
@@ -56,6 +57,54 @@ function DartProductsTable({ rows }: { rows: string[][] }) {
   );
 }
 
+// DART document.xml 왕복이 (실측) Vercel 프로덕션 네트워크 경로에서 고정적
+//으로 ~18~20초 걸린다(lib/dart.ts BUNDLE_BUDGET_MS 주석 참고) — 이걸
+// DetailSections 본문에서 그냥 await하면 페이지 전체가 그만큼 늦게
+// 뜬다(기업실적분석·투자자매매동향·뉴스는 전부 훨씬 빠른데 같이 묶여서
+// 느려짐). 그래서 이 섹션만 별도 async 컴포넌트로 떼어 Suspense로
+// 감싸고, 나머지 섹션은 먼저 스트리밍되게 한다.
+async function BusinessMixSection({ code }: { code: string }) {
+  const dartBundle = await fetchDartBusinessBundle(code);
+  const primaryTable = dartBundle ? pickPrimaryTable(dartBundle.raw.productsTables) : null;
+
+  return (
+    <section style={panelStyle}>
+      <span style={{ fontWeight: 700, fontSize: 14.5 }}>사업·제품별 매출 비중</span>
+      {primaryTable ? (
+        <>
+          <DartProductsTable rows={primaryTable} />
+          {dartBundle && (
+            <a
+              href={dartBundle.dartUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover-accent-border"
+              style={{ display: "inline-block", marginTop: 8, fontSize: 10.5, color: "var(--faint)", textDecoration: "none" }}
+            >
+              📄 출처: {dartBundle.reportName} ({dartBundle.reportDate.slice(0, 4)}.{dartBundle.reportDate.slice(4, 6)}.
+              {dartBundle.reportDate.slice(6, 8)}) · DART 공시 원문 보기 ›
+            </a>
+          )}
+        </>
+      ) : (
+        <div style={infoNoteStyle}>
+          DART 공시(사업/반기/분기보고서)에서 사업부문·제품별 매출 비중 표를 아직 찾지 못했어요. 전체
+          매출액은 위 기업실적분석에서 확인할 수 있어요.
+        </div>
+      )}
+    </section>
+  );
+}
+
+function BusinessMixSkeleton() {
+  return (
+    <section style={panelStyle}>
+      <span style={{ fontWeight: 700, fontSize: 14.5 }}>사업·제품별 매출 비중</span>
+      <div style={infoNoteStyle}>DART 공시에서 매출 비중 표를 불러오는 중이에요…</div>
+    </section>
+  );
+}
+
 export async function DetailSections({
   stockName,
   code,
@@ -65,8 +114,7 @@ export async function DetailSections({
   code: string;
   market: string;
 }) {
-  const [news, dartBundle] = await Promise.all([fetchNews(stockName), fetchDartBusinessBundle(code)]);
-  const primaryTable = dartBundle ? pickPrimaryTable(dartBundle.raw.productsTables) : null;
+  const news = await fetchNews(stockName);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -81,31 +129,9 @@ export async function DetailSections({
       {/* 사업/제품별 매출 비중 — DART 정기보고서(사업/반기/분기보고서) "2. 주요
           제품 및 서비스" 표를 그대로 가져온다(lib/dart.ts). LLM 요약 없이 원문
           표를 그대로 보여주는 게 이 패널의 취지(사실 그대로)에 더 맞는다. */}
-      <section style={panelStyle}>
-        <span style={{ fontWeight: 700, fontSize: 14.5 }}>사업·제품별 매출 비중</span>
-        {primaryTable ? (
-          <>
-            <DartProductsTable rows={primaryTable} />
-            {dartBundle && (
-              <a
-                href={dartBundle.dartUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover-accent-border"
-                style={{ display: "inline-block", marginTop: 8, fontSize: 10.5, color: "var(--faint)", textDecoration: "none" }}
-              >
-                📄 출처: {dartBundle.reportName} ({dartBundle.reportDate.slice(0, 4)}.{dartBundle.reportDate.slice(4, 6)}.
-                {dartBundle.reportDate.slice(6, 8)}) · DART 공시 원문 보기 ›
-              </a>
-            )}
-          </>
-        ) : (
-          <div style={infoNoteStyle}>
-            DART 공시(사업/반기/분기보고서)에서 사업부문·제품별 매출 비중 표를 아직 찾지 못했어요. 전체
-            매출액은 위 기업실적분석에서 확인할 수 있어요.
-          </div>
-        )}
-      </section>
+      <Suspense fallback={<BusinessMixSkeleton />}>
+        <BusinessMixSection code={code} />
+      </Suspense>
 
       {/* 최근 이슈·뉴스 */}
       <section style={panelStyle}>

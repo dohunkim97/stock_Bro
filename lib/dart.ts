@@ -263,16 +263,15 @@ export type DartBusinessBundle = {
   raw: DartBusinessRaw;
 };
 
-// /api/bro/field-detail의 maxDuration은 30초지만 그 뒤에 LLM 요약 호출이
-// 하나 더 있어서(lib/field-detail.ts, 자체 10초 타임아웃) 이 함수 혼자
-// 예산을 다 쓰면 안 된다. 실측(icn1 프로덕션) 결과 list.json은 항상
-// 1~1.5초로 빠른데, document.xml은 편차가 커서(같은 rcept_no로 반복
-// 호출해도 600ms일 때도, 18초 넘게 걸릴 때도 있었음 — DART 서버 쪽
-// 지연이지 우리 쪽 파싱/압축해제 비용이 아님: 압축해제·정규식 파싱은
-// 실측 전부 합쳐 10ms 안쪽) 넉넉히 18초까지 준다. 그래도 못 받으면(아주
-// 드문 최악의 경우) null로 빠르게 실패해서 폴백 문구를 보여주는 게
-// 30초 하드 타임아웃보다 낫다.
-const BUNDLE_BUDGET_MS = 18000;
+// /api/bro/field-detail의 maxDuration을 45초로 늘려뒀고(route.ts) 그 뒤에
+// LLM 요약 호출이 하나 더 있어서(lib/field-detail.ts, 자체 10초 타임아웃)
+// 이 함수 혼자 예산을 다 쓰면 안 된다. 55초짜리 여유 타임아웃으로 직접
+// 재보니 document.xml은 Vercel(icn1)→DART 경로에서 매번 정확히 18초
+// 안팎 걸려서야 응답이 옴(같은 요청을 로컬/다른 네트워크에서 부르면
+// 0.3초 안쪽 — 편차가 아니라 그 경로 자체의 고정 지연으로 보임). 압축
+// 해제·정규식 파싱은 실측 10ms 안쪽이라 병목이 아니다. 그 실측치보다
+// 확실히 위인 22초를 준다.
+const BUNDLE_BUDGET_MS = 22000;
 
 export async function fetchDartBusinessBundle(stockCode: string): Promise<DartBusinessBundle | null> {
   if (!apiKey()) return null;

@@ -10,7 +10,11 @@ import {
   type FieldKey,
 } from "@/lib/field-detail";
 
-export const maxDuration = 30;
+// "business" 필드는 DART document.xml 왕복이 (실측) icn1→DART 경로에서
+// 고정적으로 ~18초 걸리고 그 뒤 LLM 요약까지 붙어서 30초로는 빠듯하다
+// (lib/dart.ts의 BUNDLE_BUDGET_MS 주석 참고) — 다른 6개 필드는 원래도
+// 훨씬 짧게 끝나니 이 상한을 늘려도 손해가 없다.
+export const maxDuration = 45;
 
 const FIELD_KEYS: FieldKey[] = ["business", "market", "volume", "chart", "material", "supply", "financial"];
 
