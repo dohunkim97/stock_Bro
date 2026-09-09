@@ -62,7 +62,7 @@ const detailCardStyle: React.CSSProperties = {
 };
 
 const fieldLineStyle: React.CSSProperties = {
-  fontSize: 11,
+  fontSize: 11.5,
   lineHeight: 1.6,
   color: "var(--text)",
 };
@@ -136,7 +136,7 @@ function Field({
           {verdict ? "(O)" : "(X)"}
         </strong>
       )}
-      {onClick && <span style={{ marginLeft: 6, color: "var(--faint)", fontSize: 9.5 }}>자세히 보기 ›</span>}
+      {onClick && <span style={{ marginLeft: 6, color: "var(--faint)", fontSize: 10 }}>자세히 보기 ›</span>}
     </>
   );
 
@@ -346,7 +346,7 @@ export function DetailCard({
       {series && series.length >= TRACKING_WINDOW_DAYS && (
         <div
           style={{
-            fontSize: 10.5,
+            fontSize: 11.5,
             fontWeight: 700,
             lineHeight: 1.6,
             padding: "7px 10px",
@@ -383,7 +383,7 @@ export function DetailCard({
           }}
         >
           {signals.map((s) => (
-            <div key={s.name} style={{ fontSize: 10.5, lineHeight: 1.55, fontWeight: 700, color: "var(--text)" }}>
+            <div key={s.name} style={{ fontSize: 11.5, lineHeight: 1.55, fontWeight: 700, color: "var(--text)" }}>
               <span style={{ color: signalColor(s.direction) }}>시그널: {s.name}</span>
               {" — "}
               {s.detail}
