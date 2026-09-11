@@ -51,3 +51,4 @@ next-env.d.ts
 
 # local Claude Code settings — machine-specific, not shared app code
 .claude/
+logs/
