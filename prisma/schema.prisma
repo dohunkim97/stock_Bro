@@ -288,3 +288,21 @@ model PeriodAnalysis {
 
   @@unique([periodType, periodKey])
 }
+
+// 사용자가 로컬에서 돌리는 별도 "기업분석" 프로그램의 결과물(DART 공시
+// 기반 "족보/펀더멘털" 심층 분석, JSON 파일) — C:\...\다트 데이터\기업분석
+// 데이터 폴더를 scripts/watch-company-analysis.ts가 감시하다 파일이
+// 생기거나 바뀌면 그 내용 그대로 여기에 올려둔다. rawJson은 그 프로그램이
+// 만든 JSON 구조(category_1_company_overview 등)를 그대로 문자열로 보관 —
+// 회사마다 sub_* 키 구성이 조금씩 달라서(예: 삼성전자엔 있고 다른 회사엔
+// 없는 항목 등) 스키마를 억지로 고정하지 않고 화면(컴포넌트)에서 유연하게
+// 읽는다. sourceFile은 재실행 시 같은 파일이 또 처리되는지 확인용.
+model CompanyAnalysis {
+  code       String   @id
+  name       String
+  reportName String
+  reportUrl  String
+  rawJson    String
+  sourceFile String
+  importedAt DateTime @updatedAt
+}

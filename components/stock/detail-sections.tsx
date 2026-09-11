@@ -4,6 +4,7 @@ import { fetchDartBusinessBundle } from "@/lib/dart";
 import { NewsList } from "@/components/news-list";
 import { EarningsAnalysis } from "./earnings-analysis";
 import { InvestorTrend } from "./investor-trend";
+import { CompanyAnalysisSection } from "./company-analysis-section";
 
 const panelStyle: React.CSSProperties = {
   background: "var(--panel)",
@@ -118,6 +119,13 @@ export async function DetailSections({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* AI 기업분석 — 사용자가 로컬에서 돌리는 별도 프로그램(DART 공시 기반
+          "족보/펀더멘털" 심층 분석)의 결과. scripts/watch-company-analysis.ts가
+          그 프로그램이 만든 JSON 파일을 실시간으로 DB에 올려두면 여기서 읽는다
+          (components/stock/company-analysis-section.tsx). 아직 분석되지 않은
+          종목은 섹션 자체가 안 뜬다(null 반환). */}
+      <CompanyAnalysisSection code={code} />
+
       {/* 기업실적분석 + 투자자별 매매동향 — 기업실적분석이 보통 더 길어서, 투자자별
           매매동향이 stretch로 그 높이에 맞춰 늘어난다(둘 다 내부 스크롤 없이 자연스러운
           콘텐츠 높이라 TOP종목 때처럼 JS 측정까지는 필요 없다). */}
