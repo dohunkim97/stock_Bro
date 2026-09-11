@@ -1,3 +1,5 @@
+import { MarketNoteButton } from "./market-note-button";
+
 // scripts/watch-company-analysis.ts가 올려주는 CompanyAnalysis.rawJson을
 // 실제로 그리는 순수 렌더링 조각들 — DB 접근이 전혀 없어서(prisma import
 // 없음) 서버 컴포넌트(company-analysis-section.tsx, 종목상세용)와 클라이언트
@@ -95,13 +97,18 @@ export type CompanyAnalysisData = {
 };
 
 // layout="grid": 종목상세처럼 폭이 넓은 곳(2열). layout="stack": 골구 모달처럼
-// 좁은 곳(1열, 세로로 쭉).
+// 좁은 곳(1열, 세로로 쭉). code/name은 맨 아래 "최근 뉴스·시황이랑
+// 맞아떨어지는지" 버튼(market-note-button.tsx)에 필요하다.
 export function CompanyAnalysisContent({
   data,
+  code,
+  name,
   layout = "grid",
   showSourceLink = true,
 }: {
   data: CompanyAnalysisData;
+  code: string;
+  name: string;
   layout?: "grid" | "stack";
   showSourceLink?: boolean;
 }) {
@@ -160,6 +167,8 @@ export function CompanyAnalysisContent({
           <CategoryBlock key={k} category={cat} />
         ))}
       </div>
+
+      <MarketNoteButton code={code} name={name} />
     </div>
   );
 }

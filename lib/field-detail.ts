@@ -171,6 +171,50 @@ export async function getBusinessDetail(name: string, code: string): Promise<Bus
   return detail;
 }
 
+// AI 기업분석(CompanyAnalysis)의 "종합 결론"은 그 보고서 시점(반기/분기
+// 결산)의 펀더멘털 스냅샷이라, 그 이후 나온 최신 뉴스·오늘 시황과는 따로
+// 논다 — 그래서 별도 버튼으로(components/stock/market-note-button.tsx)
+// "지금 이 펀더멘털이 최근 뉴스/시황이랑 맞아떨어지는지"를 한 번 더
+// 물어본다. 다른 필드들처럼 클릭했을 때만 계산(LLM 비용/지연 아끼기).
+export type CompanyAnalysisMarketNote = { content: string };
+
+export async function getCompanyAnalysisMarketNote(code: string, name: string): Promise<CompanyAnalysisMarketNote> {
+  const analysis = await prisma.companyAnalysis.findUnique({ where: { code } });
+  if (!analysis) return { content: "이 종목은 아직 AI 기업분석이 없어요." };
+
+  const parsed = JSON.parse(analysis.rawJson) as Record<string, unknown>;
+  const verdicts = Array.isArray(parsed.master_analyst_final_verdict)
+    ? (parsed.master_analyst_final_verdict as unknown[]).filter((v): v is string => typeof v === "string").join(" ")
+    : "";
+
+  const [news, marketBlock, issuesBlock] = await Promise.all([
+    fetchNews(`${name} 주가`, 6),
+    marketDataBlock(),
+    recentIssuesBlock(15),
+  ]);
+  const newsBlock =
+    news.length > 0 ? news.map((n) => `- (${n.pubDate.slice(0, 10)}) ${n.title}: ${n.description}`).join("\n") : "관련 뉴스 없음";
+
+  const system = [
+    "너는 한국 주식시장 애널리스트야. 아래는 이 종목의 (1) 공시 기반 펀더멘털 분석 결론, (2) 최근 실제 뉴스, (3) 오늘 시장 데이터·이슈야.",
+    "이 펀더멘털이 최근 뉴스/오늘 시황과 실제로 맞아떨어지는지(뒷받침되는지, 아니면 괴리가 있는지) 3~4문장으로 짚어줘.",
+    "펀더멘털 결론 시점(보고서 기준)과 지금 사이에 새로 생긴 변화가 있으면 구체적으로 짚고, 없으면 없다고 솔직히 말해.",
+    "확정적 전망이 아니라 데이터 기반 관찰 톤으로, 반말로 편하게. 다른 설명 없이 본문만 답해.",
+  ].join("\n");
+  const userPrompt = [
+    `종목: ${name} (${code})`,
+    `[AI 기업분석 종합 결론]\n${verdicts || "내용 없음"}`,
+    `[최근 뉴스]\n${newsBlock}`,
+    marketBlock,
+    issuesBlock,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const content = await llmWrite(system, userPrompt);
+  return { content: content ?? "지금은 시황·뉴스 연계 분석을 불러오지 못했어요." };
+}
+
 // 2. 시황 — 지금 이 종목/섹터를 둘러싼 시장 상황을 골구가 깊게 분석.
 export type MarketDetail = { content: string };
 

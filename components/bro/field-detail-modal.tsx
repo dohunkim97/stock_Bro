@@ -38,17 +38,19 @@ function won(n: number): string {
   return n >= 0 ? `+${formatWon(n)}` : `-${formatWon(Math.abs(n))}`;
 }
 
-function BusinessView({ data }: { data: BusinessDetail }) {
+function BusinessView({ data, code, name }: { data: BusinessDetail; code?: string; name: string }) {
   // 사용자가 로컬 "기업분석" 프로그램으로 만든 심층 분석이 이 종목에
   // 있으면(lib/field-detail.ts가 CompanyAnalysis를 먼저 확인) DART+LLM
   // 요약 대신 그걸 그대로 보여준다 — 종목상세 페이지(company-analysis-
   // section.tsx)와 같은 렌더링 조각을 재사용(company-analysis-render.tsx).
-  if (data.companyAnalysis) {
+  if (data.companyAnalysis && code) {
     const parsed = parseCompanyAnalysisJson(data.companyAnalysis.rawJson);
     if (parsed) {
       return (
         <CompanyAnalysisContent
           data={{ parsed, reportName: data.companyAnalysis.reportName, reportUrl: data.companyAnalysis.reportUrl }}
+          code={code}
+          name={name}
           layout="stack"
         />
       );
@@ -309,7 +311,7 @@ export function FieldDetailModal({
     <Modal open={open} onClose={onClose} title={field ? `${name} · ${FIELD_LABEL[field]}` : ""}>
       {loading && <div style={{ padding: "30px 0", textAlign: "center", color: "var(--faint)", fontSize: 11.5 }}>불러오는 중...</div>}
       {!loading && failed && <div style={{ fontSize: 11.5, color: "var(--faint)" }}>불러오지 못했어요. 다시 눌러주세요.</div>}
-      {!loading && !failed && result?.field === "business" && <BusinessView data={result.data} />}
+      {!loading && !failed && result?.field === "business" && <BusinessView data={result.data} code={code} name={name} />}
       {!loading && !failed && result?.field === "market" && <MarketView data={result.data} />}
       {!loading && !failed && result?.field === "volume" && <VolumeView data={result.data} />}
       {!loading && !failed && result?.field === "chart" && <ChartView data={result.data} />}

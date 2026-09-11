@@ -26,7 +26,12 @@ export async function CompanyAnalysisSection({ code }: { code: string }) {
       <div style={{ marginBottom: 14 }}>
         <span style={{ fontWeight: 700, fontSize: 14.5 }}>🔎 AI 기업분석</span>
       </div>
-      <CompanyAnalysisContent data={{ parsed, reportName: row.reportName, reportUrl: row.reportUrl }} layout="grid" />
+      <CompanyAnalysisContent
+        data={{ parsed, reportName: row.reportName, reportUrl: row.reportUrl }}
+        code={row.code}
+        name={row.name}
+        layout="grid"
+      />
     </section>
   );
 }
