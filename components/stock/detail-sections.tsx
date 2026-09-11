@@ -5,6 +5,7 @@ import { NewsList } from "@/components/news-list";
 import { EarningsAnalysis } from "./earnings-analysis";
 import { InvestorTrend } from "./investor-trend";
 import { CompanyAnalysisSection } from "./company-analysis-section";
+import { RevenueMixDonut, extractRevenueMix } from "./revenue-mix-donut";
 
 const panelStyle: React.CSSProperties = {
   background: "var(--panel)",
@@ -67,13 +68,25 @@ function DartProductsTable({ rows }: { rows: string[][] }) {
 async function BusinessMixSection({ code }: { code: string }) {
   const dartBundle = await fetchDartBusinessBundle(code);
   const primaryTable = dartBundle ? pickPrimaryTable(dartBundle.raw.productsTables) : null;
+  // 도넛은 표에서 뽑은 숫자가 그럴듯할 때만(파싱 신뢰도 체크는
+  // extractRevenueMix 안에서) — 못 믿을 땐 표만 보여주는 게 맞다.
+  const revenueMix = primaryTable ? extractRevenueMix(primaryTable) : [];
 
   return (
     <section style={panelStyle}>
       <span style={{ fontWeight: 700, fontSize: 14.5 }}>사업·제품별 매출 비중</span>
       {primaryTable ? (
         <>
-          <DartProductsTable rows={primaryTable} />
+          <div style={{ display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap", marginTop: 4 }}>
+            {revenueMix.length > 0 && (
+              <div style={{ flexShrink: 0 }}>
+                <RevenueMixDonut segments={revenueMix} />
+              </div>
+            )}
+            <div style={{ flex: 1, minWidth: 260 }}>
+              <DartProductsTable rows={primaryTable} />
+            </div>
+          </div>
           {dartBundle && (
             <a
               href={dartBundle.dartUrl}

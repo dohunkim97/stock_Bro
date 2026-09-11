@@ -16,6 +16,15 @@
   --down-soft: rgba(59, 130, 246, 0.13);
   --mono: "JetBrains Mono", monospace;
   --sans: "Pretendard", -apple-system, BlinkMacSystemFont, sans-serif;
+  /* 카테고리 색상(매출 비중 도넛차트 등 — 섹션끼리 구분만 하면 되는 값,
+     상승/하락 의미 없음) — CVD 안전성 검증된 고정 순서, 순환 생성 금지.
+     6번(--series-other)은 "기타"로 묶이는 잔여 항목 전용 중립 회색. */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-other: #6b6b6b;
 }
 
 html[data-theme="light"] {
@@ -34,6 +43,12 @@ html[data-theme="light"] {
   --up-soft: rgba(224, 39, 52, 0.09);
   --down: #1f6fe0;
   --down-soft: rgba(31, 111, 224, 0.09);
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-other: #9aa0ab;
 }
 
 * {
