@@ -5,6 +5,7 @@ import { Modal } from "@/components/ui/modal";
 import { renderBold } from "@/components/ui/rich-text";
 import { chgColorVar, formatChg, formatWon } from "@/lib/format";
 import { MiniPriceChart } from "./mini-price-chart";
+import { CompanyAnalysisContent, parseCompanyAnalysisJson } from "@/components/stock/company-analysis-render";
 import type { FieldKey, BusinessDetail, MarketDetail, VolumeDetail, ChartDetail, MaterialDetail, SupplyDetail, FinancialDetail } from "@/lib/field-detail";
 
 const FIELD_LABEL: Record<FieldKey, string> = {
@@ -38,6 +39,22 @@ function won(n: number): string {
 }
 
 function BusinessView({ data }: { data: BusinessDetail }) {
+  // 사용자가 로컬 "기업분석" 프로그램으로 만든 심층 분석이 이 종목에
+  // 있으면(lib/field-detail.ts가 CompanyAnalysis를 먼저 확인) DART+LLM
+  // 요약 대신 그걸 그대로 보여준다 — 종목상세 페이지(company-analysis-
+  // section.tsx)와 같은 렌더링 조각을 재사용(company-analysis-render.tsx).
+  if (data.companyAnalysis) {
+    const parsed = parseCompanyAnalysisJson(data.companyAnalysis.rawJson);
+    if (parsed) {
+      return (
+        <CompanyAnalysisContent
+          data={{ parsed, reportName: data.companyAnalysis.reportName, reportUrl: data.companyAnalysis.reportUrl }}
+          layout="stack"
+        />
+      );
+    }
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div>

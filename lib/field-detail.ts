@@ -12,6 +12,7 @@ import { fetchFinancialHistoryByCode, type YearlyFinancials } from "@/lib/krx-fi
 import { fetchNews, type NewsItem } from "@/lib/naver-news";
 import { recentIssuesBlock, telegramBlock, marketDataBlock } from "@/lib/bro-context";
 import { fetchDartBusinessBundle, dartTablesToText } from "@/lib/dart";
+import { prisma } from "@/lib/prisma";
 import {
   computeTechnicalSignals,
   findSupportResistanceLevels,
@@ -78,6 +79,12 @@ async function llmWriteJson<T>(system: string, userPrompt: string, maxTokens = 1
 // 해석해줘") — 뉴스나 LLM 추측이 아니라 실제 공시 원문이 출처다. LLM은
 // 그 원문을 요약·정리만 하고, 원문에 없는 수치는 언급하지 말라고 명시한다.
 export type BusinessDetail = {
+  // 사용자가 로컬 "기업분석" 프로그램으로 만든 심층 분석(CompanyAnalysis,
+  // scripts/watch-company-analysis.ts가 올림)이 이 종목에 있으면 여기가
+  // 채워지고, 모달은 DART+LLM 요약 대신 이걸 우선 보여준다 — 뉴스 기반
+  // 추측이 아니라 실제 공시를 근거로 사람이 미리 다듬어 둔 분석이라 더
+  // 신뢰도가 높고, DB 조회 한 번이라 훨씬 빠르다.
+  companyAnalysis: { rawJson: string; reportName: string; reportUrl: string } | null;
   overview: string;
   products: string;
   newBusiness: string;
@@ -100,10 +107,35 @@ export async function getBusinessDetail(name: string, code: string): Promise<Bus
   const cached = code ? businessDetailCache.get(code) : undefined;
   if (cached && Date.now() - cached.fetchedAt < BUSINESS_DETAIL_CACHE_TTL_MS) return cached.detail;
 
+  if (code) {
+    const analysis = await prisma.companyAnalysis.findUnique({ where: { code } });
+    if (analysis) {
+      const detail: BusinessDetail = {
+        companyAnalysis: { rawJson: analysis.rawJson, reportName: analysis.reportName, reportUrl: analysis.reportUrl },
+        overview: "",
+        products: "",
+        newBusiness: "",
+        reportName: analysis.reportName,
+        reportDate: null,
+        dartUrl: analysis.reportUrl,
+      };
+      businessDetailCache.set(code, { detail, fetchedAt: Date.now() });
+      return detail;
+    }
+  }
+
   const bundle = code ? await fetchDartBusinessBundle(code) : null;
 
   if (!bundle) {
-    return { overview: DART_UNAVAILABLE_NOTE, products: "", newBusiness: "", reportName: null, reportDate: null, dartUrl: null };
+    return {
+      companyAnalysis: null,
+      overview: DART_UNAVAILABLE_NOTE,
+      products: "",
+      newBusiness: "",
+      reportName: null,
+      reportDate: null,
+      dartUrl: null,
+    };
   }
 
   const productsText = dartTablesToText(bundle.raw.productsTables);
@@ -125,6 +157,7 @@ export async function getBusinessDetail(name: string, code: string): Promise<Bus
   const parsed = await llmWriteJson<{ overview?: string; products?: string; newBusiness?: string }>(system, userPrompt);
 
   const detail: BusinessDetail = {
+    companyAnalysis: null,
     // LLM 요약이 실패해도 원문 자체는 이미 확보돼 있으니, 다듬어지지 않은
     // 원문 그대로라도 보여주는 게(빈 화면보다) "팩트 기반"에 더 맞는다.
     overview: parsed?.overview || bundle.raw.overviewText || "사업 개요를 원문에서 찾지 못했어요.",
