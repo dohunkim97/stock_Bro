@@ -15,7 +15,7 @@ import { AutoRefresh } from "@/components/market/auto-refresh";
 // per candidate, which alone runs ~20s (see lib/dart.ts's
 // BUNDLE_BUDGET_MS), so this needs the same headroom as
 // app/api/bro/field-detail/route.ts.
-export const maxDuration = 45;
+export const maxDuration = 60;
 
 // This page has no searchParams/cookies to read, so Next would otherwise
 // statically prerender it at build time and freeze CandidateTracker's live

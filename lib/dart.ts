@@ -263,15 +263,15 @@ export type DartBusinessBundle = {
   raw: DartBusinessRaw;
 };
 
-// /api/bro/field-detail의 maxDuration을 45초로 늘려뒀고(route.ts) 그 뒤에
-// LLM 요약 호출이 하나 더 있어서(lib/field-detail.ts, 자체 10초 타임아웃)
-// 이 함수 혼자 예산을 다 쓰면 안 된다. 55초짜리 여유 타임아웃으로 직접
-// 재보니 document.xml은 Vercel(icn1)→DART 경로에서 매번 정확히 18초
-// 안팎 걸려서야 응답이 옴(같은 요청을 로컬/다른 네트워크에서 부르면
-// 0.3초 안쪽 — 편차가 아니라 그 경로 자체의 고정 지연으로 보임). 압축
-// 해제·정규식 파싱은 실측 10ms 안쪽이라 병목이 아니다. 그 실측치보다
-// 확실히 위인 22초를 준다.
-const BUNDLE_BUDGET_MS = 22000;
+// document.xml은 Vercel(icn1)→DART 경로에서만 고정적으로 느리다(같은 요청을
+// 로컬/다른 네트워크에서 부르면 0.2~0.3초 안쪽 — 그 경로 자체의 고정 지연,
+// 압축해제·정규식 파싱은 실측 10ms 안쪽이라 병목 아님). 게다가 회사마다
+// 문서 크기 차이가 커서(실측: 후성 반기보고서 압축 266KB → 이 경로에서
+// ~18초, 삼성전자 526KB → 그 두 배 가까운 문서인데 22초로는 부족해서
+// 실제로 타임아웃 발생 확인) 큰 기업 문서까지 감안한 여유를 둔다.
+// /api/bro/field-detail의 maxDuration은 60초(route.ts)라 그 뒤 LLM 요약
+// 호출(lib/field-detail.ts, 자체 10초 타임아웃)까지 더해도 여유가 있다.
+const BUNDLE_BUDGET_MS = 40000;
 
 // document.xml 왕복이 이 경로에서 고정적으로 ~18~20초라(위 주석), 매 클릭마다
 // 새로 받으면 사용자가 매번 그 시간을 기다려야 한다 — 같은 분기/반기 보고서는

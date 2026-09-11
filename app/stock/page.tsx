@@ -21,7 +21,7 @@ import type { StockMaster } from "@/app/generated/prisma/client";
 // 15-25s under real production latency, plus DetailSections' own fetches
 // after it — give this real room on Vercel rather than the platform's
 // short default.
-export const maxDuration = 45;
+export const maxDuration = 60;
 
 const DEFAULT_CODE = "042700"; // 한미반도체
 
