@@ -5,7 +5,7 @@ import { Modal } from "@/components/ui/modal";
 import { renderBold } from "@/components/ui/rich-text";
 import { chgColorVar, formatChg, formatWon } from "@/lib/format";
 import { MiniPriceChart } from "./mini-price-chart";
-import { CompanyAnalysisContent, parseCompanyAnalysisJson } from "@/components/stock/company-analysis-render";
+import { CompanyAnalysisContent, FinancialAnalysisContent, parseCompanyAnalysisJson } from "@/components/stock/company-analysis-render";
 import type { FieldKey, BusinessDetail, MarketDetail, VolumeDetail, ChartDetail, MaterialDetail, SupplyDetail, FinancialDetail } from "@/lib/field-detail";
 
 const FIELD_LABEL: Record<FieldKey, string> = {
@@ -237,6 +237,13 @@ function SupplyView({ data }: { data: SupplyDetail }) {
 function FinancialView({ data }: { data: FinancialDetail }) {
   return (
     <div>
+      {data.companyAnalysisFinancial && (
+        <div style={{ marginBottom: 18, paddingBottom: 16, borderBottom: "1px solid var(--border2)" }}>
+          <div style={{ fontWeight: 800, fontSize: 12.5, marginBottom: 8 }}>AI 재무 분석</div>
+          <FinancialAnalysisContent data={data.companyAnalysisFinancial} />
+        </div>
+      )}
+      <div style={{ fontWeight: 800, fontSize: 12.5, marginBottom: 8 }}>공식 연간 실적 (DART)</div>
       {data.annual.length === 0 ? (
         <div style={{ fontSize: 11.5, color: "var(--faint)" }}>재무 데이터를 가져오지 못했어요.</div>
       ) : (

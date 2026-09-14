@@ -362,11 +362,39 @@ export async function getSupplyDetail(code: string): Promise<SupplyDetail> {
 }
 
 // 7. 재무 — 연간 재무제표(data.go.kr 소스 자체가 연간만 제공, 분기 없음 —
-// 지어내지 않고 그대로 안내한다).
-export type FinancialDetail = { annual: YearlyFinancials[]; quarterlyAvailable: false };
+// 지어내지 않고 그대로 안내한다) + 있으면 사용자의 로컬 "재무 분석"
+// 프로그램(finance_py.py)이 만들어 둔 심층 재무 분석(CompanyAnalysis.
+// rawJson의 financial_analysis)도 같이 준다 — 하나가 다른 하나를 대체하는
+// 게 아니라(사업요약과 다르게) DART 공식 연간 수치 표는 그대로 두고 그
+// 위에 과거 대비 체질 변화·현금흐름·부채 안전성 같은 심층 해설을 얹는다.
+export type FinancialDetail = {
+  companyAnalysisFinancial: { parsed: Record<string, unknown>; reportName: string; reportUrl: string } | null;
+  annual: YearlyFinancials[];
+  quarterlyAvailable: false;
+};
 
 export async function getFinancialDetail(code: string): Promise<FinancialDetail> {
   const nowYear = Number(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric" }).format(new Date()));
-  const annual = await fetchFinancialHistoryByCode(code, [nowYear - 3, nowYear - 2, nowYear - 1]);
-  return { annual, quarterlyAvailable: false };
+  const [analysis, annual] = await Promise.all([
+    prisma.companyAnalysis.findUnique({ where: { code } }),
+    fetchFinancialHistoryByCode(code, [nowYear - 3, nowYear - 2, nowYear - 1]),
+  ]);
+
+  let companyAnalysisFinancial: FinancialDetail["companyAnalysisFinancial"] = null;
+  if (analysis) {
+    try {
+      const parsed = JSON.parse(analysis.rawJson) as Record<string, unknown>;
+      if (parsed.financial_analysis && typeof parsed.financial_analysis === "object") {
+        companyAnalysisFinancial = {
+          parsed: parsed.financial_analysis as Record<string, unknown>,
+          reportName: analysis.reportName,
+          reportUrl: analysis.reportUrl,
+        };
+      }
+    } catch {
+      // rawJson이 깨져 있으면 그냥 DART 연간 수치만 보여준다
+    }
+  }
+
+  return { companyAnalysisFinancial, annual, quarterlyAvailable: false };
 }

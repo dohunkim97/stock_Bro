@@ -24,29 +24,31 @@ function verdictColor(text: string): string | null {
   return null;
 }
 
+function VerdictBadge({ text, color, inline = false }: { text: string; color: string; inline?: boolean }) {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        fontSize: 11,
+        fontWeight: 700,
+        color,
+        background: `color-mix(in srgb, ${color} 15%, transparent)`,
+        borderRadius: 20,
+        padding: "3px 10px",
+        marginTop: inline ? 0 : 4,
+      }}
+    >
+      {text}
+    </span>
+  );
+}
+
 // verdict성 필드(짧고 평가 어휘 위주)와 stats성 필드(길고 수치 나열)를
 // 구분 — 짧은(대략 20자 이하) 문자열이면서 평가 색이 잡히면 뱃지로,
 // 나머지는 그냥 줄글로.
 function StatOrBadge({ text }: { text: string }) {
   const color = text.length <= 22 ? verdictColor(text) : null;
-  if (color) {
-    return (
-      <span
-        style={{
-          display: "inline-block",
-          fontSize: 11,
-          fontWeight: 700,
-          color,
-          background: `color-mix(in srgb, ${color} 15%, transparent)`,
-          borderRadius: 20,
-          padding: "3px 10px",
-          marginTop: 4,
-        }}
-      >
-        {text}
-      </span>
-    );
-  }
+  if (color) return <VerdictBadge text={text} color={color} />;
   return (
     <div style={{ fontSize: 11.5, color: "var(--text)", lineHeight: 1.6, marginTop: 4, fontFamily: "var(--mono)" }}>
       {text}
@@ -54,11 +56,27 @@ function StatOrBadge({ text }: { text: string }) {
   );
 }
 
+// 재무분석 6개 항목 각각에서 "판정" 역할을 하는 필드 하나를 찾는다(필드
+// 이름이 trend_verdict/flow_pattern/cost_type/... 항목마다 달라서 이름으로
+// 못 찾고, StatOrBadge와 같은 기준(짧고 평가 어휘)으로 값을 보고 찾는다) —
+// 요약 표의 "판정" 칸에 쓴다.
+function findVerdictField(item: SubItem): string | null {
+  for (const [k, v] of Object.entries(item)) {
+    if (k === "sub_title" || k === "title" || k === "story") continue;
+    if (typeof v !== "string" || v.length === 0 || v.length > 22) continue;
+    if (verdictColor(v)) return v;
+  }
+  return null;
+}
+
+// sub_title(사업/시황 등 기존 카테고리)과 title(재무분석 — finance_py.py가
+// 채워주는 6개 항목은 이 키를 쓴다) 둘 다 받아준다 — 스키마가 프로그램마다
+// 조금씩 다른 걸 여기서 흡수한다.
 function SubItemCard({ item }: { item: SubItem }) {
-  const title = typeof item.sub_title === "string" ? item.sub_title : null;
+  const title = typeof item.sub_title === "string" ? item.sub_title : typeof item.title === "string" ? item.title : null;
   const story = typeof item.story === "string" ? item.story : null;
   const rest = Object.entries(item).filter(
-    ([k, v]) => k !== "sub_title" && k !== "story" && typeof v === "string" && v.length > 0
+    ([k, v]) => k !== "sub_title" && k !== "title" && k !== "story" && typeof v === "string" && v.length > 0
   ) as [string, string][];
 
   return (
@@ -168,7 +186,126 @@ export function CompanyAnalysisContent({
         ))}
       </div>
 
+      {hasFinancialAnalysis(data.parsed) && (
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--border2)" }}>
+          <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 10, color: "var(--accent)" }}>III. 재무 분석</div>
+          <FinancialAnalysisContent
+            data={{
+              parsed: data.parsed.financial_analysis as Record<string, unknown>,
+              reportName: data.reportName,
+              reportUrl: data.reportUrl,
+            }}
+            showSourceLink={false}
+          />
+        </div>
+      )}
+
       <MarketNoteButton code={code} name={name} />
+    </div>
+  );
+}
+
+// 재무 분석(finance_py.py가 채워주는 financial_analysis) 전용 렌더링 —
+// "재무는 표까지 해서 한눈에 보이게" 요청에 맞춰, 6개 항목 · 판정을 한
+// 표로 먼저 보여주고 그 아래 항목별 상세(수치·해설)를 카드로 붙인다.
+// company-analysis-render.tsx에 두는 이유는 SubItemCard/VerdictBadge 등
+// 이미 있는 조각을 그대로 재사용하기 위함 — financial_analysis는
+// category_1/2와 키 이름 규칙(title vs sub_title 등)만 조금 다를 뿐 구조가
+// 같다.
+export type FinancialAnalysisData = {
+  parsed: Record<string, unknown>; // financial_analysis 객체 자체
+  reportName: string;
+  reportUrl: string;
+};
+
+export function hasFinancialAnalysis(parsed: Record<string, unknown>): boolean {
+  return isSubItem(parsed.financial_analysis);
+}
+
+export function FinancialAnalysisContent({ data, showSourceLink = true }: { data: FinancialAnalysisData; showSourceLink?: boolean }) {
+  const dimensions = Object.entries(data.parsed).filter(
+    ([k, v]) => k !== "financial_report_name" && k !== "financial_report_url" && k !== "analyst_financial_summary" && isSubItem(v)
+  ) as [string, SubItem][];
+  const summary = Array.isArray(data.parsed.analyst_financial_summary)
+    ? (data.parsed.analyst_financial_summary as unknown[]).filter((v): v is string => typeof v === "string")
+    : [];
+
+  return (
+    <div>
+      {showSourceLink && (
+        <a
+          href={data.reportUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover-accent-border"
+          style={{
+            display: "inline-block",
+            marginBottom: 14,
+            fontFamily: "var(--mono)",
+            fontSize: 10.5,
+            color: "var(--faint)",
+            textDecoration: "none",
+          }}
+        >
+          출처: {data.reportName} · DART 원문 보기 ›
+        </a>
+      )}
+
+      {summary.length > 0 && (
+        <div
+          style={{
+            background: "var(--panel2)",
+            border: "1px solid var(--border2)",
+            borderRadius: 10,
+            padding: "12px 14px",
+            marginBottom: 16,
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+          }}
+        >
+          <div style={{ fontWeight: 700, fontSize: 11.5, color: "var(--accent)" }}>재무 종합 결론</div>
+          {summary.map((v, i) => (
+            <div key={i} style={{ fontSize: 12, lineHeight: 1.7, color: "var(--text)" }}>
+              {v}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {dimensions.length > 0 && (
+        <div style={{ overflowX: "auto", marginBottom: 18 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border2)" }}>
+                <th style={{ textAlign: "left", padding: "6px 10px", color: "var(--faint)", fontWeight: 600 }}>분석 항목</th>
+                <th style={{ textAlign: "left", padding: "6px 10px", color: "var(--faint)", fontWeight: 600 }}>판정</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dimensions.map(([k, item]) => {
+                const title = typeof item.title === "string" ? item.title : k;
+                const verdict = findVerdictField(item);
+                const color = verdict ? verdictColor(verdict) : null;
+                return (
+                  <tr key={k} style={{ borderBottom: "1px solid var(--border)" }}>
+                    <td style={{ padding: "8px 10px", color: "var(--text)" }}>{title}</td>
+                    <td style={{ padding: "8px 10px" }}>
+                      {verdict && color ? <VerdictBadge text={verdict} color={color} inline /> : "-"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {dimensions.map(([k, item]) => (
+          <SubItemCard key={k} item={item} />
+        ))}
+      </div>
     </div>
   );
 }
