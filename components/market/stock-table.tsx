@@ -111,8 +111,18 @@ function Row({ s, cols, expanded }: { s: DailyEntry; cols: string; expanded: boo
         )}
       </div>
       {s.issue && (
-        <div
+        // KIS 뉴스 API(국내주식-141, lib/kis-news.ts의 KisNewsItem)는 제목만
+        // 주고 기사 URL을 안 줘서, 그 헤드라인 텍스트로 네이버 뉴스 검색
+        // 결과로 보낸다 — "관련기사로 이동"의 실용적인 구현. stopPropagation
+        // 없이는 이 줄을 눌러도 바깥 행의 onClick(종목상세 이동)이 같이
+        // 먼저 걸려버린다(실측 버그: 기사를 눌러도 종목상세로 감).
+        <a
+          href={`https://search.naver.com/search.naver?where=news&query=${encodeURIComponent(s.issue)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
           style={{
+            display: "block",
             padding: expanded ? "0 18px 12px" : "0 18px 7px",
             fontSize: expanded ? 12 : 11,
             color: "var(--dim)",
@@ -120,11 +130,13 @@ function Row({ s, cols, expanded }: { s: DailyEntry; cols: string; expanded: boo
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
+            textDecoration: "none",
+            cursor: "pointer",
           }}
-          title={s.issue}
+          title={`관련 기사 검색: ${s.issue}`}
         >
           📰 {s.issue}
-        </div>
+        </a>
       )}
     </div>
   );
