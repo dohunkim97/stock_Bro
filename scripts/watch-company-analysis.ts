@@ -13,8 +13,25 @@
 import "dotenv/config";
 import chokidar from "chokidar";
 import { importCompanyAnalysisFile } from "../lib/company-analysis-import";
+import { exportTodayPicks } from "../lib/export-today-picks";
 
 const WATCH_DIR = "C:\\Users\\PC\\Desktop\\바이브 코딩\\다트 데이터\\기업분석 데이터";
+
+// today_picks.json(오늘 골구가 예상한 종목 + 지난 예측 백로그, 최신순·이미
+// 분석된 건 제외)도 이 프로세스가 같이 최신으로 유지한다 — 사용자가 매일
+// 아침 로컬 분석 스크립트 한 번만 돌려도 그 우선순위 목록이 항상 최신이게
+// 하려면(사용자 요청) PC를 며칠 켜둔 채로 로그아웃을 안 해도(그럼 시작
+// 스캔이 다시 안 돎) 자동으로 갱신돼야 한다 — 그래서 30분마다 재확인한다.
+const TODAY_PICKS_REFRESH_MS = 30 * 60 * 1000;
+
+async function refreshTodayPicks() {
+  try {
+    const result = await exportTodayPicks();
+    if (result.changed) log(`📋 today_picks.json 갱신 — ${result.codes.length}개: ${result.codes.join(", ") || "(없음)"}`);
+  } catch (e) {
+    log(`⚠️  today_picks.json 갱신 실패: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
 
 function log(msg: string) {
   const ts = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date());
@@ -41,4 +58,11 @@ watcher
   .on("add", (filePath) => handleFile(filePath))
   .on("change", (filePath) => handleFile(filePath))
   .on("error", (err) => log(`❌ 감시 오류: ${err instanceof Error ? err.message : String(err)}`))
-  .on("ready", () => log("초기 스캔 완료 — 이제부터 새 파일/수정을 실시간으로 반영합니다. (Ctrl+C로 종료)"));
+  .on("ready", () => {
+    log("초기 스캔 완료 — 이제부터 새 파일/수정을 실시간으로 반영합니다. (Ctrl+C로 종료)");
+    // 초기 스캔(위 add 이벤트들)으로 오늘 새로 들어온 분석 결과가 이미
+    // CompanyAnalysis에 반영된 뒤에 today_picks.json을 만들어야 "이미 분석
+    // 끝난 종목 제외" 필터가 방금 끝난 것까지 정확히 반영한다.
+    refreshTodayPicks();
+    setInterval(refreshTodayPicks, TODAY_PICKS_REFRESH_MS);
+  });

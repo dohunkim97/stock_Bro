@@ -9,6 +9,7 @@
     "lint": "eslint",
     "seed": "tsx prisma/seed.ts",
     "watch:company-analysis": "tsx scripts/watch-company-analysis.ts",
+    "export-today-picks": "tsx scripts/export-today-picks.ts",
     "postinstall": "prisma generate"
   },
   "prisma": {
