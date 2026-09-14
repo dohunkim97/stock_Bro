@@ -1,15 +1,15 @@
 {
   "crons": [
     {
-      "path": "/api/cron/sync-market",
+      "path": "/api/cron/sync-market?slot=open",
       "schedule": "0 0 * * 1-5"
     },
     {
-      "path": "/api/cron/sync-market",
+      "path": "/api/cron/sync-market?slot=midday",
       "schedule": "0 3 * * 1-5"
     },
     {
-      "path": "/api/cron/sync-market",
+      "path": "/api/cron/sync-market?slot=close",
       "schedule": "30 6 * * 1-5"
     },
     {
