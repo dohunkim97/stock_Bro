@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { formatWon } from "@/lib/format";
 import { RankBadge } from "./rank-badge";
+import { BasisLabel } from "./basis-label";
 import type { ThemeNetRank, NetFlowStock } from "@/lib/money-flow";
 
 function netColor(net: number): string {
@@ -61,9 +62,11 @@ function ThemeRow({ item, rank }: { item: ThemeNetRank; rank: number }) {
 export function ThemeNetFlowStocksPanel({
   buying,
   selling,
+  basisLabel,
 }: {
   buying: ThemeNetRank[];
   selling: ThemeNetRank[];
+  basisLabel?: string | null;
 }) {
   const hasData = buying.length > 0 || selling.length > 0;
 
@@ -80,8 +83,9 @@ export function ThemeNetFlowStocksPanel({
       {/* marginBottom: 6은 ThemeNetFlowPanel의 제목 줄과 반드시 같아야 한다 —
           여기만 16이었더니 그 10px 차이가 그대로 누적돼서 두 패널의 "1위" 줄이
           시작부터 어긋나 있었다. */}
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
         <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.01em" }}>🏢 순매수·순매도 테마별 종목</span>
+        <BasisLabel label={basisLabel ?? null} />
       </div>
       <div aria-hidden style={{ visibility: "hidden", fontSize: 11.5, marginBottom: 16, lineHeight: 1.5, maxWidth: 560 }}>
         테마에 태깅된 종목들의 외국인+기관 순매수 거래대금을 다 더한 값이에요. 거래가 활발한 것(위쪽

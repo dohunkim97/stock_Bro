@@ -2,14 +2,19 @@ import Link from "next/link";
 import { getLatestMoneyFlowTake, parseMoneyFlowCandidates } from "@/lib/money-flow-take";
 import { renderBold } from "@/components/ui/rich-text";
 import { RankBadge } from "./rank-badge";
+import { BasisLabel } from "./basis-label";
+import { basisLabelFromRows } from "@/lib/data-freshness";
 
 // Self-contained like WeeklyPredictionPanel — reads whatever the latest
-// sync generated (lib/sync-runner.ts), not scoped to the date being browsed.
+// sync generated (lib/sync-runner.ts), not scoped to the date being browsed
+// (그래서 basisLabel을 꼭 보여준다 — 지금 보고 있는 날짜와 실제로 이 의견이
+// 만들어진 날짜가 다를 수 있다는 걸 사용자가 알 수 있게).
 export async function MoneyFlowTakePanel() {
   const take = await getLatestMoneyFlowTake();
   if (!take) return null;
 
   const candidates = parseMoneyFlowCandidates(take.candidates);
+  const basisLabel = basisLabelFromRows([take]);
 
   return (
     <section
@@ -20,34 +25,37 @@ export async function MoneyFlowTakePanel() {
         padding: 24,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-        <div
-          style={{
-            width: 28,
-            height: 28,
-            borderRadius: 8,
-            background: "linear-gradient(135deg, var(--accent), var(--up))",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#0a0d13",
-            fontWeight: 800,
-            fontSize: 12,
-          }}
-        >
-          G
-        </div>
-        <span
-          style={{
-            fontFamily: "var(--mono)",
-            fontSize: 11,
-            color: "var(--accent)",
-            letterSpacing: "0.12em",
-            textTransform: "uppercase",
-          }}
-        >
-          Golgoo · 자금 흐름 기반 투자 방향
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+              background: "linear-gradient(135deg, var(--accent), var(--up))",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#0a0d13",
+              fontWeight: 800,
+              fontSize: 12,
+            }}
+          >
+            G
+          </div>
+          <span
+            style={{
+              fontFamily: "var(--mono)",
+              fontSize: 11,
+              color: "var(--accent)",
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+            }}
+          >
+            Golgoo · 자금 흐름 기반 투자 방향
+          </span>
         </span>
+        <BasisLabel label={basisLabel} />
       </div>
 
       <div

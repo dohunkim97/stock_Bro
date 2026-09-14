@@ -1,6 +1,7 @@
 import { formatWon } from "@/lib/format";
 import { weekdayLabel } from "@/lib/dates";
 import { RankBadge } from "./rank-badge";
+import { BasisLabel } from "./basis-label";
 import type { ThemeMoneyFlowByDay } from "@/lib/money-flow";
 
 function formatDayHeader(iso: string): string {
@@ -21,9 +22,11 @@ const ROW_HEIGHT = 38;
 export function MoneyFlowPanel({
   days,
   themes,
+  basisLabel,
 }: {
   days: string[];
   themes: ThemeMoneyFlowByDay[];
+  basisLabel?: string | null;
 }) {
   // `days`/`dailyTotals` come in oldest-first (day-view.tsx also uses
   // days[0] as a query-range start elsewhere, so that order can't change
@@ -48,11 +51,14 @@ export function MoneyFlowPanel({
         minWidth: 0,
       }}
     >
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-        <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.01em" }}>🔥 시장 관심 상위 테마</span>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)" }}>
-          최근 {days.length}거래일 · 일별 거래대금
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <span style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.01em" }}>🔥 시장 관심 상위 테마</span>
+          <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)" }}>
+            최근 {days.length}거래일 · 일별 거래대금
+          </span>
         </span>
+        <BasisLabel label={basisLabel ?? null} />
       </div>
 
       {themes.length === 0 ? (

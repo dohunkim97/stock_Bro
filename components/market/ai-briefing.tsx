@@ -8,6 +8,7 @@ import {
   type BriefingSlot,
 } from "@/lib/market-briefing";
 import { todayISO } from "@/lib/dates";
+import { BasisLabel } from "./basis-label";
 import { SectorContributors } from "./sector-contributors";
 import { renderBold } from "@/components/ui/rich-text";
 import type { SectorEntry } from "@/lib/sector-aggregation";
@@ -83,7 +84,7 @@ export async function AiBriefing({
           color: "var(--faint)",
         }}
       >
-        오늘의 AI 브리핑은 모닝(07:00)·중간(12:30)·장마감(15:40)에 자동 생성돼요. 아직 준비된 브리핑이 없어요.
+        오늘의 AI 브리핑은 모닝(12:00)·중간(15:00)·장마감(20:10)에 자동 생성돼요. 아직 준비된 브리핑이 없어요.
       </section>
     );
   }
@@ -134,6 +135,9 @@ export async function AiBriefing({
           >
             Golgoo AI · {date} 시장 브리핑
           </span>
+          <BasisLabel
+            label={`${new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(active.createdAt)} 생성`}
+          />
         </div>
 
         <div style={{ display: "flex", gap: 6 }}>

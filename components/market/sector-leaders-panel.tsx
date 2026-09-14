@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { chgColorVar, formatChg } from "@/lib/format";
 import type { SectorPerformance } from "@/lib/sector-performance";
+import { BasisLabel } from "./basis-label";
 
 function rankBadgeStyle(i: number, compact: boolean): React.CSSProperties {
   const size = compact ? 16 : 20;
@@ -22,11 +23,25 @@ function rankBadgeStyle(i: number, compact: boolean): React.CSSProperties {
 
 export type LeaderGroup = { title: string; items: SectorPerformance[] };
 
-function LeaderGroupBlock({ title, items, compact }: LeaderGroup & { compact: boolean }) {
+function LeaderGroupBlock({
+  title,
+  items,
+  compact,
+  basisLabel,
+}: LeaderGroup & { compact: boolean; basisLabel?: string | null }) {
   return (
     <div>
-      <div style={{ fontWeight: 700, fontSize: compact ? 12.5 : 14, marginBottom: compact ? 8 : 12 }}>
-        {title}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: 8,
+          marginBottom: compact ? 8 : 12,
+        }}
+      >
+        <span style={{ fontWeight: 700, fontSize: compact ? 12.5 : 14 }}>{title}</span>
+        <BasisLabel label={basisLabel ?? null} />
       </div>
 
       {items.length === 0 ? (
@@ -88,9 +103,11 @@ function LeaderGroupBlock({ title, items, compact }: LeaderGroup & { compact: bo
 export function SectorLeadersPanel({
   groups,
   compact = false,
+  basisLabel,
 }: {
   groups: LeaderGroup[];
   compact?: boolean;
+  basisLabel?: string | null;
 }) {
   return (
     <section
@@ -109,7 +126,7 @@ export function SectorLeadersPanel({
           key={g.title}
           style={i > 0 ? { paddingTop: compact ? 14 : 18, borderTop: "1px solid var(--border)" } : undefined}
         >
-          <LeaderGroupBlock title={g.title} items={g.items} compact={compact} />
+          <LeaderGroupBlock title={g.title} items={g.items} compact={compact} basisLabel={basisLabel} />
         </div>
       ))}
     </section>

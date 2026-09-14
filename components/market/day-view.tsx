@@ -16,6 +16,7 @@ import { applyThemes, onlyThemed, filterToCurrentTheme } from "@/lib/theme-looku
 import { rankSectorPerformance, dedupeByStock } from "@/lib/sector-performance";
 import { rankMoneyFlowByDay, rankMoneyFlowStocks, rankThemeNetFlow } from "@/lib/money-flow";
 import { getMarketIndexQuotes } from "@/lib/kis-index-quote";
+import { basisLabelFromRows } from "@/lib/data-freshness";
 import type { WeekInfo } from "@/lib/week";
 import { todayISO } from "@/lib/dates";
 import type { DailyEntry, Watchlist, ThemeDailyFlow, ThemeNetFlow } from "@/app/generated/prisma/client";
@@ -112,6 +113,13 @@ export async function DayView({
   const themeLeaders = rankSectorPerformance(await onlyThemed(todayEntries));
   const indexQuotes = await getMarketIndexQuotes();
 
+  // TOP종목/업종상위/테마상위, 테마별 자금흐름 두 짝, 순매수·순매도 두 짝 —
+  // 이 세 그룹은 각각 같은 동기화 회차(sync-market 크론)에서 나온 값이라
+  // 그룹당 라벨 하나씩만 계산해서 여러 패널이 같이 쓴다.
+  const dailyEntryBasis = basisLabelFromRows([...gainerEntries, ...loserEntries, ...volumeEntries]);
+  const moneyFlowBasis = basisLabelFromRows(moneyFlowEntries);
+  const netFlowBasis = basisLabelFromRows(netFlowEntries);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       {date === todayISO() && <AutoRefresh />}
@@ -123,6 +131,7 @@ export async function DayView({
       <HeightMatchedRow
         left={
           <StockTable
+            basisLabel={dailyEntryBasis}
             tabs={[
               {
                 key: "gainer",
@@ -154,8 +163,8 @@ export async function DayView({
         right={
           <>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 0.85fr", gap: 16, alignItems: "stretch" }}>
-              <SectorLeadersPanel compact groups={[{ title: "업종상위", items: sectorLeaders }]} />
-              <SectorLeadersPanel compact groups={[{ title: "테마상위", items: themeLeaders }]} />
+              <SectorLeadersPanel compact groups={[{ title: "업종상위", items: sectorLeaders }]} basisLabel={dailyEntryBasis} />
+              <SectorLeadersPanel compact groups={[{ title: "테마상위", items: themeLeaders }]} basisLabel={dailyEntryBasis} />
               <IndexQuotePanel initialQuotes={indexQuotes} />
             </div>
             <AiBriefing date={date} slot={briefingSlot} contributors={agg.contributors} />
@@ -169,16 +178,16 @@ export async function DayView({
           나눈 이유: 순매수·순매도 상위 테마는 칩이 없어 내용이 훨씬 좁아서, 같은 0.8fr을
           주면 가로 스크롤이 생긴다 — 그 줄만 왼쪽 비중을 높여 스크롤 없이 들어가게 했다. */}
       <div style={{ display: "grid", gridTemplateColumns: "0.8fr 1.2fr", gap: 20, alignItems: "stretch" }}>
-        <MoneyFlowPanel days={moneyFlowDays} themes={moneyFlowThemes} />
-        <MoneyFlowStocksPanel themes={moneyFlowStockGroups} />
+        <MoneyFlowPanel days={moneyFlowDays} themes={moneyFlowThemes} basisLabel={moneyFlowBasis} />
+        <MoneyFlowStocksPanel themes={moneyFlowStockGroups} basisLabel={moneyFlowBasis} />
       </div>
       {/* 왼쪽은 max-content로 표 내용 폭에 딱 맞춰 카드가 늘어나고(빈 여백 없이),
           남는 공간은 전부 오른쪽(1fr)이 가져간다 — 설명 문단에 maxWidth를 줘서
           이 계산을 표 폭이 주도하게 만들었다(그 문단 자체가 원래 한 줄 폭으로
           치면 표보다 넓어서, 안 그러면 카드가 쓸데없이 넓어진다). */}
       <div style={{ display: "grid", gridTemplateColumns: "max-content 1fr", gap: 20, alignItems: "stretch" }}>
-        <ThemeNetFlowPanel days={moneyFlowDays.length} buying={netFlowRank.buying} selling={netFlowRank.selling} />
-        <ThemeNetFlowStocksPanel buying={netFlowRank.buying} selling={netFlowRank.selling} />
+        <ThemeNetFlowPanel days={moneyFlowDays.length} buying={netFlowRank.buying} selling={netFlowRank.selling} basisLabel={netFlowBasis} />
+        <ThemeNetFlowStocksPanel buying={netFlowRank.buying} selling={netFlowRank.selling} basisLabel={netFlowBasis} />
       </div>
 
       {/* 위 자금 흐름 데이터를 종합한 AI의 투자 방향 의견 */}

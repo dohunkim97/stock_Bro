@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { chgColorVar, formatChg } from "@/lib/format";
 import { SORT_OPTIONS, sortEntries } from "@/lib/sort";
 import type { DailyEntry } from "@/app/generated/prisma/client";
+import { BasisLabel } from "./basis-label";
 
 // 예전엔 위 10개만 보여주고 "더보기"를 눌러야 전체 목록을 모달로 봤는데,
 // 지금은 이 칸 안에서 바로 스크롤해서 전체 종목을 다 볼 수 있게 바꿨다 —
@@ -218,7 +219,7 @@ export type RankingTab = {
   entries: DailyEntry[];
 };
 
-export function StockTable({ tabs }: { tabs: RankingTab[] }) {
+export function StockTable({ tabs, basisLabel }: { tabs: RankingTab[]; basisLabel?: string | null }) {
   const [activeKey, setActiveKey] = useState(tabs[0].key);
   const active = tabs.find((t) => t.key === activeKey) ?? tabs[0];
   const { badgeText, badgeColor, accentVar, entries } = active;
@@ -248,8 +249,17 @@ export function StockTable({ tabs }: { tabs: RankingTab[] }) {
 
   return (
     <section style={{ ...panelStyle, display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={{ fontWeight: 800, fontSize: 15, letterSpacing: "-0.01em", padding: "12px 16px 0" }}>
-        TOP종목
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: 8,
+          padding: "12px 16px 0",
+        }}
+      >
+        <span style={{ fontWeight: 800, fontSize: 15, letterSpacing: "-0.01em" }}>TOP종목</span>
+        <BasisLabel label={basisLabel ?? null} />
       </div>
 
       <div

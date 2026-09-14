@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { chgColorVar, formatChg } from "@/lib/format";
 import { RankBadge } from "./rank-badge";
+import { BasisLabel } from "./basis-label";
 import type { ThemeStockGroups, MoneyFlowStock } from "@/lib/money-flow";
 
 // MoneyFlowPanel과 반드시 같은 값 — 패딩만으로 셀 높이를 맞추면 뱃지·칩처럼
@@ -35,7 +36,13 @@ function StockChips({ stocks }: { stocks: MoneyFlowStock[] }) {
 // MoneyFlowPanel과 헤더 행(같은 fontSize:11/padding) + 데이터 행(같은
 // padding:"10px 0") 스타일을 그대로 맞춰서, 두 패널의 순위별 줄이 서로
 // 정확히 나란히 오도록 했다.
-export function MoneyFlowStocksPanel({ themes }: { themes: ThemeStockGroups[] }) {
+export function MoneyFlowStocksPanel({
+  themes,
+  basisLabel,
+}: {
+  themes: ThemeStockGroups[];
+  basisLabel?: string | null;
+}) {
   return (
     <section
       style={{
@@ -46,9 +53,12 @@ export function MoneyFlowStocksPanel({ themes }: { themes: ThemeStockGroups[] })
         minWidth: 0,
       }}
     >
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-        <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.01em" }}>🏢 테마별 종목</span>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)" }}>대표기업 · 관련 중소형주</span>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <span style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.01em" }}>🏢 테마별 종목</span>
+          <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)" }}>대표기업 · 관련 중소형주</span>
+        </span>
+        <BasisLabel label={basisLabel ?? null} />
       </div>
 
       {themes.length === 0 ? (

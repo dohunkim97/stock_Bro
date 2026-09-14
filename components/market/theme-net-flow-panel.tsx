@@ -1,5 +1,6 @@
 import { formatWon } from "@/lib/format";
 import { RankBadge } from "./rank-badge";
+import { BasisLabel } from "./basis-label";
 import type { ThemeNetRank } from "@/lib/money-flow";
 
 // ThemeNetFlowStocksPanel과 반드시 같은 값 — 패딩만으로 셀 높이를 맞추면
@@ -42,10 +43,12 @@ export function ThemeNetFlowPanel({
   days,
   buying,
   selling,
+  basisLabel,
 }: {
   days: number;
   buying: ThemeNetRank[];
   selling: ThemeNetRank[];
+  basisLabel?: string | null;
 }) {
   const hasData = buying.length > 0 || selling.length > 0;
 
@@ -59,11 +62,14 @@ export function ThemeNetFlowPanel({
         minWidth: 0,
       }}
     >
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
-        <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.01em" }}>🔀 순매수·순매도 상위 테마</span>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)" }}>
-          최근 {days}거래일 · 외국인+기관 누적 순매수
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.01em" }}>🔀 순매수·순매도 상위 테마</span>
+          <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)" }}>
+            최근 {days}거래일 · 외국인+기관 누적 순매수
+          </span>
         </span>
+        <BasisLabel label={basisLabel ?? null} />
       </div>
       {/* maxWidth를 안 주면 이 줄글이 원래 한 줄로 쳤을 때의 폭(꽤 넓다)이
           카드의 max-content 계산을 지배해서, 아래 표보다 카드가 훨씬 넓어지고
