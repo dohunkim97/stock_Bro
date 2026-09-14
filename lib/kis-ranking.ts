@@ -11,7 +11,7 @@
 
 import { getKisAccessToken } from "@/lib/kis-token";
 import { fetchKisQuote } from "@/lib/kis-quote";
-import { fetchKisNewsForCodes, pickBestIssue, isInformativeTitle } from "@/lib/kis-news";
+import { fetchKisNewsForCodes, pickBestIssue, isInformativeTitle, type KisNewsItem } from "@/lib/kis-news";
 import { fetchNews } from "@/lib/naver-news";
 import { isPreferredStock } from "@/lib/stock-filters";
 
@@ -178,6 +178,37 @@ async function fetchVolumeRanking(
     .filter((r) => r.name && r.code.length === 6 && !isPreferredStock(r.name));
 }
 
+// KIS의 헤드라인 하나로 정확히 매칭되는 기사를 찾으면 그게 제일 좋지만
+// (best.title 그대로 관련도순 검색), 못 찾는 경우가 두 갈래다 — (1) 헤드라인
+// 자체가 "종목명 상승폭 확대"류 정형 자동캡션이라 애초에 안 믿는 경우
+// (isInformativeTitle=false), (2) 정보는 있어 보이는데(예: 시황 요약처럼
+// 쉼표로 이어진 문장이라 hasReasonClause는 통과) 실제로는 이 종목 얘기가
+// 아니라서 검색해도 안 잡히는 경우. 두 경우 다 "종목명으로 직접 검색해서
+// 최근 실제 기사를 대신 쓴다"로 보완한다(사용자 요청) — KIS 캡션보다야
+// 진짜 언론사가 그 종목 이름으로 쓴 최근 기사가 훨씬 믿을 만하다. 그마저
+// 없으면(정말 뉴스가 없는 종목) KIS 원문 텍스트라도 남기고 링크는 비워서
+// 화면에서 네이버 검색결과로 대신 보내게 한다.
+async function resolveIssue(
+  name: string,
+  news: KisNewsItem[]
+): Promise<{ issue?: string; issueUrl?: string } | null> {
+  const best = pickBestIssue(news);
+  if (best && isInformativeTitle(best.title)) {
+    const [matched] = await fetchNews(best.title, 1, "sim");
+    if (matched?.link) return { issue: best.title, issueUrl: matched.link };
+  }
+
+  if (name) {
+    // "후성" vs "후성유전학" 같은 이름 겹침 방지 — 다른 곳(lib/field-detail.ts
+    // 등)과 같은 이유로 "주가"를 붙인다.
+    const candidates = await fetchNews(`${name} 주가`, 3, "date");
+    const fallback = candidates.find((n) => isInformativeTitle(n.title)) ?? candidates[0];
+    if (fallback) return { issue: fallback.title, issueUrl: fallback.link };
+  }
+
+  return best ? { issue: best.title } : null;
+}
+
 // Neither ranking endpoint returns a sector/업종 field, and 등락률순위
 // additionally lacks 거래대금/상장주식수 — a single-stock quote lookup per
 // unique code fills in both. bstp_kor_isnm is KRX's own fixed ~20-category
@@ -215,19 +246,11 @@ async function enrichWithKisQuote(rows: KisRankRow[]): Promise<void> {
             if (!r.tradingValue) r.tradingValue = q.tradingValue;
           }
         }
-        const best = pickBestIssue(news);
-        if (best) {
-          for (const r of targets) r.issue = best.title;
-          // KIS 뉴스 API는 제목만 주고 기사 URL이 없어서, 그 제목으로 네이버
-          // 뉴스를 관련도순(sim)으로 검색해 1건을 그 기사의 실제 링크로
-          // 쓴다 — "종목명 상승폭 확대" 같은 정형 자동캡션(isInformativeTitle
-          // = false)은 검색해도 그 문구를 우연히 쓴 다른 회사의 옛 기사가
-          // 잡히는 게 실측 확인돼서(예: 현대약품 캡션이 바이오스마트 2020년
-          // 기사와 매칭됨) 애초에 시도하지 않는다 — 그런 제목은 화면에서
-          // 네이버 검색결과 링크로 대신 보낸다(URL 없이 둔다).
-          if (isInformativeTitle(best.title)) {
-            const [matched] = await fetchNews(best.title, 1, "sim");
-            if (matched?.link) for (const r of targets) r.issueUrl = matched.link;
+        const resolved = await resolveIssue(targets[0]?.name ?? "", news);
+        if (resolved) {
+          for (const r of targets) {
+            r.issue = resolved.issue;
+            r.issueUrl = resolved.issueUrl;
           }
         }
       })
