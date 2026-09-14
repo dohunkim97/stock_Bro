@@ -53,6 +53,12 @@ model DailyEntry {
   industry      String?
   revenue       String?
   issue         String?
+  // issue(KIS 뉴스 제목) 그 문구로 네이버 뉴스를 검색해서 가장 관련도 높은
+  // 결과 1건의 실제 기사 링크 — KIS 뉴스 API 자체는 제목만 주고 URL을 안
+  // 줘서(lib/kis-news.ts) 동기화 시점에 한 번 더 찾아 저장해둔다. 검색이
+  // 실패하거나 결과가 없으면 null — 그때는 화면에서 네이버 검색결과
+  // 링크로 대신 보낸다(components/market/stock-table.tsx).
+  issueUrl      String?
   createdAt DateTime @default(now())
 
   @@index([date, listType])

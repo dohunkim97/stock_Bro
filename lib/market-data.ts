@@ -23,6 +23,7 @@ export type UploadRow = {
   industry?: string;
   revenue?: string;
   issue?: string;
+  issueUrl?: string;
 };
 
 export async function resolveStock(name: string) {
@@ -169,6 +170,7 @@ export async function replaceDayEntries(
         industry: row.industry?.trim() || null,
         revenue: row.revenue?.trim() || null,
         issue: row.issue?.trim() || null,
+        issueUrl: row.issueUrl?.trim() || null,
       };
     });
 

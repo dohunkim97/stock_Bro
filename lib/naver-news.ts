@@ -33,7 +33,10 @@ function domainOf(url: string): string {
   }
 }
 
-export async function fetchNews(query: string, display = 8): Promise<NewsItem[]> {
+// sort: "date"(기본, 최신순 — "최근 뉴스" 용) | "sim"(관련도순 — 특정 문구
+// 하나와 가장 비슷한 기사 1건을 찾을 때, 예: KIS 헤드라인 텍스트로 그 기사
+// 실제 링크를 역으로 찾는 lib/kis-ranking.ts의 resolveIssueUrl).
+export async function fetchNews(query: string, display = 8, sort: "date" | "sim" = "date"): Promise<NewsItem[]> {
   const clientId = process.env.NAVER_CLIENT_ID;
   const clientSecret = process.env.NAVER_CLIENT_SECRET;
   if (!clientId || !clientSecret || !query.trim()) return [];
@@ -41,7 +44,7 @@ export async function fetchNews(query: string, display = 8): Promise<NewsItem[]>
   const url = new URL(NEWS_URL);
   url.searchParams.set("query", query);
   url.searchParams.set("display", String(display));
-  url.searchParams.set("sort", "date");
+  url.searchParams.set("sort", sort);
 
   try {
     const res = await fetch(url.toString(), {

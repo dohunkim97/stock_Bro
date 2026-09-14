@@ -22,6 +22,7 @@ export type RawKrxRow = {
   sharesOutstanding: number;
   sector?: string;
   issue?: string;
+  issueUrl?: string;
 };
 
 function formatShares(value: number): string {
@@ -133,6 +134,7 @@ function toUploadRows(rows: RawKrxRow[], ratios: Map<string, FinancialRatios>): 
       // data.go.kr backfill path for past dates has no per-stock news
       // lookup, so older/backfilled entries just show no issue line.
       issue: r.issue,
+      issueUrl: r.issueUrl,
     };
   });
 }

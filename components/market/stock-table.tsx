@@ -111,13 +111,20 @@ function Row({ s, cols, expanded }: { s: DailyEntry; cols: string; expanded: boo
         )}
       </div>
       {s.issue && (
-        // KIS 뉴스 API(국내주식-141, lib/kis-news.ts의 KisNewsItem)는 제목만
-        // 주고 기사 URL을 안 줘서, 그 헤드라인 텍스트로 네이버 뉴스 검색
-        // 결과로 보낸다 — "관련기사로 이동"의 실용적인 구현. stopPropagation
-        // 없이는 이 줄을 눌러도 바깥 행의 onClick(종목상세 이동)이 같이
-        // 먼저 걸려버린다(실측 버그: 기사를 눌러도 종목상세로 감).
+        // issueUrl은 동기화 시점에 이 헤드라인 텍스트로 네이버 뉴스를
+        // 관련도순 검색해서 찾아둔 실제 기사 링크(lib/kis-ranking.ts) —
+        // KIS 뉴스 API 자체는 제목만 주고 URL을 안 줘서 역으로 찾아야 한다.
+        // "종목명 상승폭 확대"류 정형 자동캡션은 그 검색이 엉뚱한 회사
+        // 기사를 잡아올 수 있어 애초에 시도하지 않고 issueUrl을 비워두는데
+        // (lib/kis-news.ts의 isInformativeTitle), 그때·과거 동기화분(마이
+        // 그레이션 이전이라 issueUrl 자체가 없는 기존 행)엔 검색결과 페이지로
+        // 대신 보낸다. stopPropagation 없이는 이 줄을 눌러도 바깥 행의
+        // onClick(종목상세 이동)이 같이 걸려버린다(실측 버그).
         <a
-          href={`https://search.naver.com/search.naver?where=news&query=${encodeURIComponent(s.issue)}`}
+          href={
+            s.issueUrl ||
+            `https://search.naver.com/search.naver?where=news&query=${encodeURIComponent(s.issue)}`
+          }
           target="_blank"
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
@@ -133,7 +140,7 @@ function Row({ s, cols, expanded }: { s: DailyEntry; cols: string; expanded: boo
             textDecoration: "none",
             cursor: "pointer",
           }}
-          title={`관련 기사 검색: ${s.issue}`}
+          title={s.issueUrl ? s.issue : `관련 기사 검색: ${s.issue}`}
         >
           📰 {s.issue}
         </a>

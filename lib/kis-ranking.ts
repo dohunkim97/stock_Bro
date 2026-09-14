@@ -11,7 +11,8 @@
 
 import { getKisAccessToken } from "@/lib/kis-token";
 import { fetchKisQuote } from "@/lib/kis-quote";
-import { fetchKisNewsForCodes, pickBestIssue } from "@/lib/kis-news";
+import { fetchKisNewsForCodes, pickBestIssue, isInformativeTitle } from "@/lib/kis-news";
+import { fetchNews } from "@/lib/naver-news";
 import { isPreferredStock } from "@/lib/stock-filters";
 
 const FLUCTUATION_URL = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/ranking/fluctuation";
@@ -32,6 +33,7 @@ export type KisRankRow = {
   sharesOutstanding: number;
   sector?: string;
   issue?: string;
+  issueUrl?: string;
 };
 
 async function kisRankingGet(
@@ -216,6 +218,17 @@ async function enrichWithKisQuote(rows: KisRankRow[]): Promise<void> {
         const best = pickBestIssue(news);
         if (best) {
           for (const r of targets) r.issue = best.title;
+          // KIS 뉴스 API는 제목만 주고 기사 URL이 없어서, 그 제목으로 네이버
+          // 뉴스를 관련도순(sim)으로 검색해 1건을 그 기사의 실제 링크로
+          // 쓴다 — "종목명 상승폭 확대" 같은 정형 자동캡션(isInformativeTitle
+          // = false)은 검색해도 그 문구를 우연히 쓴 다른 회사의 옛 기사가
+          // 잡히는 게 실측 확인돼서(예: 현대약품 캡션이 바이오스마트 2020년
+          // 기사와 매칭됨) 애초에 시도하지 않는다 — 그런 제목은 화면에서
+          // 네이버 검색결과 링크로 대신 보낸다(URL 없이 둔다).
+          if (isInformativeTitle(best.title)) {
+            const [matched] = await fetchNews(best.title, 1, "sim");
+            if (matched?.link) for (const r of targets) r.issueUrl = matched.link;
+          }
         }
       })
     );

@@ -38,7 +38,7 @@ export type KisNewsItem = {
 // 쉼표 뒤에 진짜 이유가 붙어있으면 이 패턴에 걸려도 정보가 있는 걸로 쳐야 해서,
 // hasReasonClause와 같이 써야 한다 — 이 패턴 하나만으로 판단하지 말 것.
 const PRICE_ACTION_ONLY_PATTERN =
-  /(급등세|급락세|강세|약세|상한가|하한가|신고가|신저가|상승세|하락세|거래량\s*몰림)\s*(를\s*)?(기록|경신|지속|이어가|전환|보이)/;
+  /(급등세|급락세|강세|약세|상한가|하한가|신고가|신저가|상승세|하락세|거래량\s*몰림)\s*(를\s*)?(기록|경신|지속|이어가|전환|보이)|(상승폭|하락폭)\s*(확대|축소)/;
 
 // 쉼표 뒤에 어느 정도 길이 있는 절이 더 있으면("…경신, 전일 외국인 대량
 // 순매수") 앞쪽에 가격움직임 단어가 섞여 있어도 이유가 담긴 기사로 본다 —
@@ -51,12 +51,23 @@ function hasReasonClause(title: string): boolean {
   return parts.length > 1 && parts[parts.length - 1].length >= 6;
 }
 
+// 가격 움직임만 되풀이하는 자동생성 캡션이 아니라 "왜 움직였는지"가 담긴
+// 진짜 기사 제목인지 — pickBestIssue의 순위 매기기와, 이 제목으로 실제
+// 기사 링크를 역검색해도 되는지(lib/kis-ranking.ts) 양쪽에서 같은 기준을
+// 쓴다. "현대약품 상승폭 확대 +6.00%"처럼 어느 종목에나 붙는 정형 문구는
+// 네이버에 검색해도 그 문구를 우연히 쓴 다른 회사 옛 기사가 잡히는 경우가
+// 실측 확인돼서(예: "바이오스마트, +3.02% 상승폭 확대"), 이런 제목은 애초에
+// 검색 자체를 시도하지 않는 게 안전하다.
+export function isInformativeTitle(title: string): boolean {
+  return hasReasonClause(title) || !PRICE_ACTION_ONLY_PATTERN.test(title);
+}
+
 // 종목당 최대 3건까지 받아오는 후보 중, 가격 움직임만 되풀이하는 캡션 말고
 // "왜 움직였는지"가 담긴 기사(공시/이슈/테마 언급 등)를 우선한다 — 첫 번째로
 // 찾은 것을 그냥 쓰던 예전 방식은 정작 이유를 담은 기사가 2·3번째에 있어도
 // 놓쳤다.
 export function pickBestIssue(candidates: KisNewsItem[]): KisNewsItem | undefined {
-  const informative = candidates.find((n) => hasReasonClause(n.title) || !PRICE_ACTION_ONLY_PATTERN.test(n.title));
+  const informative = candidates.find((n) => isInformativeTitle(n.title));
   return informative ?? candidates[0];
 }
 
