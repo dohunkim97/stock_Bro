@@ -23,14 +23,43 @@ const WATCH_DIR = "C:\\Users\\PC\\Desktop\\바이브 코딩\\다트 데이터\\�
 // 하려면(사용자 요청) PC를 며칠 켜둔 채로 로그아웃을 안 해도(그럼 시작
 // 스캔이 다시 안 돎) 자동으로 갱신돼야 한다 — 그래서 30분마다 재확인한다.
 const TODAY_PICKS_REFRESH_MS = 30 * 60 * 1000;
+const RETRY_DELAY_MS = 5000;
 
+// 실측: 이 프로세스를 며칠 켜둔 채로 두니 "today_picks.json 갱신 실패"가
+// 여러 회차 연속으로(30분 간격 x 3번 이상) 반복되다 나중에 저절로 풀리는
+// 패턴이 관찰됐다 — Neon 같은 서버리스 Postgres는 오래 idle이던 커넥션을
+// 서버 쪽에서 먼저 끊어버리는데, 이 타이머는 30분마다 딱 한 번만 쿼리를
+// 날려서 그 끊긴 커넥션을 그대로 다시 쓰다 실패하는 것으로 보인다(반면
+// 파일 변경 감지 쪽은 이벤트가 몰릴 때 자주 쿼리를 날려서 커넥션이 계속
+// 따뜻하게 유지돼 이 문제를 거의 안 겪는다). 첫 시도가 실패하면 바로
+// 재시도해서(pg pool이 새 커넥션을 잡게 됨) 다음 30분을 기다리지 않고도
+// 대부분 복구되게 한다 — lib/sync-runner.ts의 withRetry와 같은 패턴.
 async function refreshTodayPicks() {
   try {
     const result = await exportTodayPicks();
     if (result.changed) log(`📋 today_picks.json 갱신 — ${result.codes.length}개: ${result.codes.join(", ") || "(없음)"}`);
   } catch (e) {
-    log(`⚠️  today_picks.json 갱신 실패: ${e instanceof Error ? e.message : String(e)}`);
+    log(`⚠️  today_picks.json 갱신 실패(재시도 예정): ${describeError(e)}`);
+    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+    try {
+      const result = await exportTodayPicks();
+      if (result.changed) log(`📋 today_picks.json 갱신(재시도 성공) — ${result.codes.length}개: ${result.codes.join(", ") || "(없음)"}`);
+      else log("📋 today_picks.json 재시도 성공 — 변동 없음");
+    } catch (e2) {
+      log(`⚠️  today_picks.json 갱신 실패(재시도도 실패): ${describeError(e2)}`);
+    }
   }
+}
+
+// e.message만 보면(이전 버그) Prisma/pg 커넥션 에러 중 message가 빈
+// 문자열인 경우가 있어 로그가 "실패: " 뒤에 아무것도 안 남아 원인을 전혀
+// 알 수 없었다 — name/code/message를 다 모아서 최소한 뭐라도 남긴다.
+function describeError(e: unknown): string {
+  if (e instanceof Error) {
+    const code = (e as { code?: string }).code;
+    return [e.name, code, e.message].filter(Boolean).join(" ") || e.stack?.split("\n")[0] || "(빈 에러)";
+  }
+  return String(e);
 }
 
 function log(msg: string) {

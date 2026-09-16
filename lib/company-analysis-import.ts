@@ -18,6 +18,35 @@ export type ImportResult =
   | { ok: true; code: string; name: string }
   | { ok: false; file: string; reason: string };
 
+// 생성 프로그램이 도중에 스키마를 바꿨다(실측: 71개 파일 중 21개가 새
+// 형식) — 예전엔 category_1_company_overview/category_2_business_operation/
+// master_analyst_final_verdict였는데, 새 파일들은 그 둘을 business_analysis
+// 하나(안에 governance_and_history/business_fundamentals 두 항목 +
+// business_verdict 배열)로 합친 훨씬 단순한 모양으로 온다. 렌더링
+// (company-analysis-render.tsx)이 두 스키마를 다 알게 만드느니, 저장하기
+// 전에 여기서 예전 모양(category_N_.../sub_N_.../master_analyst_final_verdict)
+// 으로 맞춰서 렌더링 쪽은 손댈 필요가 없게 한다 — business_analysis의 두
+// 항목을 각각 자기만의 category로 펼쳐서(항목당 sub_1 하나) 예전처럼 2칸
+// 그리드가 채워지게 하고, 각 항목이 이미 갖고 있는 title(예: "1. 사명 변경
+// 및 경영진 교체 위험도")을 그대로 살린다.
+function normalizeAnalysisJson(json: Record<string, unknown>): Record<string, unknown> {
+  const ba = json.business_analysis;
+  if (!ba || typeof ba !== "object" || Array.isArray(ba)) return json;
+
+  const rest = { ...json };
+  delete rest.business_analysis;
+  const { business_verdict, ...subItems } = ba as Record<string, unknown>;
+
+  const normalized: Record<string, unknown> = { ...rest };
+  let i = 1;
+  for (const [key, value] of Object.entries(subItems)) {
+    normalized[`category_${i}_${key}`] = { [`sub_1_${key}`]: value };
+    i++;
+  }
+  if (business_verdict !== undefined) normalized.master_analyst_final_verdict = business_verdict;
+  return normalized;
+}
+
 // company_name만 있고 stock_code가 없는 파일(실측: 삼성전자_00126380,
 // SK하이닉스_00164779 — 파일명에 DART corp_code만 들어간 케이스)은 이미
 // 있는 KIS 종목마스터 이름 매칭으로 보완한다(lib/kis-code-master.ts —
@@ -36,7 +65,7 @@ export async function importCompanyAnalysisFile(filePath: string): Promise<Impor
   let json: Record<string, unknown>;
   try {
     const text = await readFile(filePath, "utf-8");
-    json = JSON.parse(text);
+    json = normalizeAnalysisJson(JSON.parse(text));
   } catch (e) {
     return { ok: false, file: fileName, reason: e instanceof Error ? e.message : "읽기/파싱 실패" };
   }
@@ -44,8 +73,13 @@ export async function importCompanyAnalysisFile(filePath: string): Promise<Impor
   const name = typeof json.company_name === "string" ? json.company_name : "";
   const reportName = typeof json.report_name === "string" ? json.report_name : "";
   const reportUrl = typeof json.report_url === "string" ? json.report_url : "";
-  if (!name || !json.category_1_company_overview || !json.category_2_business_operation) {
-    return { ok: false, file: fileName, reason: "필수 필드 누락(company_name/category_1/category_2)" };
+  // 정확한 키 이름(category_1_company_overview 등)으로 검증하면 스키마가
+  // 또 바뀌었을 때 다시 전부 거부당한다 — "category_로 시작하는 키가 최소
+  // 2개는 있다"는 정도만 확인(구형식 2개, 신형식도 normalizeAnalysisJson이
+  // 2개로 펼쳐줌).
+  const categoryKeyCount = Object.keys(json).filter((k) => k.startsWith("category_")).length;
+  if (!name || categoryKeyCount < 1) {
+    return { ok: false, file: fileName, reason: "필수 필드 누락(company_name/사업분석 내용)" };
   }
 
   const code = await resolveStockCode(json);
