@@ -153,9 +153,16 @@ async function explainMovers(
 ): Promise<{ summary: string; explanations: Map<string, string>; insights: string[] } | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null;
 
-  const toExplain = [...candidates]
+  const byMagnitude = [...candidates]
     .sort((a, b) => Math.abs(b.finalChangePct ?? 0) - Math.abs(a.finalChangePct ?? 0))
     .slice(0, MAX_EXPLAINED);
+  // 오르긴 했는데 목표가까지는 못 간 종목("왜 목표가 도달을 못 했는지"도
+  // 판단해달라는 요청) — 등락폭이 작아서 위 상위 12개에 안 뽑혔더라도
+  // 별도로 몇 개 더 챙긴다. 이미 뽑힌 종목과는 중복하지 않는다.
+  const missedTarget = candidates
+    .filter((c) => !byMagnitude.includes(c) && !c.hitTarget && (c.finalChangePct ?? -1) > 0)
+    .slice(0, 5);
+  const toExplain = [...byMagnitude, ...missedTarget];
 
   const newsByName = new Map(
     await Promise.all(
@@ -168,7 +175,13 @@ async function explainMovers(
       const news = newsByName.get(c.name) ?? [];
       const newsLine = news.length > 0 ? news.map((n) => n.title).join(" / ") : "관련 뉴스 없음";
       const pct = c.finalChangePct !== null ? `${c.finalChangePct >= 0 ? "+" : ""}${c.finalChangePct.toFixed(2)}%` : "추적 불가";
-      const outcome = c.hitTarget ? " (목표가 도달)" : c.hitStop ? " (손절가 도달)" : "";
+      const outcome = c.hitTarget
+        ? " (목표가 도달)"
+        : c.hitStop
+          ? " (손절가 도달)"
+          : (c.finalChangePct ?? 0) > 0
+            ? " (상승했지만 목표가 미달성)"
+            : "";
       return `- ${c.name}: 결과 ${pct}${outcome} (당시 추천 근거: "${c.reasoning}") / 최근 뉴스: ${newsLine}`;
     })
     .join("\n");
@@ -190,6 +203,7 @@ async function explainMovers(
     '너는 "Golgoo"라는 개인 투자 AI야. 친한 형/친구처럼 편한 반말로, 확신 있는 어조로 말해.',
     `아래는 ${label} 동안 네가 예상 리포트에서 추천했던 종목들이 실제로 5거래일 지난 뒤 나온 결과(매수가 대비 최종 등락률)와, 그 종목 관련 최근 뉴스야. 이번 기간 전체 적중률은 ${total}개 중 ${hitCount}개(${((hitCount / total) * 100).toFixed(0)}%), 목표가 도달 ${targetCount}건, 손절가 도달 ${stopCount}건이야.`,
     "각 종목이 왜 올랐는지 내렸는지, 뉴스를 최대한 활용해서 설명해줘 — 관련 뉴스가 마땅치 않으면 당시 추천 근거(재료)가 그대로 먹혔는지 안 먹혔는지로 판단해.",
+    "'상승했지만 목표가 미달성'이라고 표시된 종목은 특히 신경 써서 — 방향은 맞았는데 왜 목표가(저항선)까지는 못 뚫었는지(거래량 부족, 시장 전체 조정, 저항이 예상보다 강했는지 등) 짚어줘. 손절가 도달 종목도 마찬가지로 애초에 근거가 틀렸던 건지, 맞는 방향인데 단기 조정에 걸린 건지 구분해서 설명해.",
     "[항목별(O/X) 판단과 실제 수익률 — 실데이터로 이미 계산됨, 숫자는 지어내지 마]",
     categoryLines,
     "1) summary: 전체 총평(적중률과 함께, 위 항목별 데이터를 근거로 어떤 유형의 근거가 실제로 잘 맞았는지 안 맞았는지 구체적으로) 3~4문장.",
