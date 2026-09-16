@@ -8,6 +8,7 @@ import { fetchKisCodeMaster, findInCodeMaster } from "@/lib/kis-code-master";
 import { fetchKisChart } from "@/lib/kis-chart";
 import { computeTechnicalSignals, LONG_TERM_SIGNAL_CANDLES } from "@/lib/technical-signals";
 import { buildVolumeNote, getCandidateDetails } from "@/lib/candidate-detail";
+import { latestWeeklyInsightsBlock } from "@/lib/period-analysis";
 
 const SYSTEM_PROMPT = [
   "너는 한국 주식시장의 향후 5거래일 유망 종목을 뽑는 애널리스트야.",
@@ -19,10 +20,12 @@ const SYSTEM_PROMPT = [
   "[관심 종목군의 기술적 시그널 및 거래량]은 실제 차트 데이터로 계산된 값이야(거래량 급감+음봉·지지선 지지 확인·8일선 지지·33일선 정찰병 매수·45일선 반등·이동평균선 정배열·300일선/480일선 지지 확인 같은 bullish 시그널 / 저항선 돌파 실패·단기 급락·이동평균선 역배열·45일선 터치 시 거래량 증가(반등 제외)·300일선/480일선 붕괴 같은 bearish 시그널, 그리고 종목별 최근 5거래일 평균 거래량이 평소 대비 몇% 늘었는지/줄었는지) — 종목을 고를 때 반드시 참고하고, 있는 종목은 reasoning에 자연스럽게 녹여서 언급해. 특히 평소보다 거래량이 크게(대략 50% 이상) 늘어난 종목은 시장 관심이 붙고 있다는 뜻이니 긍정적으로 반영해.",
   "특히 480일선은 마지막 장기 지지선이야 — '480일선 붕괴' 시그널이 뜬 종목은 위험 신호로 보고 후보에서 제외하거나, 이미 후보로 다뤄야 한다면 반드시 매도/손절 관점에서 경고를 명확히 해.",
   "과거 예측 적중 이력이 있다면 반드시 참고해 — 어떤 유형의 근거가 잘 맞았는지, 안 맞았는지를 이번 선정에 반영해.",
+  "[지난 주간분석에서 배운 점]이 있다면(있을 때만) 반드시 실제로 반영해 — 그건 지난주 실제 추천 종목들이 5거래일 지난 뒤 어떤 근거(시황/거래량/차트/재료/수급/재무)가 실제로 잘 맞았는지 데이터로 분석한 결과야. 예를 들어 '거래량이 늘지 않은 종목은 실패율이 높았다'고 나왔으면 이번엔 거래량 증가가 뚜렷한 종목 위주로 더 신중하게 골라.",
+  "종목 개수는 반드시 5개를 채울 필요 없어 — 확신이 가는(여러 근거가 실제로 겹치는) 종목만 1~5개 골라. 근거가 약한데 억지로 채운 종목 하나가 전체 적중률을 깎아먹으니, 개수보다 성공 확률을 우선해.",
   "판단 원칙: 진짜 호재를 품은 종목은 하루에 -5% 넘게 잘 안 빠져 — 뉴스는 좋은데 최근 낙폭이 -5%를 넘는 종목은 호재 신뢰도를 의심하고 신중하게 다뤄. 목표 구간·손절선은 항상 같이 언급해서, 평단가를 위협하면 미련 없이 손절한다는 원칙이 자연스럽게 드러나게 해.",
   "확정적 보장이 아니라 데이터에 근거한 관찰이라는 점을 유지해. 데이터에 없는 건 추측하지 마.",
   "다른 설명 없이 아래 JSON 형식으로만 답해:",
-  '{"summary": "오늘부터 5거래일 전망 핵심을 3-4문장으로", "sectors": [{"name": "섹터/테마명", "reasoning": "근거 한 문장"}] (2-3개), "candidates": [{"name": "정확한 종목명", "reasoning": "근거 한 문장"}] (3-5개)}',
+  '{"summary": "오늘부터 5거래일 전망 핵심을 3-4문장으로", "sectors": [{"name": "섹터/테마명", "reasoning": "근거 한 문장"}] (2-3개), "candidates": [{"name": "정확한 종목명", "reasoning": "근거 한 문장"}] (확신 있는 종목만 1-5개)}',
 ].join("\n");
 
 type RawItem = Record<string, unknown>;
@@ -142,15 +145,18 @@ export async function generateWeeklyPrediction(): Promise<void> {
 
   const forDate = todayISO();
 
-  const [historyBlock, issuesBlock, tgBlock, accBlock, signalsBlock] = await Promise.all([
+  const [historyBlock, issuesBlock, tgBlock, accBlock, signalsBlock, insightsBlock] = await Promise.all([
     recentWeeksHistoryBlock(4),
     recentIssuesBlock(20),
     telegramBlock(),
     pastAccuracyBlock(),
     signalShortlistBlock(),
+    latestWeeklyInsightsBlock(),
   ]);
 
-  const userPrompt = [historyBlock, issuesBlock, tgBlock, accBlock, signalsBlock].filter(Boolean).join("\n\n");
+  const userPrompt = [historyBlock, issuesBlock, tgBlock, accBlock, signalsBlock, insightsBlock]
+    .filter(Boolean)
+    .join("\n\n");
   if (!userPrompt.trim()) return; // nothing to reason from yet (e.g. brand-new deployment)
 
   const client = new Anthropic();

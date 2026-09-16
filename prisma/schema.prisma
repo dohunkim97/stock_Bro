@@ -290,6 +290,14 @@ model PeriodAnalysis {
   summary          String
   candidateHitRate Float?
   results          String // JSON PeriodCandidateResult[]
+  // 시황/거래량/차트/재료/수급/재무 6개 항목(O/X)이 실제 수익률과 얼마나
+  // 맞아떨어졌는지 항목별 집계 — JSON CategoryStat[]. null이면(마이그레이션
+  // 이전 옛 레코드) 화면에서 그 부분만 비워 보여준다.
+  categoryStats    String?
+  // 위 집계를 근거로 LLM이 뽑은 "다음에 참고할 점" — JSON string[].
+  // lib/weekly-prediction.ts가 다음 종목 선정 프롬프트에 그대로 읽어 넣는
+  // "자체 학습" 연결 지점(latestWeeklyInsightsBlock).
+  insights         String?
   createdAt        DateTime @default(now())
 
   @@unique([periodType, periodKey])
