@@ -37,3 +37,55 @@ export function getDailyChangeSeries(candles: ChartCandle[], forDate: string): D
     changePct: ((c.close - basePrice) / basePrice) * 100,
   }));
 }
+
+export type TrackingOutcome = {
+  hitTarget: boolean;
+  hitTargetDayIndex: number | null; // 최초로 목표가에 닿은 거래일차
+  hitStop: boolean;
+  hitStopDayIndex: number | null; // 최초로 손절가에 닿은 거래일차
+  finalChangePct: number | null; // 추적된 마지막 날의 누적 등락률(매수가 대비)
+};
+
+// components/bro/detail-card.tsx의 markDays(화면 표시용, "손절가 도달"을
+// 최초 1회만/목표가는 한 번 찍으면 계속 유지)와 같은 규칙을 서버 쪽 집계
+// (예: 주간 피드백 리포트)에서도 쓸 수 있게 옮겨온 버전 — 화면에는 날마다
+// 표시가 필요해서 markDays를 그대로 두고, 이건 "최종적으로 어느 걸 겪었는지"
+// 하나의 요약값만 필요한 곳에서 쓴다.
+export function classifyOutcome(
+  series: DailyChangePoint[],
+  stopLossPrice: number | null,
+  targetPrice: number | null
+): TrackingOutcome {
+  let belowStop = false;
+  let targetAlreadyHit = false;
+  let hitTarget = false;
+  let hitTargetDayIndex: number | null = null;
+  let hitStop = false;
+  let hitStopDayIndex: number | null = null;
+
+  for (const p of series) {
+    const touchedStop = stopLossPrice !== null && p.price <= stopLossPrice;
+    const touchedTarget = targetPrice !== null && p.price >= targetPrice;
+
+    if (touchedTarget && !targetAlreadyHit) {
+      hitTarget = true;
+      hitTargetDayIndex = p.dayIndex;
+      targetAlreadyHit = true;
+    }
+    if (touchedStop && !belowStop) {
+      hitStop = true;
+      if (hitStopDayIndex === null) hitStopDayIndex = p.dayIndex;
+    }
+
+    if (touchedStop) belowStop = true;
+    else if (p.changePct >= 0) belowStop = false; // 매수가 복귀 — 다음 이탈은 새 사건
+  }
+
+  return {
+    hitTarget,
+    hitTargetDayIndex,
+    hitStop,
+    hitStopDayIndex,
+    finalChangePct: series.length > 0 ? series[series.length - 1].changePct : null,
+  };
+}
