@@ -320,3 +320,33 @@ model CompanyAnalysis {
   sourceFile String
   importedAt DateTime @updatedAt
 }
+
+// 장중 실시간 초단기 시그널("햄버거 기법" 기반, lib/intraday-signal.ts) —
+// 장 시작 직후 몇 분 안에 "기준 거래대금 돌파(평소 대비 급증) + 양봉"을
+// 실시간으로 포착해서 기록한다. 이 앱은 실제 주문을 넣지 않는 리서치/
+// 기록 도구라, "그 순간에 매수했다고 가정"하고 그 뒤 가격을 계속 추적해서
+// 목표수익 도달(target)/5분선 이탈(ma_break)/장마감 강제청산(eod) 중
+// 뭘로 끝났는지 남긴다 — WeeklyPrediction의 5거래일 추적과 같은 철학이지만
+// 시간 단위가 초단기(하루 안)라는 점만 다르다.
+model IntradaySignal {
+  id              String   @id @default(cuid())
+  date            String // YYYY-MM-DD
+  code            String
+  name            String
+  theme           String?
+  detectedAt      String // HH:MM 포착 시각
+  triggerPrice    Float // 포착 시점 체결가(매수 기준가로 취급)
+  triggerValue    Float // 포착 캔들 자체의 거래대금(원)
+  baselineValue   Float // 비교 기준이 된 '평소'(직전 분봉 평균) 거래대금(원)
+  isBullish       Boolean // 양봉 여부
+  hasLowerWick    Boolean // 아래꼬리 존재 여부(매수세 강도)
+  sectorConfirmed Boolean @default(false) // 같은 테마 종목이 오늘 여럿 동반 포착됐는지
+  status          String  @default("open") // "open" | "target" | "ma_break" | "eod"
+  exitPrice       Float?
+  exitAt          String? // HH:MM
+  finalPct        Float? // 포착가 대비 청산가 등락률
+  createdAt       DateTime @default(now())
+
+  @@unique([date, code, detectedAt])
+  @@index([date])
+}

@@ -2,6 +2,7 @@ import { BroChat } from "@/components/bro/bro-chat";
 import { CandidateTracker } from "@/components/bro/candidate-tracker";
 import { PredictionReport } from "@/components/bro/prediction-report";
 import { ArchiveHub } from "@/components/bro/archive-hub";
+import { IntradaySignalPanel } from "@/components/bro/intraday-signal-panel";
 import { SplitPane } from "@/components/bro/split-pane";
 import { ReportChatPanel } from "@/components/bro/report-chat-panel";
 import { AutoRefresh } from "@/components/market/auto-refresh";
@@ -65,6 +66,11 @@ export default function BroPage() {
           />
         </div>
       </div>
+
+      {/* 고정 한 화면(BOARD_HEIGHT) 보드 아래 별도 섹션 — 이 판만 페이지
+          스크롤로 내려서 본다. 장중 실시간이라 위 보드의 "정적인 하루 한 번
+          발행" 리듬과는 성격이 달라서 굳이 위 레이아웃에 끼워 넣지 않았다. */}
+      <IntradaySignalPanel />
     </main>
   );
 }
