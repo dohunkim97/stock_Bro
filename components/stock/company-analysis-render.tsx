@@ -1,4 +1,6 @@
 import { MarketNoteButton } from "./market-note-button";
+import { GlossaryTerm, GlossaryText } from "@/components/ui/glossary-term";
+import { findGlossaryMatch } from "@/lib/finance-glossary";
 
 // scripts/watch-company-analysis.ts가 올려주는 CompanyAnalysis.rawJson을
 // 실제로 그리는 순수 렌더링 조각들 — DB 접근이 전혀 없어서(prisma import
@@ -24,8 +26,12 @@ function verdictColor(text: string): string | null {
   return null;
 }
 
+// "우량기업형(+ - -)", "정상"처럼 초보자에게 낯선 판정 배지는 사전
+// (lib/finance-glossary.ts)에 등록돼 있으면 옆에 작은 ⓘ를 붙이고 클릭·호버
+// 시 설명 팝오버가 뜨게 한다 — 사전에 없는 값은 그냥 평범한 배지 그대로.
 function VerdictBadge({ text, color, inline = false }: { text: string; color: string; inline?: boolean }) {
-  return (
+  const match = findGlossaryMatch(text);
+  const pill = (
     <span
       style={{
         display: "inline-block",
@@ -39,7 +45,14 @@ function VerdictBadge({ text, color, inline = false }: { text: string; color: st
       }}
     >
       {text}
+      {match && <span style={{ marginLeft: 4, opacity: 0.8, fontSize: 10 }}>ⓘ</span>}
     </span>
+  );
+  if (!match) return pill;
+  return (
+    <GlossaryTerm term={match.term} explanation={match.explanation} bare>
+      {pill}
+    </GlossaryTerm>
   );
 }
 
@@ -51,7 +64,7 @@ function StatOrBadge({ text }: { text: string }) {
   if (color) return <VerdictBadge text={text} color={color} />;
   return (
     <div style={{ fontSize: 11.5, color: "var(--text)", lineHeight: 1.6, marginTop: 4, fontFamily: "var(--mono)" }}>
-      {text}
+      <GlossaryText text={text} />
     </div>
   );
 }
@@ -85,7 +98,11 @@ function SubItemCard({ item }: { item: SubItem }) {
       {rest.map(([k, v]) => (
         <StatOrBadge key={k} text={v} />
       ))}
-      {story && <p style={{ margin: "8px 0 0", fontSize: 12, lineHeight: 1.75, color: "var(--dim)" }}>{story}</p>}
+      {story && (
+        <p style={{ margin: "8px 0 0", fontSize: 12, lineHeight: 1.75, color: "var(--dim)" }}>
+          <GlossaryText text={story} />
+        </p>
+      )}
     </div>
   );
 }
@@ -174,7 +191,7 @@ export function CompanyAnalysisContent({
           <div style={{ fontWeight: 700, fontSize: 11.5, color: "var(--accent)" }}>종합 결론</div>
           {verdicts.map((v, i) => (
             <div key={i} style={{ fontSize: 12, lineHeight: 1.7, color: "var(--text)" }}>
-              {v}
+              <GlossaryText text={v} />
             </div>
           ))}
         </div>
@@ -267,7 +284,7 @@ export function FinancialAnalysisContent({ data, showSourceLink = true }: { data
           <div style={{ fontWeight: 700, fontSize: 11.5, color: "var(--accent)" }}>재무 종합 결론</div>
           {summary.map((v, i) => (
             <div key={i} style={{ fontSize: 12, lineHeight: 1.7, color: "var(--text)" }}>
-              {v}
+              <GlossaryText text={v} />
             </div>
           ))}
         </div>
