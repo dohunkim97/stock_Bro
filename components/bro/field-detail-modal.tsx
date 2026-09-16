@@ -8,7 +8,7 @@ import { MiniPriceChart } from "./mini-price-chart";
 import { CompanyAnalysisContent, FinancialAnalysisContent, parseCompanyAnalysisJson } from "@/components/stock/company-analysis-render";
 import type { FieldKey, BusinessDetail, MarketDetail, VolumeDetail, ChartDetail, MaterialDetail, SupplyDetail, FinancialDetail } from "@/lib/field-detail";
 
-const FIELD_LABEL: Record<FieldKey, string> = {
+export const FIELD_LABEL: Record<FieldKey, string> = {
   business: "사업 요약",
   market: "시황",
   volume: "거래량",
@@ -277,8 +277,67 @@ function FinancialView({ data }: { data: FinancialDetail }) {
   );
 }
 
-// 골구 종목 근거 7항목 중 하나를 클릭했을 때 여는 심층 분석 모달 — 열릴 때
-// /api/bro/field-detail을 그 항목 하나만 지연 호출한다.
+// 골구 종목 근거 항목 하나(사업요약/시황/거래량/차트/재료/수급/재무)의 실제
+// 콘텐츠 — /api/bro/field-detail을 그 항목 하나만 지연 호출해서 채운다.
+// 모달(FieldDetailModal, 아래) 안에서도 쓰고, 종목 상세 대시보드
+// (components/bro/detail-card.tsx)의 우측 패널에도 Modal 없이 그대로
+// 인라인으로 박아 쓴다 — 그래서 로딩/렌더링 로직을 여기 하나로 뽑아뒀다.
+export function FieldDetailContent({
+  field,
+  code,
+  name,
+  reasoning,
+}: {
+  field: FieldKey;
+  code?: string;
+  name: string;
+  reasoning: string;
+}) {
+  const [result, setResult] = useState<AnyDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setResult(null);
+    setFailed(false);
+    setLoading(true);
+
+    const params = new URLSearchParams({ field, name, reasoning });
+    if (code) params.set("code", code);
+
+    fetch(`/api/bro/field-detail?${params.toString()}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+      .then((data) => setResult({ field, data } as AnyDetail))
+      .catch(() => setFailed(true))
+      .finally(() => setLoading(false));
+  }, [field, code, name, reasoning]);
+
+  if (loading) return <div style={{ padding: "30px 0", textAlign: "center", color: "var(--faint)", fontSize: 11.5 }}>불러오는 중...</div>;
+  if (failed) return <div style={{ fontSize: 11.5, color: "var(--faint)" }}>불러오지 못했어요. 다시 눌러주세요.</div>;
+  if (!result || result.field !== field) return null;
+
+  switch (result.field) {
+    case "business":
+      return <BusinessView data={result.data} code={code} name={name} />;
+    case "market":
+      return <MarketView data={result.data} />;
+    case "volume":
+      return <VolumeView data={result.data} />;
+    case "chart":
+      return <ChartView data={result.data} />;
+    case "material":
+      return <MaterialView data={result.data} />;
+    case "supply":
+      return <SupplyView data={result.data} />;
+    case "financial":
+      return <FinancialView data={result.data} />;
+  }
+}
+
+// 골구 종목 근거 7항목 중 하나를 클릭했을 때 여는 심층 분석 모달 — 지금은
+// 대시보드에 없는 "사업 요약"과, 대시보드보다 더 넓은 화면이 필요한
+// "재무 상세"의 딥다이브 버튼 전용(components/bro/detail-card.tsx). 내용은
+// FieldDetailContent 그대로, Modal 틀만 씌운다.
 export function FieldDetailModal({
   open,
   onClose,
@@ -294,37 +353,9 @@ export function FieldDetailModal({
   name: string;
   reasoning: string;
 }) {
-  const [result, setResult] = useState<AnyDetail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    if (!open || !field) return;
-    setResult(null);
-    setFailed(false);
-    setLoading(true);
-
-    const params = new URLSearchParams({ field, name, reasoning });
-    if (code) params.set("code", code);
-
-    fetch(`/api/bro/field-detail?${params.toString()}`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
-      .then((data) => setResult({ field, data } as AnyDetail))
-      .catch(() => setFailed(true))
-      .finally(() => setLoading(false));
-  }, [open, field, code, name, reasoning]);
-
   return (
     <Modal open={open} onClose={onClose} title={field ? `${name} · ${FIELD_LABEL[field]}` : ""}>
-      {loading && <div style={{ padding: "30px 0", textAlign: "center", color: "var(--faint)", fontSize: 11.5 }}>불러오는 중...</div>}
-      {!loading && failed && <div style={{ fontSize: 11.5, color: "var(--faint)" }}>불러오지 못했어요. 다시 눌러주세요.</div>}
-      {!loading && !failed && result?.field === "business" && <BusinessView data={result.data} code={code} name={name} />}
-      {!loading && !failed && result?.field === "market" && <MarketView data={result.data} />}
-      {!loading && !failed && result?.field === "volume" && <VolumeView data={result.data} />}
-      {!loading && !failed && result?.field === "chart" && <ChartView data={result.data} />}
-      {!loading && !failed && result?.field === "material" && <MaterialView data={result.data} />}
-      {!loading && !failed && result?.field === "supply" && <SupplyView data={result.data} />}
-      {!loading && !failed && result?.field === "financial" && <FinancialView data={result.data} />}
+      {open && field && <FieldDetailContent field={field} code={code} name={name} reasoning={reasoning} />}
     </Modal>
   );
 }

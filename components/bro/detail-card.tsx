@@ -1,24 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { chgColorVar, formatChg } from "@/lib/format";
 import type { CandidateDetail } from "@/lib/candidate-detail";
 import { TRACKING_WINDOW_DAYS, type DailyChangePoint } from "@/lib/candidate-tracking";
 import type { TechnicalSignal } from "@/lib/technical-signals";
-import { SENTIMENT_REGEX, sentimentColorVar } from "@/lib/sentiment";
 import type { FieldKey } from "@/lib/field-detail";
-import { FieldDetailModal } from "./field-detail-modal";
+import { FieldDetailModal, FieldDetailContent } from "./field-detail-modal";
 
-// Shared "종목 근거" block styling + DetailCard — used by both today's live
-// report (components/bro/prediction-report.tsx) and 기록보관소's past-day
-// detail view (components/bro/archive-prediction-detail.tsx), so opening an
-// archived day shows the exact same rich per-candidate breakdown plus the
-// day-by-day 누적수익률과 기술적 시그널, instead of a thin summary-only version.
-// 근거는 항상 사업 요약 + 1~7번 고정 순서(시황/거래량/차트/재료/수급/재무/
-// 매수타이밍) — 데이터 없는 항목은 "내용 없음"으로 그대로 보여준다
-// (lib/candidate-detail.ts의 CandidateDetail이 이 틀에 맞춰 채워줌).
-
+// Shared "종목 근거" block styling + DetailCard — used by 오늘의 라이브 리포트
+// (components/bro/prediction-report.tsx), 기록보관소의 과거 상세
+// (components/bro/archive-prediction-detail.tsx), 종목상세의 골구 근거 패널
+// (components/stock/golgoo-panel.tsx, 고정 380px 폭 — 아래 참고) 세 곳에서
+// 재사용한다.
+//
+// 예전엔 사업요약~매수타이밍 7항목을 위에서 아래로 쭉 읽어야 하는 줄글
+// 목록이었는데(스크린샷 기준 사용자 피드백), [좌: 6항목 카드 목록 / 우: 선택한
+// 항목의 상세 뷰어] 좌우 대시보드로 바꿨다 — 우측 뷰어는 모달(field-detail-
+// modal.tsx)이 이미 갖고 있던 항목별 카드/표 렌더링(FieldDetailContent)을
+// 그대로 인라인으로 가져다 쓴다(Modal 틀만 벗겨냄). 폭이 좁은 곳(예:
+// golgoo-panel.tsx의 고정 380px 사이드바)에서는 ResizeObserver로 실측한
+// 컨테이너 폭을 보고 자동으로 세로 1열로 접힌다 — 어느 자리에 놓여도 깨지지
+// 않게.
 export const blockStyle: React.CSSProperties = {
   background: "var(--panel2)",
   border: "1px solid var(--border)",
@@ -58,137 +62,172 @@ const detailCardStyle: React.CSSProperties = {
   background: "var(--panel)",
   border: "1px solid var(--border)",
   borderRadius: 10,
-  padding: 14,
+  padding: 16,
 };
 
-const fieldLineStyle: React.CSSProperties = {
-  fontSize: 10,
-  lineHeight: 1.55,
-  color: "var(--text)",
-};
+// 이 폭보다 좁은 컨테이너(예: golgoo-panel.tsx의 380px 고정 사이드바)에서는
+// 좌 40 / 우 60 좌우 배치 대신 세로 1열(카드 목록 → 선택한 항목 상세)로
+// 접는다.
+const WIDE_BREAKPOINT = 640;
 
-const fieldLabelStyle: React.CSSProperties = {
-  color: "var(--accent)",
-  fontWeight: 700,
-};
+// 컨테이너 실측 폭 — 서버 렌더/최초 마운트 시점엔 0이라 일단 "좁다"고
+// 가정한다(스크롤 있는 좁은 패널에서 넓은 레이아웃이 잠깐 그려졌다 깨지는
+// 것보다, 넓은 화면에서 아주 잠깐 1열로 보였다가 바로 2열로 펴지는 쪽이
+// 덜 어색하다).
+function useContainerWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
+  const ref = useRef<T | null>(null);
+  const [width, setWidth] = useState(0);
 
-// 국내 증시 관례(상승=빨강/하락=파랑)에 맞춰 근거 문장 안의 좋은 단어(매수·
-// 흑자·증가·상승)는 빨간색, 나쁜 단어(매도·적자·감소·하락)는 파란색으로 한눈에
-// 보이게 강조한다 — 단어 목록/판정 기준은 lib/candidate-detail.ts의 O/X
-// 판단(재료 항목)과 같은 lib/sentiment.ts를 공유해서 색깔과 O/X가 서로
-// 어긋나지 않게 한다. "92억 매수"처럼 단어 바로 앞 숫자·단위까지 한 덩어리로
-// 같이 색칠된다(SENTIMENT_REGEX가 이미 그렇게 잡아줌).
-function sentimentStyle(token: string): string | null {
-  const c = sentimentColorVar(token);
-  return c === "up" ? "var(--up)" : c === "down" ? "var(--down)" : null;
-}
-
-// **강조** 마크다운(lib/weekly-prediction.ts가 심어줌)을 굵게 살리고, 그 안팎
-// 텍스트에서 위 긍정/부정 단어(+수치)를 색칠한다. 근거 필드 전체(사업요약~
-// 매수타이밍)가 전부 이 함수를 거쳐서 렌더링된다.
-function renderFieldValue(text: string): React.ReactNode {
-  const boldParts = text.split(/(\*\*[^*]+\*\*)/g);
-  return boldParts.map((part, i) => {
-    const isBold = part.startsWith("**") && part.endsWith("**") && part.length > 4;
-    const inner = isBold ? part.slice(2, -2) : part;
-    const tokens = inner.split(SENTIMENT_REGEX).map((tok, j) => {
-      const color = sentimentStyle(tok);
-      return color ? (
-        <span key={j} style={{ color, fontWeight: 700 }}>
-          {tok}
-        </span>
-      ) : (
-        tok
-      );
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w !== undefined) setWidth(w);
     });
-    return isBold ? (
-      <strong key={i} style={{ fontWeight: 800 }}>
-        {tokens}
-      </strong>
-    ) : (
-      <span key={i}>{tokens}</span>
-    );
-  });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  return [ref, width];
 }
 
-// verdict: 이 항목이 실제로 매수에 우호적인 신호인지(true=O/빨강),
-// 아닌지(false=X/파랑) — 판단 불가(null/undefined)면 아예 안 띄운다.
-// onClick이 있으면(7항목 중 실제로 심층 모달이 있는 것들) 이 줄 전체가
-// 버튼이 되어 클릭 시 그 항목만 전문가 수준으로 파고드는 모달을 연다 —
-// components/bro/field-detail-modal.tsx.
-function Field({
-  label,
-  value,
-  verdict,
-  onClick,
-}: {
-  label: string;
-  value: string;
-  verdict?: boolean | null;
-  onClick?: () => void;
-}) {
-  const content = (
-    <>
-      <span style={fieldLabelStyle}>■ {label}: </span>
-      {renderFieldValue(value)}
-      {verdict !== undefined && verdict !== null && (
-        <strong style={{ marginLeft: 6, color: verdict ? "var(--up)" : "var(--down)" }}>
-          {verdict ? "(O)" : "(X)"}
-        </strong>
-      )}
-      {onClick && <span style={{ marginLeft: 6, color: "var(--faint)", fontSize: 9 }}>자세히 보기 ›</span>}
-    </>
+// 판정(O/X/판단불가)을 그린/레드/옐로우 3색 칩으로 — "판단보류"는 --accent
+// (이 앱 팔레트에서 이미 골드/옐로우 톤)를 재사용해 새 색상 토큰 없이도
+// 요청한 3색 체계를 만족한다.
+function VerdictChip({ verdict }: { verdict: boolean | null }) {
+  const cfg =
+    verdict === true
+      ? { fg: "var(--up)", bg: "var(--up-soft)", label: "긍정" }
+      : verdict === false
+        ? { fg: "var(--down)", bg: "var(--down-soft)", label: "부정" }
+        : { fg: "var(--accent)", bg: "var(--accent-soft)", label: "중립" };
+  return (
+    <span
+      style={{
+        fontSize: 9.5,
+        fontWeight: 800,
+        color: cfg.fg,
+        background: cfg.bg,
+        borderRadius: 20,
+        padding: "2px 8px",
+        flexShrink: 0,
+      }}
+    >
+      {cfg.label}
+    </span>
   );
+}
 
-  if (!onClick) return <div style={fieldLineStyle}>{content}</div>;
+// 카드 목록의 1줄 요약 — **볼드** 마커를 지우고 공백을 접어서 한 줄
+// 미리보기만 보여준다(전체 내용은 우측 상세 뷰어가 카드/표로 따로 보여줌).
+function oneLinePreview(text: string): string {
+  const clean = text.replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
+  if (!clean) return "내용 없음";
+  return clean.length > 44 ? `${clean.slice(0, 44)}…` : clean;
+}
 
+type MiniField = { key: FieldKey; num: number; label: string; text: string; verdict: boolean | null };
+
+function MiniFieldCard({ field, active, onClick }: { field: MiniField; active: boolean; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
       className="hover-accent-border"
       style={{
-        ...fieldLineStyle,
         display: "block",
         width: "100%",
         textAlign: "left",
-        background: "none",
-        border: "1px solid transparent",
-        borderRadius: 6,
-        padding: "2px 4px",
-        margin: "-2px -4px",
+        background: active ? "var(--accent-soft)" : "var(--panel2)",
+        border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+        borderRadius: 10,
+        padding: "10px 12px",
         cursor: "pointer",
         fontFamily: "inherit",
-        color: "inherit",
       }}
     >
-      {content}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 5 }}>
+        <span style={{ fontSize: 12, fontWeight: 800, color: active ? "var(--accent)" : "var(--text)" }}>
+          {field.num}. {field.label}
+        </span>
+        <VerdictChip verdict={field.verdict} />
+      </div>
+      <div
+        style={{
+          fontSize: 10.5,
+          color: "var(--dim)",
+          lineHeight: 1.5,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {oneLinePreview(field.text)}
+      </div>
     </button>
   );
 }
 
-// 7번 "매수타이밍" 한 줄 — 지지선/저항선은 실제 차트 레벨을 그대로, 목표/손절은
-// 항상 같은 규칙(기대수익 최소 +6%, 손절 -4%)이라 종목마다 문구가 달라지지
-// 않는다. 데이터가 아예 없는 후보(코드 미확인 등)는 통째로 "내용 없음".
-function buyTimingText(s: CandidateDetail["strategy"]): string {
-  if (s.support === null && s.resistance === null && s.targetPrice === null && s.stopLossPrice === null) {
-    return "내용 없음";
-  }
-  const supportPart = s.support !== null ? `지지선 ${Math.round(s.support).toLocaleString()}원` : "지지선 내용 없음";
-  const resistancePart =
-    s.resistance !== null ? `저항선 ${Math.round(s.resistance).toLocaleString()}원` : "저항선 내용 없음";
-  const rulePart =
-    s.targetPrice !== null && s.stopLossPrice !== null
-      ? `기대수익 최소 +6%(목표 ${Math.round(s.targetPrice).toLocaleString()}원) · 손절 -4%(${Math.round(s.stopLossPrice).toLocaleString()}원)`
-      : null;
-  return [supportPart, resistancePart, rulePart].filter(Boolean).join(" / ");
+const strategyStatStyle: React.CSSProperties = { flex: 1, minWidth: 0 };
+
+function StrategyStat({ label, value, color, sub }: { label: string; value: string; color: string; sub?: string }) {
+  return (
+    <div style={strategyStatStyle}>
+      <div style={{ fontSize: 9.5, color: "var(--faint)", fontWeight: 700, marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 14, fontWeight: 800, color, fontFamily: "var(--mono)" }}>{value}</div>
+      {sub && <div style={{ fontSize: 9.5, color: "var(--faint)", fontFamily: "var(--mono)", marginTop: 1 }}>{sub}</div>}
+    </div>
+  );
 }
 
-// 상승=빨강/하락=파랑 규칙 — components/bro/candidate-tracker.tsx와 동일.
-function signalColor(direction: TechnicalSignal["direction"]): string {
-  if (direction === "bullish") return "var(--up)";
-  if (direction === "bearish") return "var(--down)";
-  return "var(--dim)";
+// 목표가/손절가/기대손익비 강조 박스 — 손절은 항상 고정 -4% 규칙(lib/
+// candidate-detail.ts 주석 참고)이라 손절률은 계산 없이 고정 표기하고,
+// 기대손익비는 목표수익률(targetPct) ÷ 4로 낸 R-배수다.
+function StrategyStrip({ s }: { s: CandidateDetail["strategy"] }) {
+  if (s.targetPrice === null && s.stopLossPrice === null) return null;
+  const ratio = s.targetPct !== null && s.stopLossPrice !== null ? s.targetPct / 4 : null;
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        background: "var(--panel2)",
+        border: "1px solid var(--border2)",
+        borderRadius: 10,
+        padding: "11px 16px",
+        gap: 14,
+      }}
+    >
+      <StrategyStat
+        label="목표가"
+        value={s.targetPrice !== null ? `${Math.round(s.targetPrice).toLocaleString()}원` : "-"}
+        color="var(--up)"
+        sub={s.targetPct !== null ? `+${s.targetPct.toFixed(1)}%` : undefined}
+      />
+      <div style={{ width: 1, background: "var(--border)" }} />
+      <StrategyStat
+        label="손절가"
+        value={s.stopLossPrice !== null ? `${Math.round(s.stopLossPrice).toLocaleString()}원` : "-"}
+        color="var(--down)"
+        sub={s.stopLossPrice !== null ? "-4.0%" : undefined}
+      />
+      <div style={{ width: 1, background: "var(--border)" }} />
+      <StrategyStat label="기대손익비" value={ratio !== null ? `${ratio.toFixed(1)} : 1` : "-"} color="var(--accent)" />
+    </div>
+  );
 }
+
+const dashboardButtonStyle: React.CSSProperties = {
+  flex: 1,
+  fontSize: 11,
+  fontWeight: 700,
+  padding: "8px 10px",
+  borderRadius: 8,
+  border: "1px solid var(--border)",
+  background: "var(--panel)",
+  color: "var(--text)",
+  cursor: "pointer",
+};
 
 type DayMark = DailyChangePoint & { hitStopToday: boolean; hitTargetToday: boolean };
 
@@ -227,8 +266,28 @@ export function DetailCard({
   series?: DailyChangePoint[];
   signals?: TechnicalSignal[];
 }) {
+  // 기술적 시그널은 이제 "3. 차트" 카드를 선택했을 때 그 우측 상세 뷰어
+  // (ChartView, field-detail-modal.tsx) 안에서만 보여준다 — 모든 후보 카드
+  // 아래 항상 "시그널: ..."로 반복 출력되던 예전 블록은 중복이라 제거했다
+  // (사용자 요청: "불필요한 '시그널: ...' 텍스트 반복 제거"). 두 상위
+  // 호출부(prediction-report.tsx/archive-prediction-detail.tsx)가 여전히
+  // 이 prop을 넘기므로 시그니처는 유지하되 여기선 쓰지 않는다.
+  void signals;
+
+  const fields: MiniField[] = [
+    { key: "material", num: 1, label: "재료", text: d.aiReasoning, verdict: d.verdicts.material },
+    { key: "volume", num: 2, label: "거래량", text: d.volumeNote, verdict: d.verdicts.volume },
+    { key: "chart", num: 3, label: "차트", text: d.chartNote, verdict: d.verdicts.chart },
+    { key: "market", num: 4, label: "시황", text: d.marketContext, verdict: d.verdicts.marketContext },
+    { key: "supply", num: 5, label: "수급", text: d.supplyDemand, verdict: d.verdicts.supplyDemand },
+    { key: "financial", num: 6, label: "재무", text: d.financialSummary, verdict: d.verdicts.financial },
+  ];
+
+  const [activeKey, setActiveKey] = useState<FieldKey>("material");
   const [openField, setOpenField] = useState<FieldKey | null>(null);
-  const openFieldModal = (field: FieldKey) => () => setOpenField(field);
+  const [containerRef, width] = useContainerWidth<HTMLDivElement>();
+  const isWide = width >= WIDE_BREAKPOINT;
+  const active = fields.find((f) => f.key === activeKey) ?? fields[0];
 
   const nameBlock = (
     <span style={{ fontWeight: 800, fontSize: 13 }}>
@@ -242,7 +301,7 @@ export function DetailCard({
   );
 
   return (
-    <div style={{ ...detailCardStyle, display: "flex", flexDirection: "column", gap: 7 }}>
+    <div ref={containerRef} style={{ ...detailCardStyle, display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
         {d.code ? (
           <Link
@@ -296,17 +355,55 @@ export function DetailCard({
         )}
       </div>
 
-      <Field label="사업 요약" value={d.businessSummary} onClick={openFieldModal("business")} />
-      <Field label="1. 시황" value={d.marketContext} verdict={d.verdicts.marketContext} onClick={openFieldModal("market")} />
-      <Field label="2. 거래량" value={d.volumeNote} verdict={d.verdicts.volume} onClick={openFieldModal("volume")} />
-      <Field label="3. 차트" value={d.chartNote} verdict={d.verdicts.chart} onClick={openFieldModal("chart")} />
-      <Field label="4. 재료" value={d.aiReasoning} verdict={d.verdicts.material} onClick={openFieldModal("material")} />
-      <Field label="5. 수급" value={d.supplyDemand} verdict={d.verdicts.supplyDemand} onClick={openFieldModal("supply")} />
-      <Field label="6. 재무" value={d.financialSummary} verdict={d.verdicts.financial} onClick={openFieldModal("financial")} />
-      <Field label="7. 매수타이밍" value={buyTimingText(d.strategy)} />
+      <StrategyStrip s={d.strategy} />
+
+      <div style={{ display: "flex", flexDirection: isWide ? "row" : "column", gap: 14, alignItems: "stretch" }}>
+        <div style={{ flex: isWide ? "0 0 40%" : "1 1 auto", minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+          {fields.map((f) => (
+            <MiniFieldCard key={f.key} field={f} active={f.key === activeKey} onClick={() => setActiveKey(f.key)} />
+          ))}
+          <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+            <button onClick={() => setOpenField("business")} style={dashboardButtonStyle} className="hover-accent-border">
+              📄 사업 요약
+            </button>
+            <button onClick={() => setOpenField("financial")} style={dashboardButtonStyle} className="hover-accent-border">
+              📊 재무 상세
+            </button>
+          </div>
+        </div>
+
+        <div
+          style={{
+            flex: isWide ? "0 0 60%" : "1 1 auto",
+            minWidth: 0,
+            background: "var(--panel2)",
+            border: "1px solid var(--border)",
+            borderRadius: 10,
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: 12,
+              fontSize: 11,
+              fontWeight: 800,
+              color: "var(--accent)",
+              fontFamily: "var(--mono)",
+              letterSpacing: "0.04em",
+            }}
+          >
+            {active.num}. {active.label}
+            <VerdictChip verdict={active.verdict} />
+          </div>
+          <FieldDetailContent field={activeKey} code={d.code} name={d.name} reasoning={d.aiReasoning} />
+        </div>
+      </div>
 
       {series && series.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 2 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
           {markDays(series, d.strategy.stopLossPrice, d.strategy.targetPrice).map((p) => {
             const marked = p.hitStopToday || p.hitTargetToday;
             const markColor = p.hitStopToday ? "var(--down)" : p.hitTargetToday ? "var(--up)" : chgColorVar(p.changePct);
@@ -320,7 +417,7 @@ export function DetailCard({
                   fontWeight: 700,
                   padding: "3px 7px",
                   borderRadius: 6,
-                  background: marked ? "transparent" : "var(--panel2)",
+                  background: marked ? "transparent" : "var(--panel)",
                   border: marked ? `1px solid ${markColor}` : "1px solid transparent",
                   color: markColor,
                 }}
@@ -338,11 +435,7 @@ export function DetailCard({
       {/* 5거래일 추적이 다 끝난 뒤에만 "최종 결과"로 확정해서 기대수익(전략
           가이드의 목표구간 기준)과 매수가 대비 5일 누적 수익률을 나란히
           비교해 보여준다 — 진행 중인 예측은 아직 최종이 아니므로 이 줄
-          자체를 숨긴다. series의 마지막 changePct는 이미 1일차 매수가 대비
-          누적값이라(각 날짜 칩 자체가 그날까지의 누적 % — 매일 갈아 끼우는
-          "당일 등락률"이 아니다) 그대로 쓰면 곧 5일 총 수익률이다 — 별도로
-          더하거나 다시 계산할 필요가 없다.
-      */}
+          자체를 숨긴다. */}
       {series && series.length >= TRACKING_WINDOW_DAYS && (
         <div
           style={{
@@ -368,27 +461,6 @@ export function DetailCard({
               </span>
             </>
           )}
-        </div>
-      )}
-
-      {signals && signals.length > 0 && (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-            marginTop: 4,
-            paddingTop: 8,
-            borderTop: "1px solid var(--border)",
-          }}
-        >
-          {signals.map((s) => (
-            <div key={s.name} style={{ fontSize: 10, lineHeight: 1.55, fontWeight: 700, color: "var(--text)" }}>
-              <span style={{ color: signalColor(s.direction) }}>시그널: {s.name}</span>
-              {" — "}
-              {s.detail}
-            </div>
-          ))}
         </div>
       )}
 
