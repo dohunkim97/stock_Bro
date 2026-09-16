@@ -38,7 +38,7 @@ export type CandidateDetail = {
   strategy: {
     support: number | null; // 지지선(실제 차트 지지 레벨)
     resistance: number | null; // 저항선(실제 차트 저항 레벨 = 최근 고점)
-    targetPrice: number | null; // 목표가 = max(매수기준가*1.06, 저항선)
+    targetPrice: number | null; // 목표가 = 실제 저항선 그대로(인위적 하한 없음)
     targetPct: number | null;
     stopLossPrice: number | null; // 손절가 = 매수기준가*0.96(고정 -4%)
   };
@@ -384,15 +384,16 @@ export async function getCandidateDetails(
   for (const g of grounded) {
     const llm = narratives.get(g.candidate.name);
     const currentPrice = g.currentPrice;
-    // 매수타이밍(7번)은 항상 같은 규칙: 목표가는 최소 +6% 기대수익을 보장하고
-    // (저항선이 매수 기준가보다 낮거나 5% 미만 위쪽이면 저항선 대신 +6%를
-    // 씀), 손절가는 매수 기준가 대비 고정 -4% — 둘 다 LLM 추측이 아니라 규칙
-    // 기반 값. 지지선/저항선 자체는 buildChartNote가 계산한 실제 차트
-    // 레벨을 그대로 보여준다.
-    const target =
-      currentPrice !== null && currentPrice > 0
-        ? Math.max(currentPrice * 1.06, g.chart.recentHigh ?? 0)
-        : null;
+    // 매수타이밍(7번): 목표가는 실제 저항선(buildChartNote가 계산한 최근
+    // 20거래일 고점) 그대로 쓴다 — 예전엔 여기에 "최소 +6%"를 인위적으로
+    // 끼워 넣어서, 저항선이 코앞이라 사실상 오를 여력이 거의 없는 종목도
+    // 전부 "+6% 목표"로 부풀려 보여주는 문제가 있었다. 이제는 저항선이
+    // 매수 기준가 대비 얼마나 위에 있는지를 있는 그대로 보여주고, 그 실제
+    // 기대수익이 +3% 미만이면(짧은 5거래일 보유엔 시도할 값어치가 없다고
+    // 판단) lib/weekly-prediction.ts가 그 종목 자체를 후보에서 뺀다 —
+    // 목표가를 억지로 올려서 기준을 통과시키지 않는다. 손절가는 매수
+    // 기준가 대비 고정 -4%(변경 없음).
+    const target = currentPrice !== null && currentPrice > 0 ? g.chart.recentHigh : null;
     const stopLoss = currentPrice !== null && currentPrice > 0 ? currentPrice * 0.96 : null;
     detailsByName.set(g.candidate.name, {
       name: g.candidate.name,

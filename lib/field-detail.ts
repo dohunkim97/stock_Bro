@@ -292,8 +292,12 @@ export async function getChartDetail(code: string): Promise<ChartDetail> {
   const recent20 = candles.slice(-20).map((c) => c.close);
   const support = nearest.support?.price ?? (recent20.length > 0 ? Math.min(...recent20) : null);
   const resistance = nearest.resistance?.price ?? (recent20.length > 0 ? Math.max(...recent20) : null);
-  // 매수타이밍 규칙은 lib/candidate-detail.ts와 동일: 목표가 최소 +6%, 손절 고정 -4%.
-  const targetPrice = currentPrice !== null ? Math.max(currentPrice * 1.06, resistance ?? 0) : null;
+  // 매수타이밍 규칙은 lib/candidate-detail.ts와 동일: 목표가는 실제 저항선
+  // 그대로(인위적으로 끌어올리지 않음), 손절은 고정 -4%. "저항선까지 최소
+  // +3%는 되어야 후보로 추천"이라는 필터는 종목 선정 단계(lib/weekly-
+  // prediction.ts)에만 있는 규칙이고, 이 모달은 이미 확정된 후보를
+  // 설명하는 화면이라 그 필터 자체는 여기 적용되지 않는다.
+  const targetPrice = currentPrice !== null && resistance !== null ? resistance : null;
   const stopLossPrice = currentPrice !== null ? currentPrice * 0.96 : null;
 
   return {
