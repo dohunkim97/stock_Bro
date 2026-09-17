@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import * as XLSX from "xlsx";
 import { chgColorVar, formatChg } from "@/lib/format";
 import { SORT_OPTIONS, sortEntries } from "@/lib/sort";
 import type { DailyEntry } from "@/app/generated/prisma/client";
@@ -33,45 +34,49 @@ const panelStyle: React.CSSProperties = {
   overflow: "hidden",
 };
 
-// CSV 안에서 콤마/따옴표/줄바꿈이 있는 값만 큰따옴표로 감싼다(표준 CSV
-// 이스케이프 규칙) — 상승이유(뉴스 제목)엔 콤마가 자주 섞여 있어 이게 없으면
-// 엑셀에서 열 밀림이 생긴다.
-function escapeCsvField(field: string): string {
-  if (field.includes(",") || field.includes('"') || field.includes("\n")) {
-    return `"${field.replace(/"/g, '""')}"`;
-  }
-  return field;
-}
-
-// 화면에 보이는 목록(현재 탭·시장·정렬 그대로) 그대로를 CSV로 내려받는다
-// — 별도 라이브러리 없이 Excel이 그대로 열 수 있는 CSV로 충분하고(엑셀
-// 자체 포맷 .xlsx는 새 의존성이 필요해서), 맨 앞에 UTF-8 BOM을 붙여야
-// 엑셀에서 한글이 깨지지 않는다. 기사링크는 실제 기사 URL이 있으면 그걸,
-// 없으면(과거 동기화분 등) 네이버 뉴스 검색 링크로 대신 채운다(Row
-// 컴포넌트의 링크 폴백과 동일 규칙).
-function exportStocksToCsv(entries: DailyEntry[], filenamePrefix: string): void {
+// 종목 목록 한 판을 시트 하나 분량의 2차원 배열(헤더+행)로 바꾼다 —
+// 기사링크는 실제 기사 URL이 있으면 그걸, 없으면(과거 동기화분 등) 네이버
+// 뉴스 검색 링크로 대신 채운다(Row 컴포넌트의 링크 폴백과 동일 규칙).
+function buildSheetRows(entries: DailyEntry[]): (string | number)[][] {
   const headers = ["종목명", "종목코드", "현재가", "등락률(%)", "거래량", "거래대금", "찾은 상승이유", "기사링크"];
   const rows = entries.map((e) => [
     e.name,
     e.code ?? "",
     e.price,
-    e.changePct.toFixed(2),
+    Number(e.changePct.toFixed(2)),
     e.volume ?? "",
     e.tradingValue ?? "",
     e.issue ?? "",
     e.issueUrl || (e.issue ? `https://search.naver.com/search.naver?where=news&query=${encodeURIComponent(e.issue)}` : ""),
   ]);
-  const csvBody = [headers, ...rows].map((row) => row.map((f) => escapeCsvField(String(f))).join(",")).join("\r\n");
-  const blob = new Blob([`﻿${csvBody}`], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const today = new Date().toISOString().slice(0, 10);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${filenamePrefix}_${today}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  return [headers, ...rows];
+}
+
+// 엑셀 시트 이름은 31자 제한 + : \ / ? * [ ] 를 못 써서, 탭 라벨의 공백만
+// 지운 이름으로 만든다(예: "급상승 종목" → "급상승종목").
+function sanitizeSheetName(name: string): string {
+  return name.replace(/[:\\/?*[\]]/g, "").replace(/\s+/g, "").slice(0, 31) || "Sheet";
+}
+
+// 선택된 (탭 × 시장) 조합마다 워크시트 하나씩 넣은 통합 엑셀 파일 하나를
+// 내려받는다 — 같은 탭·시장 조합이 겹치면 시트 이름도 겹치므로 뒤에 숫자를
+// 붙여 유일하게 만든다.
+function downloadWorkbook(sheets: { name: string; entries: DailyEntry[] }[]): void {
+  const wb = XLSX.utils.book_new();
+  const usedNames = new Set<string>();
+  for (const sheet of sheets) {
+    let name = sanitizeSheetName(sheet.name);
+    let suffix = 2;
+    while (usedNames.has(name)) {
+      const base = sanitizeSheetName(sheet.name).slice(0, 28);
+      name = `${base}_${suffix++}`;
+    }
+    usedNames.add(name);
+    const ws = XLSX.utils.aoa_to_sheet(buildSheetRows(sheet.entries));
+    XLSX.utils.book_append_sheet(wb, ws, name);
+  }
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  XLSX.writeFile(wb, `TOP종목_추출_${today}.xlsx`);
 }
 
 function exportButtonStyle(): React.CSSProperties {
@@ -89,6 +94,148 @@ function exportButtonStyle(): React.CSSProperties {
     fontFamily: "var(--sans)",
     cursor: "pointer",
   };
+}
+
+function checkboxRowStyle(): React.CSSProperties {
+  return { display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "var(--text)", cursor: "pointer", padding: "3px 0" };
+}
+
+// TOP종목 엑셀 추출 팝오버 — 버튼을 누르면 즉시 다운로드하는 대신, 시장
+// (코스피/코스닥) × 탭(급상승/급락/거래량상위)을 체크박스로 골라 하나의
+// 엑셀 파일 안에 시트별로 나눠 담아 내려받는다. 열렸을 때는 지금 보고
+// 있던 탭·시장 하나만 기본으로 체크돼 있다(사용자 요청).
+function ExportPopover({
+  tabs,
+  market,
+  onClose,
+  onDownload,
+}: {
+  tabs: RankingTab[];
+  market: (typeof MARKETS)[number];
+  onClose: () => void;
+  onDownload: (selectedTabKeys: Set<string>, selectedMarkets: Set<string>) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [selectedTabKeys, setSelectedTabKeys] = useState<Set<string>>(new Set([tabs[0]?.key].filter(Boolean) as string[]));
+  const [selectedMarkets, setSelectedMarkets] = useState<Set<string>>(new Set([market]));
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [onClose]);
+
+  const allSelected = selectedTabKeys.size === tabs.length && selectedMarkets.size === MARKETS.length;
+
+  function toggleAll() {
+    if (allSelected) {
+      setSelectedTabKeys(new Set());
+      setSelectedMarkets(new Set());
+    } else {
+      setSelectedTabKeys(new Set(tabs.map((t) => t.key)));
+      setSelectedMarkets(new Set(MARKETS));
+    }
+  }
+
+  function toggleMarket(m: string) {
+    setSelectedMarkets((prev) => {
+      const next = new Set(prev);
+      if (next.has(m)) next.delete(m);
+      else next.add(m);
+      return next;
+    });
+  }
+
+  function toggleTab(key: string) {
+    setSelectedTabKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  const canDownload = selectedTabKeys.size > 0 && selectedMarkets.size > 0;
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: "absolute",
+        top: "calc(100% + 6px)",
+        right: 0,
+        zIndex: 20,
+        width: 220,
+        background: "var(--panel)",
+        border: "1px solid var(--border2)",
+        borderRadius: 12,
+        boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+        padding: 14,
+      }}
+    >
+      <label style={{ ...checkboxRowStyle(), fontWeight: 700, borderBottom: "1px solid var(--border)", paddingBottom: 8, marginBottom: 6 }}>
+        <input type="checkbox" checked={allSelected} onChange={toggleAll} />
+        전체 선택 / 전체 해제
+      </label>
+
+      <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--faint)", margin: "6px 0 2px" }}>시장</div>
+      {MARKETS.map((m) => (
+        <label key={m} style={checkboxRowStyle()}>
+          <input type="checkbox" checked={selectedMarkets.has(m)} onChange={() => toggleMarket(m)} />
+          {m}
+        </label>
+      ))}
+
+      <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--faint)", margin: "8px 0 2px" }}>카테고리</div>
+      {tabs.map((t) => (
+        <label key={t.key} style={checkboxRowStyle()}>
+          <input type="checkbox" checked={selectedTabKeys.has(t.key)} onChange={() => toggleTab(t.key)} />
+          {t.label}
+        </label>
+      ))}
+
+      {!canDownload && (
+        <div style={{ fontSize: 10.5, color: "var(--down)", marginTop: 8 }}>다운로드할 항목을 최소 1개 이상 선택해 주세요</div>
+      )}
+
+      <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+        <button
+          onClick={() => canDownload && onDownload(selectedTabKeys, selectedMarkets)}
+          disabled={!canDownload}
+          style={{
+            flex: 1,
+            fontSize: 11.5,
+            fontWeight: 700,
+            padding: "7px 0",
+            borderRadius: 8,
+            border: "none",
+            background: canDownload ? "var(--accent)" : "var(--panel2)",
+            color: canDownload ? "#0a0d13" : "var(--faint)",
+            cursor: canDownload ? "pointer" : "default",
+          }}
+        >
+          선택한 항목 다운로드
+        </button>
+        <button
+          onClick={onClose}
+          style={{
+            fontSize: 11.5,
+            fontWeight: 700,
+            padding: "7px 12px",
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "var(--panel2)",
+            color: "var(--dim)",
+            cursor: "pointer",
+          }}
+        >
+          취소
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function selectStyle(): React.CSSProperties {
@@ -284,6 +431,7 @@ export function StockTable({ tabs, basisLabel }: { tabs: RankingTab[]; basisLabe
 
   const [market, setMarket] = useState<(typeof MARKETS)[number]>("코스피");
   const [sortKey, setSortKey] = useState("rank");
+  const [exportOpen, setExportOpen] = useState(false);
 
   const marketCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -295,7 +443,7 @@ export function StockTable({ tabs, basisLabel }: { tabs: RankingTab[]; basisLabe
   const sorted = useMemo(() => sortEntries(filtered, sortKey), [filtered, sortKey]);
 
   const controls = (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
       <MarketSortControls
         market={market}
         setMarket={setMarket}
@@ -305,13 +453,34 @@ export function StockTable({ tabs, basisLabel }: { tabs: RankingTab[]; basisLabe
         setSortKey={setSortKey}
       />
       <button
-        onClick={() => exportStocksToCsv(sorted, `TOP종목_${active.label}_${market}`)}
-        disabled={sorted.length === 0}
-        title="지금 보이는 목록(종목명/등락률/거래량/거래대금/상승이유/기사링크)을 엑셀(CSV)로 내려받기"
-        style={{ ...exportButtonStyle(), opacity: sorted.length === 0 ? 0.5 : 1, cursor: sorted.length === 0 ? "default" : "pointer" }}
+        // key로 팝오버를 매번 새로 마운트해서, 열 때마다 "지금 보고 있는
+        // 탭·시장"으로 기본 체크 상태가 다시 초기화되게 한다(사용자 요청).
+        onClick={() => setExportOpen((v) => !v)}
+        title="시장·카테고리를 선택해서 엑셀(xlsx)로 내려받기"
+        style={exportButtonStyle()}
       >
         📊 엑셀 추출
       </button>
+      {exportOpen && (
+        <ExportPopover
+          key={`${activeKey}-${market}`}
+          tabs={tabs}
+          market={market}
+          onClose={() => setExportOpen(false)}
+          onDownload={(selectedTabKeys, selectedMarkets) => {
+            const sheets = tabs
+              .filter((t) => selectedTabKeys.has(t.key))
+              .flatMap((t) =>
+                [...selectedMarkets].map((m) => ({
+                  name: `${m}_${t.label}`,
+                  entries: sortEntries(t.entries.filter((e) => e.market === m), "rank"),
+                }))
+              );
+            downloadWorkbook(sheets);
+            setExportOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 
