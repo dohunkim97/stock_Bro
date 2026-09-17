@@ -36,6 +36,7 @@ export type CandidateDetail = {
   chartNote: string; // 3. 차트
   financialSummary: string; // 6. 재무
   strategy: {
+    entryPrice: number | null; // 매수 기준가(forDate 종가 anchor) — 아래 목표가/손절가/기대손익비 전부 이 가격 기준
     support: number | null; // 지지선(실제 차트 지지 레벨)
     resistance: number | null; // 저항선(실제 차트 저항 레벨 = 최근 고점)
     targetPrice: number | null; // 목표가 = 실제 저항선 그대로(인위적 하한 없음)
@@ -408,6 +409,7 @@ export async function getCandidateDetails(
       chartNote: g.chart.note,
       financialSummary: g.financials.summary,
       strategy: {
+        entryPrice: currentPrice,
         support: g.chart.support,
         resistance: g.chart.recentHigh,
         targetPrice: target,
@@ -440,7 +442,7 @@ export async function getCandidateDetails(
         supplyDemand: NO_DATA,
         chartNote: NO_DATA,
         financialSummary: NO_DATA,
-        strategy: { support: null, resistance: null, targetPrice: null, targetPct: null, stopLossPrice: null },
+        strategy: { entryPrice: null, support: null, resistance: null, targetPrice: null, targetPct: null, stopLossPrice: null },
         verdicts: { ...NO_VERDICTS, material: sentimentVerdict(c.reasoning) },
       }
   );

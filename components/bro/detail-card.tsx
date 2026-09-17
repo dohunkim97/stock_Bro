@@ -180,9 +180,15 @@ function StrategyStat({ label, value, color, sub }: { label: string; value: stri
   );
 }
 
-// 목표가/손절가/기대손익비 강조 박스 — 손절은 항상 고정 -4% 규칙(lib/
-// candidate-detail.ts 주석 참고)이라 손절률은 계산 없이 고정 표기하고,
-// 기대손익비는 목표수익률(targetPct) ÷ 4로 낸 R-배수다.
+// 매수가/목표가/손절가/기대손익비 강조 박스 — 매수가(entryPrice, forDate
+// 종가 anchor)가 없으면 목표가/손절가 %가 뭘 기준으로 계산된 건지 알 수
+// 없어서 사용자가 헷갈릴 수 있다(실제 문의: "예상종목 매수가가 없다") —
+// 목표가/손절가/기대손익비 옆에 그 기준이 되는 매수가를 항상 같이 보여준다.
+// entryPrice는 이 필드가 생기기 전에 저장된 옛 WeeklyPrediction.details
+// 레코드엔 없을 수 있어(JSON.parse하면 undefined) `!= null`로 느슨하게
+// 검사한다. 손절은 항상 고정 -4% 규칙(lib/candidate-detail.ts 주석 참고)
+// 이라 손절률은 계산 없이 고정 표기하고, 기대손익비는 목표수익률
+// (targetPct) ÷ 4로 낸 R-배수다.
 function StrategyStrip({ s }: { s: CandidateDetail["strategy"] }) {
   if (s.targetPrice === null && s.stopLossPrice === null) return null;
   const ratio = s.targetPct !== null && s.stopLossPrice !== null ? s.targetPct / 4 : null;
@@ -198,6 +204,12 @@ function StrategyStrip({ s }: { s: CandidateDetail["strategy"] }) {
         gap: 14,
       }}
     >
+      <StrategyStat
+        label="매수가"
+        value={s.entryPrice != null ? `${Math.round(s.entryPrice).toLocaleString()}원` : "-"}
+        color="var(--text)"
+      />
+      <div style={{ width: 1, background: "var(--border)" }} />
       <StrategyStat
         label="목표가"
         value={s.targetPrice !== null ? `${Math.round(s.targetPrice).toLocaleString()}원` : "-"}

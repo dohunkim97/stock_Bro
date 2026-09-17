@@ -139,6 +139,34 @@ async function resolveCandidateCodes(names: string[]): Promise<Map<string, strin
   return codeByName;
 }
 
+// LLM 응답 한 번을 부르고 파싱까지 한다 — attempt>0이면 "candidates가
+// 비어서 다시 요청한다"는 짧은 안내를 프롬프트 끝에 덧붙인다. 실측(2026-
+// 09-16): summary/sectors는 KEC·우리금융지주 등 구체적인 종목명까지 들어
+// 정상적으로 채워졌는데 candidates 배열만 "[]"로 빈 채 왔다 — 리포트
+// 목적(종목 추천) 자체가 무의미해지는 응답이라 재시도할 가치가 있다.
+async function callModel(userPrompt: string, attempt: number): Promise<ParsedPrediction | null> {
+  const client = new Anthropic();
+  const nudge =
+    attempt > 0
+      ? "\n\n(방금 응답한 candidates가 비어 있었어. summary·sectors에서 언급한 종목이 있다면 그걸 포함해서, candidates 배열도 반드시 3-5개 채워서 다시 답해.)"
+      : "";
+
+  const response = await client.messages.create({
+    model: "claude-sonnet-5",
+    max_tokens: 2500,
+    output_config: { effort: "low" },
+    system: SYSTEM_PROMPT,
+    messages: [{ role: "user", content: userPrompt + nudge }],
+  });
+
+  const text = response.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("\n");
+
+  return parseResponse(text);
+}
+
 // Runs every trading day (see app/api/cron/weekly-prediction), publishing a
 // fresh 5-trading-day pick sheet for TODAY (forDate) — a separate,
 // permanent row every day (upsert only guards against a same-day retry),
@@ -165,22 +193,19 @@ export async function generateWeeklyPrediction(): Promise<void> {
     .join("\n\n");
   if (!userPrompt.trim()) return; // nothing to reason from yet (e.g. brand-new deployment)
 
-  const client = new Anthropic();
-  const response = await client.messages.create({
-    model: "claude-sonnet-5",
-    max_tokens: 2500,
-    output_config: { effort: "low" },
-    system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: userPrompt }],
-  });
-
-  const text = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("\n");
-
-  const parsed = parseResponse(text);
-  if (!parsed) return;
+  // 최대 2번 시도 — 1차에서 candidates가 비면 한 번 더 강하게 요청한다.
+  // 2차도 비면 아래에서 저장 자체를 건너뛴다(빈 리포트를 그날의 "최신"으로
+  // 박아두면 getLatestPrediction()이 그 빈 걸 계속 보여주게 되고, 다음
+  // 성공한 날까지 사용자에게 "예상 종목이 하나도 없다"로 보인다 — 차라리
+  // 직전 정상 리포트가 계속 최신으로 남는 쪽이 낫다).
+  let parsed: ParsedPrediction | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const p = await callModel(userPrompt, attempt);
+    if (!p) continue;
+    parsed = p;
+    if (p.candidates.filter(isSectorLike).length > 0) break;
+  }
+  if (!parsed) throw new Error("LLM 응답 파싱 실패(2회 시도 모두)");
 
   const sectors = JSON.stringify(parsed.sectors.filter(isSectorLike));
 
@@ -188,6 +213,21 @@ export async function generateWeeklyPrediction(): Promise<void> {
     name: c.name,
     reasoning: c.reasoning,
   }));
+
+  // 위 재시도 루프는 LLM 자신의 JSON 응답이 비는 경우(실측: candidates가
+  // "[]"로 옴)만 잡아준다 — 여기서 rawCandidates가 그래도 비어 있으면
+  // 2번 다 그 상태였다는 뜻이니 저장하지 않고 던진다(빈 리포트를 그날의
+  // "최신"으로 박아두면 getLatestPrediction()이 다음 성공한 날까지 계속
+  // 그 빈 걸 보여주게 된다 — 직전 정상 리포트가 최신으로 남는 게 낫다).
+  // 반대로 아래 MIN_TARGET_PCT 실데이터 필터가 이 뒤에 후보를 0개로 줄이는
+  // 건 별개다 — LLM은 제대로 골랐는데 실제 목표가가 너무 가까워서 걸러진
+  // "오늘은 확신 가는 종목이 없었다"는 정직한 결과라 그건 그대로 저장한다.
+  if (rawCandidates.length === 0) {
+    throw new Error(
+      `LLM이 2회 시도에도 candidates를 비워서 응답함(summary: "${parsed.summary.slice(0, 80)}...") — 이 날짜(${forDate})는 저장하지 않고 직전 정상 리포트를 계속 최신으로 유지함`
+    );
+  }
+
   const codeByName = await resolveCandidateCodes(rawCandidates.map((c) => c.name));
   const candidateList: CandidatePrediction[] = rawCandidates.map((c) => ({ ...c, code: codeByName.get(c.name) }));
 
