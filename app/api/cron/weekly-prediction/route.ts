@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
     await generateWeeklyPrediction();
   } catch (e) {
     const message = e instanceof Error ? e.message : "예측 생성 실패";
+    console.error("[cron/weekly-prediction] generation failed:", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 
