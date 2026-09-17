@@ -33,6 +33,64 @@ const panelStyle: React.CSSProperties = {
   overflow: "hidden",
 };
 
+// CSV 안에서 콤마/따옴표/줄바꿈이 있는 값만 큰따옴표로 감싼다(표준 CSV
+// 이스케이프 규칙) — 상승이유(뉴스 제목)엔 콤마가 자주 섞여 있어 이게 없으면
+// 엑셀에서 열 밀림이 생긴다.
+function escapeCsvField(field: string): string {
+  if (field.includes(",") || field.includes('"') || field.includes("\n")) {
+    return `"${field.replace(/"/g, '""')}"`;
+  }
+  return field;
+}
+
+// 화면에 보이는 목록(현재 탭·시장·정렬 그대로) 그대로를 CSV로 내려받는다
+// — 별도 라이브러리 없이 Excel이 그대로 열 수 있는 CSV로 충분하고(엑셀
+// 자체 포맷 .xlsx는 새 의존성이 필요해서), 맨 앞에 UTF-8 BOM을 붙여야
+// 엑셀에서 한글이 깨지지 않는다. 기사링크는 실제 기사 URL이 있으면 그걸,
+// 없으면(과거 동기화분 등) 네이버 뉴스 검색 링크로 대신 채운다(Row
+// 컴포넌트의 링크 폴백과 동일 규칙).
+function exportStocksToCsv(entries: DailyEntry[], filenamePrefix: string): void {
+  const headers = ["종목명", "종목코드", "현재가", "등락률(%)", "거래량", "거래대금", "찾은 상승이유", "기사링크"];
+  const rows = entries.map((e) => [
+    e.name,
+    e.code ?? "",
+    e.price,
+    e.changePct.toFixed(2),
+    e.volume ?? "",
+    e.tradingValue ?? "",
+    e.issue ?? "",
+    e.issueUrl || (e.issue ? `https://search.naver.com/search.naver?where=news&query=${encodeURIComponent(e.issue)}` : ""),
+  ]);
+  const csvBody = [headers, ...rows].map((row) => row.map((f) => escapeCsvField(String(f))).join(",")).join("\r\n");
+  const blob = new Blob([`﻿${csvBody}`], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const today = new Date().toISOString().slice(0, 10);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${filenamePrefix}_${today}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportButtonStyle(): React.CSSProperties {
+  return {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    background: "var(--panel2)",
+    border: "1px solid var(--border)",
+    color: "var(--dim)",
+    borderRadius: 8,
+    padding: "4px 10px",
+    fontSize: 11,
+    fontWeight: 700,
+    fontFamily: "var(--sans)",
+    cursor: "pointer",
+  };
+}
+
 function selectStyle(): React.CSSProperties {
   return {
     background: "var(--panel2)",
@@ -237,14 +295,24 @@ export function StockTable({ tabs, basisLabel }: { tabs: RankingTab[]; basisLabe
   const sorted = useMemo(() => sortEntries(filtered, sortKey), [filtered, sortKey]);
 
   const controls = (
-    <MarketSortControls
-      market={market}
-      setMarket={setMarket}
-      marketCounts={marketCounts}
-      accentVar={accentVar}
-      sortKey={sortKey}
-      setSortKey={setSortKey}
-    />
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <MarketSortControls
+        market={market}
+        setMarket={setMarket}
+        marketCounts={marketCounts}
+        accentVar={accentVar}
+        sortKey={sortKey}
+        setSortKey={setSortKey}
+      />
+      <button
+        onClick={() => exportStocksToCsv(sorted, `TOP종목_${active.label}_${market}`)}
+        disabled={sorted.length === 0}
+        title="지금 보이는 목록(종목명/등락률/거래량/거래대금/상승이유/기사링크)을 엑셀(CSV)로 내려받기"
+        style={{ ...exportButtonStyle(), opacity: sorted.length === 0 ? 0.5 : 1, cursor: sorted.length === 0 ? "default" : "pointer" }}
+      >
+        📊 엑셀 추출
+      </button>
+    </div>
   );
 
   return (
