@@ -1,8 +1,28 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { CandidateDetail } from "@/lib/candidate-detail";
 
 type ChatMessage = { role: "user" | "assistant"; text: string };
+
+// 골구 워크스페이스(golgoo-workspace.tsx)가 좌측 피드에 지금 떠 있는 카드를
+// 매 요청마다 같이 보내는 참조 — adjust_strategy 도구가 "화면에 있는
+// 카드만" 조정하도록(app/api/bro/route.ts) 서버에 알려준다.
+export type ChatCardRef = {
+  code: string;
+  name: string;
+  entryPrice: number | null;
+  targetPrice: number | null;
+  stopLossPrice: number | null;
+};
+
+export type ChatCardUpdate = {
+  code: string;
+  targetPrice: number | null;
+  targetPct: number | null;
+  stopLossPrice: number | null;
+  note: string;
+};
 
 type SpeechRecognitionResultEvent = {
   results: { [index: number]: { [index: number]: { transcript: string } } };
@@ -26,7 +46,15 @@ type WindowWithSpeech = Window &
     webkitSpeechRecognition?: new () => SpeechRecognitionLike;
   };
 
-export function BroChat() {
+export function BroChat({
+  cardsForContext,
+  onNewCards,
+  onCardUpdate,
+}: {
+  cardsForContext?: ChatCardRef[];
+  onNewCards?: (cards: CandidateDetail[]) => void;
+  onCardUpdate?: (update: ChatCardUpdate) => void;
+} = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [listening, setListening] = useState(false);
@@ -89,12 +117,15 @@ export function BroChat() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: history.map((m) => ({ role: m.role, content: m.text })),
+          cards: cardsForContext,
         }),
       });
       const data = await res.json();
       const reply = res.ok ? data.reply : data.error;
       setMessages((s) => [...s, { role: "assistant", text: reply }]);
       if (voiceOn) speak(reply);
+      if (res.ok && Array.isArray(data.cards) && data.cards.length > 0) onNewCards?.(data.cards);
+      if (res.ok && data.cardUpdate) onCardUpdate?.(data.cardUpdate);
     } finally {
       setSending(false);
     }

@@ -1,10 +1,8 @@
-import { BroChat } from "@/components/bro/bro-chat";
 import { CandidateTracker } from "@/components/bro/candidate-tracker";
 import { PredictionReport } from "@/components/bro/prediction-report";
 import { ArchiveHub } from "@/components/bro/archive-hub";
 import { IntradaySignalPanel } from "@/components/bro/intraday-signal-panel";
 import { SplitPane } from "@/components/bro/split-pane";
-import { ReportChatPanel } from "@/components/bro/report-chat-panel";
 import { AutoRefresh } from "@/components/market/auto-refresh";
 
 // CandidateTracker does a handful of live KIS quote lookups (one per
@@ -24,52 +22,43 @@ export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 // Header is a fixed 60px, and main's own padding adds 26 (top) + 60
-// (bottom) — subtracting all three pins the whole board to exactly one
-// viewport-height frame (① from the original sketch), no page scroll, so
-// every pane below fills its slot instead of leaving dead space and each
-// pane scrolls internally on its own.
+// (bottom) — subtracting all three pins the top board to exactly one
+// viewport-height frame, no page scroll for it, so the feed/chat split below
+// fills the whole frame and each side scrolls internally on its own.
 const HEADER_HEIGHT = 60;
 const MAIN_PADDING_TOP = 26;
 const MAIN_PADDING_BOTTOM = 60;
 const BOARD_HEIGHT = `calc(100vh - ${HEADER_HEIGHT + MAIN_PADDING_TOP + MAIN_PADDING_BOTTOM}px)`;
+const SECONDARY_ROW_HEIGHT = 460;
 
-// Layout: a fixed 70:30 left:right column split (not draggable — only what's
-// inside each column is) —
-//   left:  예상리포트(PredictionReport), full width by default — a "💬 대화"
-//          toggle floats over its top-right corner and slides 대화창(BroChat)
-//          open alongside it when pressed (see ReportChatPanel)
-//   right: 예상종목(CandidateTracker) / 기록보관소(ArchiveHub), 6:4 default —
-//          drag the horizontal bar to resize height
-// PredictionReport is this week's write-up behind CandidateTracker's picks
-// (섹터/종목 예상 근거); ArchiveHub is a 3-tab archive (예상리포트/일간리포트/
-// 대화기록) under CandidateTracker.
+// 골구 = 실시간 AI 트레이딩 워크스페이스가 이 페이지의 중심이다 —
+//   위(고정 한 화면): PredictionReport 하나가 좌(60%) 리포트 카드 피드 /
+//   우(40%) 골구 대화창을 통째로 그린다(components/bro/golgoo-workspace.tsx).
+//   오늘의 공식 추천으로 피드가 시작하고, 대화에서 종목을 물어보면 그
+//   위에 카드가 더 쌓인다 — 더는 대화창이 접혔다 펴지는 토글이 아니라
+//   항상 떠 있는 고정 사이드바.
+//   아래(페이지 스크롤): 예상종목(CandidateTracker) / 기록보관소(ArchiveHub)
+//   가로 분할 한 줄, 그 아래 장중 실시간 시그널(IntradaySignalPanel) — 위
+//   워크스페이스의 "지금 대화 중심" 리듬과는 성격이 달라 굳이 같은 줄에
+//   끼워 넣지 않았다.
 export default function BroPage() {
   return (
-    <main style={{ maxWidth: 1220, margin: "0 auto", padding: "26px 24px 60px" }}>
+    <main style={{ maxWidth: 1520, margin: "0 auto", padding: "26px 24px 60px" }}>
       {/* CandidateTracker's % is only as fresh as the last render — without
           this, an open tab sits on whatever price it first loaded with
           until the user manually reloads, which looks exactly like "the
           percentage never changes" even though the underlying live KIS
           quote genuinely is moving. */}
       <AutoRefresh />
-      <div style={{ display: "flex", alignItems: "stretch", height: BOARD_HEIGHT }}>
-        <div style={{ flex: "0 0 70%", minWidth: 0, paddingRight: 12 }}>
-          <ReportChatPanel report={<PredictionReport />} chat={<BroChat />} />
-        </div>
 
-        <div style={{ flex: "0 0 30%", minWidth: 0, paddingLeft: 12 }}>
-          <SplitPane
-            direction="column"
-            start={<CandidateTracker />}
-            end={<ArchiveHub />}
-            defaultEndPct={40}
-          />
-        </div>
+      <div style={{ height: BOARD_HEIGHT }}>
+        <PredictionReport />
       </div>
 
-      {/* 고정 한 화면(BOARD_HEIGHT) 보드 아래 별도 섹션 — 이 판만 페이지
-          스크롤로 내려서 본다. 장중 실시간이라 위 보드의 "정적인 하루 한 번
-          발행" 리듬과는 성격이 달라서 굳이 위 레이아웃에 끼워 넣지 않았다. */}
+      <div style={{ height: SECONDARY_ROW_HEIGHT, marginTop: 20 }}>
+        <SplitPane direction="row" start={<CandidateTracker />} end={<ArchiveHub />} defaultEndPct={40} />
+      </div>
+
       <IntradaySignalPanel />
     </main>
   );

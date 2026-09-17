@@ -3,7 +3,8 @@ import { formatDateLabel } from "@/lib/dates";
 import { getCandidateDetails, parseStoredCandidateDetails } from "@/lib/candidate-detail";
 import { fetchKisChart } from "@/lib/kis-chart";
 import { computeTechnicalSignals, LONG_TERM_SIGNAL_CANDLES } from "@/lib/technical-signals";
-import { DetailCard } from "./detail-card";
+import { GolgooWorkspace } from "./golgoo-workspace";
+import type { CardPayload } from "./stock-report-card";
 
 const panelStyle: React.CSSProperties = {
   background: "var(--panel)",
@@ -11,7 +12,7 @@ const panelStyle: React.CSSProperties = {
   borderRadius: 16,
   padding: 20,
   height: "100%",
-  overflowY: "auto",
+  overflow: "hidden",
 };
 
 const sectionTitleStyle: React.CSSProperties = {
@@ -24,12 +25,12 @@ const sectionTitleStyle: React.CSSProperties = {
   marginBottom: 14,
 };
 
-// 오늘 Golgoo 예상 리포트 — 요약/주목 섹터 없이 예상 종목(DetailCard) 카드만
-// 보여준다(사용자 요청: 내용/주목 섹터는 빼고 예상 종목에 집중). 각 카드의
-// 7항목(사업요약/시황/거래량/차트/재료/수급/재무)을 클릭하면
-// components/bro/field-detail-modal.tsx가 그 항목 하나만 전문 분석가 수준으로
-// 파고드는 모달을 연다. 기록보관소(ArchiveHub의 예상리포트 탭, 지난 날들의
-// 채점 결과)와는 별개로 "오늘" 예측 한 건만 보여준다.
+// 골구 실시간 AI 트레이딩 워크스페이스의 진입점 — 오늘의 공식 예상 종목
+// (getCandidateDetails, 5거래일 추적 대상)을 서버에서 미리 계산해 좌측
+// 피드의 시작 카드로 넘기고, 실제 좌(60%)/우(40%) 레이아웃과 "대화로 카드가
+// 늘어나는" 로직은 클라이언트 컴포넌트인 GolgooWorkspace가 맡는다
+// (components/bro/golgoo-workspace.tsx). 기록보관소(ArchiveHub의 예상리포트
+// 탭, 지난 날들의 채점 결과)와는 별개로 "오늘" 예측만 초기 카드로 보여준다.
 export async function PredictionReport() {
   const latest = await getLatestPrediction();
   if (!latest) {
@@ -56,19 +57,21 @@ export async function PredictionReport() {
   ]);
   const signalsByName = new Map(candidates.map((c, i) => [c.name, computeTechnicalSignals(candles[i])]));
 
+  // 기업분석(BM/지배구조)은 DART 왕복이 느려서(최대 수십 초) 카드 목록
+  // 자체를 늦추지 않도록 여기서는 안 불러온다 — StockReportCard가 마운트된
+  // 뒤 각자 알아서 지연 로딩한다(components/bro/stock-report-card.tsx).
+  const initialCards: CardPayload[] = details.map((d) => ({
+    detail: d,
+    business: null,
+    signals: signalsByName.get(d.name),
+  }));
+
   return (
     <section style={panelStyle}>
-      <div style={sectionTitleStyle}>📝 Golgoo 예상 리포트 · {formatDateLabel(latest.forDate)} (5거래일 추적)</div>
-
-      {candidates.length > 0 ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {details.map((d) => (
-            <DetailCard key={d.name} d={d} signals={signalsByName.get(d.name)} />
-          ))}
-        </div>
-      ) : (
-        <div style={{ fontSize: 12.5, color: "var(--faint)" }}>오늘 예상 종목이 아직 없어요.</div>
-      )}
+      <GolgooWorkspace
+        initialCards={initialCards}
+        headerTitle={`📝 Golgoo 예상 리포트 · ${formatDateLabel(latest.forDate)} (5거래일 추적)`}
+      />
     </section>
   );
 }
