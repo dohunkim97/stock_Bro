@@ -100,7 +100,15 @@ export async function ArchiveHub() {
       date: p.label,
       summary: plainPreview(p.summary),
       meta: p.candidateHitRate !== null ? `적중률 ${Math.round(p.candidateHitRate * 100)}%` : undefined,
-      detail: <PeriodAnalysisDetail summary={p.summary} candidateHitRate={p.candidateHitRate} results={p.results} />,
+      detail: (
+        <PeriodAnalysisDetail
+          summary={p.summary}
+          candidateHitRate={p.candidateHitRate}
+          results={p.results}
+          categoryStats={p.categoryStats}
+          insights={p.insights}
+        />
+      ),
     }));
   const weeklyRows = buildPeriodRows(weeklyAnalyses);
   const monthlyRows = buildPeriodRows(monthlyAnalyses);

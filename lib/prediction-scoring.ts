@@ -6,7 +6,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { fetchKisChart } from "@/lib/kis-chart";
-import { getDailyChangeSeries, TRACKING_WINDOW_DAYS, type DailyChangePoint } from "@/lib/candidate-tracking";
+import { getDailyChangeSeries, classifyOutcome, TRACKING_WINDOW_DAYS, type DailyChangePoint } from "@/lib/candidate-tracking";
 import { formatDateLabel, todayISO } from "@/lib/dates";
 
 export type SectorPrediction = { name: string; reasoning: string };
@@ -48,7 +48,12 @@ export function parsePredictionCandidates(raw: string): CandidatePrediction[] {
 }
 
 export type ScoredSector = SectorPrediction & { hit: boolean };
-export type ScoredCandidate = CandidatePrediction & { hit: boolean; finalChangePct: number | null };
+export type ScoredCandidate = CandidatePrediction & {
+  hit: boolean;
+  finalChangePct: number | null;
+  hitTarget: boolean; // 5거래일 안에 목표가에 닿은 적이 있는지
+  hitStop: boolean; // 5거래일 안에 손절가에 닿은 적이 있는지
+};
 
 export type ScoredPrediction = {
   forDate: string;
@@ -61,7 +66,41 @@ export type ScoredPrediction = {
   actualHotSector: string | null;
 };
 
-type PredictionRow = { forDate: string; summary: string; sectors: string; candidates: string };
+// details는 lib/candidate-detail.ts의 CandidateDetail[]가 JSON으로 그대로
+// 저장된 것 — 여기서 그 모듈을 직접 import하면 순환 참조가 생겨서(그쪽이
+// 이미 CandidatePrediction을 이 파일에서 가져다 씀), 필요한 strategy(목표가/
+// 손절가) 값만 구조적으로 최소한만 파싱한다.
+type StoredStrategy = { targetPrice: number | null; stopLossPrice: number | null };
+
+function parseStoredStrategies(raw: string | null | undefined): Map<string, StoredStrategy> {
+  const map = new Map<string, StoredStrategy>();
+  if (!raw) return map;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return map;
+    for (const item of parsed) {
+      const name = (item as RawItem)?.name;
+      const strategy = (item as RawItem)?.strategy as RawItem | undefined;
+      if (typeof name === "string" && strategy) {
+        map.set(name, {
+          targetPrice: typeof strategy.targetPrice === "number" ? strategy.targetPrice : null,
+          stopLossPrice: typeof strategy.stopLossPrice === "number" ? strategy.stopLossPrice : null,
+        });
+      }
+    }
+  } catch {
+    // ignore — 옛 레코드나 형식이 어긋난 경우 그냥 빈 맵(목표가/손절가 판단 불가로 처리됨)
+  }
+  return map;
+}
+
+type PredictionRow = {
+  forDate: string;
+  summary: string;
+  sectors: string;
+  candidates: string;
+  details?: string | null;
+};
 
 // The 5 trading dates following forDate — used both to know whether a row
 // is old enough to fully score yet, and (for sectors) to look up which
@@ -107,9 +146,10 @@ export async function scorePrediction(row: PredictionRow): Promise<ScoredPredict
   }));
 
   const rawCandidates = parsePredictionCandidates(row.candidates);
+  const strategyByName = parseStoredStrategies(row.details);
   const candidates: ScoredCandidate[] = await Promise.all(
     rawCandidates.map(async (c) => {
-      if (!c.code) return { ...c, hit: false, finalChangePct: null };
+      if (!c.code) return { ...c, hit: false, finalChangePct: null, hitTarget: false, hitStop: false };
       // fetchChartWithRetry (not the plain fetchKisChart) — a real, currently
       // listed stock's chart coming back empty under concurrent KIS load is
       // almost always a transient rate limit, not an actual absence of data
@@ -121,7 +161,15 @@ export async function scorePrediction(row: PredictionRow): Promise<ScoredPredict
       const candles = await fetchChartWithRetry(c.code);
       const series = getDailyChangeSeries(candles, row.forDate);
       const final = series.length > 0 ? series[series.length - 1].changePct : null;
-      return { ...c, hit: final !== null && final > 0, finalChangePct: final };
+      const strategy = strategyByName.get(c.name);
+      const outcome = classifyOutcome(series, strategy?.stopLossPrice ?? null, strategy?.targetPrice ?? null);
+      return {
+        ...c,
+        hit: final !== null && final > 0,
+        finalChangePct: final,
+        hitTarget: outcome.hitTarget,
+        hitStop: outcome.hitStop,
+      };
     })
   );
 

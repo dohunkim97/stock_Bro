@@ -8,6 +8,7 @@ import { fetchKisCodeMaster, findInCodeMaster } from "@/lib/kis-code-master";
 import { fetchKisChart } from "@/lib/kis-chart";
 import { computeTechnicalSignals, LONG_TERM_SIGNAL_CANDLES } from "@/lib/technical-signals";
 import { buildVolumeNote, getCandidateDetails } from "@/lib/candidate-detail";
+import { latestWeeklyInsightsBlock } from "@/lib/period-analysis";
 
 const SYSTEM_PROMPT = [
   "너는 한국 주식시장의 향후 5거래일 유망 종목을 뽑는 애널리스트야.",
@@ -19,10 +20,13 @@ const SYSTEM_PROMPT = [
   "[관심 종목군의 기술적 시그널 및 거래량]은 실제 차트 데이터로 계산된 값이야(거래량 급감+음봉·지지선 지지 확인·8일선 지지·33일선 정찰병 매수·45일선 반등·이동평균선 정배열·300일선/480일선 지지 확인 같은 bullish 시그널 / 저항선 돌파 실패·단기 급락·이동평균선 역배열·45일선 터치 시 거래량 증가(반등 제외)·300일선/480일선 붕괴 같은 bearish 시그널, 그리고 종목별 최근 5거래일 평균 거래량이 평소 대비 몇% 늘었는지/줄었는지) — 종목을 고를 때 반드시 참고하고, 있는 종목은 reasoning에 자연스럽게 녹여서 언급해. 특히 평소보다 거래량이 크게(대략 50% 이상) 늘어난 종목은 시장 관심이 붙고 있다는 뜻이니 긍정적으로 반영해.",
   "특히 480일선은 마지막 장기 지지선이야 — '480일선 붕괴' 시그널이 뜬 종목은 위험 신호로 보고 후보에서 제외하거나, 이미 후보로 다뤄야 한다면 반드시 매도/손절 관점에서 경고를 명확히 해.",
   "과거 예측 적중 이력이 있다면 반드시 참고해 — 어떤 유형의 근거가 잘 맞았는지, 안 맞았는지를 이번 선정에 반영해.",
+  "[지난 주간분석에서 배운 점]이 있다면(있을 때만) 반드시 실제로 반영해 — 그건 지난주 실제 추천 종목들이 5거래일 지난 뒤 어떤 근거(시황/거래량/차트/재료/수급/재무)가 실제로 잘 맞았는지 데이터로 분석한 결과야. 예를 들어 '거래량이 늘지 않은 종목은 실패율이 높았다'고 나왔으면 이번엔 거래량 증가가 뚜렷한 종목 위주로 더 신중하게 골라.",
+  "종목 개수는 반드시 5개를 채울 필요 없어 — 확신이 가는(여러 근거가 실제로 겹치는) 종목만 1~5개 골라. 근거가 약한데 억지로 채운 종목 하나가 전체 적중률을 깎아먹으니, 개수보다 성공 확률을 우선해.",
+  "매수타이밍(7번)은 실제 저항선을 목표가로 그대로 쓰고, 손절은 고정 -4%야 — 목표가를 인위적으로 끌어올리지 않아. 그러니 저항선이 코앞이라 매수 기준가 대비 +3%도 안 남은 종목은 5거래일 짧은 보유로는 시도할 값어치가 없어 — 그런 종목은 애초에 후보로 고르지 마(고르더라도 발행 전에 실데이터로 걸러짐).",
   "판단 원칙: 진짜 호재를 품은 종목은 하루에 -5% 넘게 잘 안 빠져 — 뉴스는 좋은데 최근 낙폭이 -5%를 넘는 종목은 호재 신뢰도를 의심하고 신중하게 다뤄. 목표 구간·손절선은 항상 같이 언급해서, 평단가를 위협하면 미련 없이 손절한다는 원칙이 자연스럽게 드러나게 해.",
   "확정적 보장이 아니라 데이터에 근거한 관찰이라는 점을 유지해. 데이터에 없는 건 추측하지 마.",
   "다른 설명 없이 아래 JSON 형식으로만 답해:",
-  '{"summary": "오늘부터 5거래일 전망 핵심을 3-4문장으로", "sectors": [{"name": "섹터/테마명", "reasoning": "근거 한 문장"}] (2-3개), "candidates": [{"name": "정확한 종목명", "reasoning": "근거 한 문장"}] (3-5개)}',
+  '{"summary": "오늘부터 5거래일 전망 핵심을 3-4문장으로", "sectors": [{"name": "섹터/테마명", "reasoning": "근거 한 문장"}] (2-3개), "candidates": [{"name": "정확한 종목명", "reasoning": "근거 한 문장"}] (확신 있는 종목만 1-5개)}',
 ].join("\n");
 
 type RawItem = Record<string, unknown>;
@@ -65,6 +69,11 @@ async function pastAccuracyBlock(): Promise<string> {
 }
 
 const SHORTLIST_SIZE = 15;
+
+// 5거래일 짧은 보유 기간엔 목표가(실제 저항선 기준)까지 최소 이만큼은
+// 남아 있어야 추천할 가치가 있다고 판단 — 이 밑이면 generateWeeklyPrediction
+// 끝에서 후보를 통째로 걸러낸다(lib/candidate-detail.ts 주석 참고).
+const MIN_TARGET_PCT = 3;
 
 // A pool of "지금 뉴스가 실제로 붙어있는" stocks to run technical-signal
 // detection against BEFORE the LLM picks — not just re-affirming whatever
@@ -170,15 +179,18 @@ export async function generateWeeklyPrediction(): Promise<void> {
 
   const forDate = todayISO();
 
-  const [historyBlock, issuesBlock, tgBlock, accBlock, signalsBlock] = await Promise.all([
+  const [historyBlock, issuesBlock, tgBlock, accBlock, signalsBlock, insightsBlock] = await Promise.all([
     recentWeeksHistoryBlock(4),
     recentIssuesBlock(20),
     telegramBlock(),
     pastAccuracyBlock(),
     signalShortlistBlock(),
+    latestWeeklyInsightsBlock(),
   ]);
 
-  const userPrompt = [historyBlock, issuesBlock, tgBlock, accBlock, signalsBlock].filter(Boolean).join("\n\n");
+  const userPrompt = [historyBlock, issuesBlock, tgBlock, accBlock, signalsBlock, insightsBlock]
+    .filter(Boolean)
+    .join("\n\n");
   if (!userPrompt.trim()) return; // nothing to reason from yet (e.g. brand-new deployment)
 
   // 최대 2번 시도 — 1차에서 candidates가 비면 한 번 더 강하게 요청한다.
@@ -201,23 +213,45 @@ export async function generateWeeklyPrediction(): Promise<void> {
     name: c.name,
     reasoning: c.reasoning,
   }));
-  const codeByName = await resolveCandidateCodes(rawCandidates.map((c) => c.name));
-  const candidateList: CandidatePrediction[] = rawCandidates.map((c) => ({ ...c, code: codeByName.get(c.name) }));
 
-  if (candidateList.length === 0) {
+  // 위 재시도 루프는 LLM 자신의 JSON 응답이 비는 경우(실측: candidates가
+  // "[]"로 옴)만 잡아준다 — 여기서 rawCandidates가 그래도 비어 있으면
+  // 2번 다 그 상태였다는 뜻이니 저장하지 않고 던진다(빈 리포트를 그날의
+  // "최신"으로 박아두면 getLatestPrediction()이 다음 성공한 날까지 계속
+  // 그 빈 걸 보여주게 된다 — 직전 정상 리포트가 최신으로 남는 게 낫다).
+  // 반대로 아래 MIN_TARGET_PCT 실데이터 필터가 이 뒤에 후보를 0개로 줄이는
+  // 건 별개다 — LLM은 제대로 골랐는데 실제 목표가가 너무 가까워서 걸러진
+  // "오늘은 확신 가는 종목이 없었다"는 정직한 결과라 그건 그대로 저장한다.
+  if (rawCandidates.length === 0) {
     throw new Error(
       `LLM이 2회 시도에도 candidates를 비워서 응답함(summary: "${parsed.summary.slice(0, 80)}...") — 이 날짜(${forDate})는 저장하지 않고 직전 정상 리포트를 계속 최신으로 유지함`
     );
   }
 
-  const candidates = JSON.stringify(candidateList);
+  const codeByName = await resolveCandidateCodes(rawCandidates.map((c) => c.name));
+  const candidateList: CandidatePrediction[] = rawCandidates.map((c) => ({ ...c, code: codeByName.get(c.name) }));
 
   // 종목별 근거(시황/거래량/차트/재료/수급/재무/매수타이밍)를 여기서 딱 한
   // 번만 신중하게 계산해서 그대로 저장해둔다 — 안 그러면 리포트를 볼 때마다
   // 실시간 시세·수급·재무·LLM을 다시 불러서 새로고침할 때마다 값이 나타났다
   // 사라졌다 바뀌는 문제가 생긴다. 컴포넌트는 이제 이 저장된 값을 그대로
   // 보여주기만 하고, 다음 날 새 리포트가 나와야만 갱신된다.
-  const details = candidateList.length > 0 ? JSON.stringify(await getCandidateDetails(candidateList, forDate)) : "[]";
+  const rawDetails = candidateList.length > 0 ? await getCandidateDetails(candidateList, forDate) : [];
+
+  // 실제 저항선 기준 목표가가 매수 기준가 대비 +3% 미만이면(5거래일 짧은
+  // 보유로는 시도할 값어치가 없다고 판단) 후보에서 아예 뺀다 — LLM이 골랐어도
+  // 실데이터로 다시 거르는 마지막 안전장치. targetPct를 계산 못 한 후보
+  // (코드 미확인 등, targetPct === null)도 검증 불가능하니 같이 제외한다.
+  // 이 필터 때문에 그날 후보가 0개가 될 수도 있는데, 그건 "오늘은 확신
+  // 가는 종목이 없었다"는 정직한 결과라 그대로 둔다(억지로 채우지 않음).
+  const filteredDetails = rawDetails.filter(
+    (d) => d.strategy.targetPct !== null && d.strategy.targetPct >= MIN_TARGET_PCT
+  );
+  const keptNames = new Set(filteredDetails.map((d) => d.name));
+  const filteredCandidateList = candidateList.filter((c) => keptNames.has(c.name));
+
+  const candidates = JSON.stringify(filteredCandidateList);
+  const details = JSON.stringify(filteredDetails);
 
   await prisma.weeklyPrediction.upsert({
     where: { forDate },
