@@ -27,10 +27,6 @@
     {
       "path": "/api/cron/weekly-prediction",
       "schedule": "10 7 * * 1-5"
-    },
-    {
-      "path": "/api/cron/intraday-monitor",
-      "schedule": "*/10 0-6 * * 1-5"
     }
   ]
 }
