@@ -22,7 +22,7 @@
 import { prisma } from "@/lib/prisma";
 import { fetchKisMinuteChart, type MinuteCandle } from "@/lib/kis-minute-chart";
 import { fetchKisQuote } from "@/lib/kis-quote";
-import { todayISO } from "@/lib/dates";
+import { todayISO, currentMarketStatus } from "@/lib/dates";
 
 // 평소(직전 분봉 평균) 대비 이만큼 이상 거래대금이 튀어야 "기준 거래대금
 // 돌파"로 본다 — 원 기법의 "기준 거래대금"이 절대값이 아니라 "평소와
@@ -32,6 +32,26 @@ const SHORTLIST_SIZE = 15;
 const SCAN_CONCURRENCY = 3;
 const TARGET_PROFIT_PCT = 3; // 하루 안 청산이 기본이라 목표수익은 낮게 잡음
 const MA_WINDOW = 5; // "5선 이탈 시 매도" — 분봉 5개 단순이동평균
+
+// scan(장 시작 직후 포착)과 monitor(청산 확인)를 원래 각자 1분/5분
+// 간격의 별도 크론 2개로 돌렸는데, 그 둘을 더한 하루 총 호출량(~99회)이
+// Vercel 크론 사용량/요금제 한도를 넘겨 배포 자체가 계속 실패하는 사고로
+// 이어졌다(2026-09-16 밤, vercel.json 커밋 이력 참고). 크론 1개(10분
+// 간격, 하루 42회)로 합쳐서 그 안에서 "지금이 스캔 구간인지"만 시간으로
+// 갈라 판단한다 — runIntradayCycle이 그 진입점.
+const OPEN_MINUTES = 9 * 60; // 09:00 KST
+const SCAN_WINDOW_MINUTES = 60; // 장 시작 후 이 시간까지만 새 시그널을 찾는다(그 이후는 이미 포착된 것만 추적)
+
+function minutesSinceMidnightKST(): number {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? "0");
+  return get("hour") * 60 + get("minute");
+}
 
 // 오늘 스캔할 후보 — 최근 이슈가 붙어 시장이 이미 주목 중인 종목 위주로
 // 좁힌다(lib/weekly-prediction.ts의 signalShortlistBlock과 같은 소스).
@@ -195,9 +215,45 @@ export async function closeOutIntradaySignals(): Promise<void> {
   }
 }
 
+// 크론 하나(app/api/cron/intraday-monitor/route.ts, 10분 간격)의 진입점 —
+// 장중이면 "아직 장 시작 직후(SCAN_WINDOW_MINUTES 이내)"일 때만 새 시그널
+// 스캔을 같이 돌리고, 그 외엔(이미 스캔 구간을 지났거나 장이 끝났으면)
+// 이미 포착된 시그널의 청산 확인/장마감 강제 청산만 한다.
+export async function runIntradayCycle(): Promise<void> {
+  if (!currentMarketStatus().isOpen) {
+    await closeOutIntradaySignals();
+    return;
+  }
+  if (minutesSinceMidnightKST() <= OPEN_MINUTES + SCAN_WINDOW_MINUTES) {
+    await scanIntradaySignals();
+  }
+  await monitorIntradaySignals();
+}
+
 export type IntradaySignalRow = Awaited<ReturnType<typeof prisma.intradaySignal.findMany>>[number];
 
 export async function getTodayIntradaySignals(): Promise<IntradaySignalRow[]> {
   const date = todayISO();
   return prisma.intradaySignal.findMany({ where: { date }, orderBy: { detectedAt: "asc" } });
+}
+
+export type IntradaySignalDay = { date: string; signals: IntradaySignalRow[] };
+
+// 사용자가 장중에 못 보고 지나간 날들을 나중에 몰아서 확인할 수 있게
+// 오늘을 제외한 지난 며칠치를 날짜별로 묶어서 돌려준다(최신 날짜 먼저) —
+// components/bro/intraday-signal-panel.tsx의 "지난 기록" 섹션에서 쓴다.
+export async function getRecentIntradaySignals(days: number): Promise<IntradaySignalDay[]> {
+  const today = todayISO();
+  const rows = await prisma.intradaySignal.findMany({
+    where: { date: { not: today } },
+    orderBy: [{ date: "desc" }, { detectedAt: "asc" }],
+  });
+
+  const byDate = new Map<string, IntradaySignalRow[]>();
+  for (const r of rows) {
+    if (!byDate.has(r.date)) byDate.set(r.date, []);
+    byDate.get(r.date)!.push(r);
+  }
+
+  return [...byDate.entries()].slice(0, days).map(([date, signals]) => ({ date, signals }));
 }
