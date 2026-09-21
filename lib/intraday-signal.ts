@@ -33,14 +33,16 @@ const SCAN_CONCURRENCY = 3;
 const TARGET_PROFIT_PCT = 3; // 하루 안 청산이 기본이라 목표수익은 낮게 잡음
 const MA_WINDOW = 5; // "5선 이탈 시 매도" — 분봉 5개 단순이동평균
 
-// scan(장 시작 직후 포착)과 monitor(청산 확인)를 원래 각자 1분/5분
-// 간격의 별도 크론 2개로 돌렸는데, 그 둘을 더한 하루 총 호출량(~99회)이
-// Vercel 크론 사용량/요금제 한도를 넘겨 배포 자체가 계속 실패하는 사고로
-// 이어졌다(2026-09-16 밤, vercel.json 커밋 이력 참고). 크론 1개(10분
-// 간격, 하루 42회)로 합쳐서 그 안에서 "지금이 스캔 구간인지"만 시간으로
-// 갈라 판단한다 — runIntradayCycle이 그 진입점.
+// scan(장 시작 직후 포착)과 monitor(청산 확인)를 원래 각자 1분/5분 간격의
+// 별도 크론 2개로 돌렸는데, 배포가 계속 실패하는 사고로 이어졌다(2026-
+// 09-16 밤~2026-09-21). 진짜 원인은 이 계정(Hobby 요금제)의 Cron Jobs
+// 설정 화면에서 확인됨: "Cron jobs on Hobby have a flexible time window
+// of 1-hour" — 즉 크론 하나가 시간당 1번을 넘어 도는 스케줄(1분/5분/10분
+// 간격 전부 포함)은 개수·문법과 무관하게 애초에 등록 자체가 거부된다.
+// 그래서 크론 1개(시간당 정확히 1번, 하루 7회)로 합치고 그 안에서 "지금이
+// 스캔 구간인지"만 시간으로 갈라 판단한다 — runIntradayCycle이 그 진입점.
 const OPEN_MINUTES = 9 * 60; // 09:00 KST
-const SCAN_WINDOW_MINUTES = 60; // 장 시작 후 이 시간까지만 새 시그널을 찾는다(그 이후는 이미 포착된 것만 추적)
+const SCAN_WINDOW_MINUTES = 60; // 장 시작 후 이 시간까지만 새 시그널을 찾는다(그 이후는 이미 포착된 것만 추적) — 시간당 1회 호출이라 09:00/10:00 두 번의 호출이 여기 걸린다
 
 function minutesSinceMidnightKST(): number {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -215,7 +217,7 @@ export async function closeOutIntradaySignals(): Promise<void> {
   }
 }
 
-// 크론 하나(app/api/cron/intraday-monitor/route.ts, 10분 간격)의 진입점 —
+// 크론 하나(app/api/cron/intraday-monitor/route.ts, 시간당 1번)의 진입점 —
 // 장중이면 "아직 장 시작 직후(SCAN_WINDOW_MINUTES 이내)"일 때만 새 시그널
 // 스캔을 같이 돌리고, 그 외엔(이미 스캔 구간을 지났거나 장이 끝났으면)
 // 이미 포착된 시그널의 청산 확인/장마감 강제 청산만 한다.
