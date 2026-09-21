@@ -21,8 +21,32 @@
       "schedule": "50 5 * * 1-5"
     },
     {
-      "path": "/api/cron/intraday-monitor",
+      "path": "/api/cron/intraday-monitor?slot=1",
+      "schedule": "0 0 * * 1-5"
+    },
+    {
+      "path": "/api/cron/intraday-monitor?slot=2",
+      "schedule": "0 1 * * 1-5"
+    },
+    {
+      "path": "/api/cron/intraday-monitor?slot=3",
+      "schedule": "0 2 * * 1-5"
+    },
+    {
+      "path": "/api/cron/intraday-monitor?slot=4",
+      "schedule": "0 3 * * 1-5"
+    },
+    {
+      "path": "/api/cron/intraday-monitor?slot=5",
       "schedule": "0 4 * * 1-5"
+    },
+    {
+      "path": "/api/cron/intraday-monitor?slot=6",
+      "schedule": "0 5 * * 1-5"
+    },
+    {
+      "path": "/api/cron/intraday-monitor?slot=7",
+      "schedule": "0 6 * * 1-5"
     }
   ]
 }
