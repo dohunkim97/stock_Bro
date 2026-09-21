@@ -350,3 +350,19 @@ model IntradaySignal {
   @@unique([date, code, detectedAt])
   @@index([date])
 }
+
+// 구글 로그인(lib/auth.ts, NextAuth) 사용자 — 세션은 JWT 전략이라 NextAuth
+// 자체 Account/Session 테이블은 안 쓰고, 로그인마다 이 테이블에 email로
+// upsert만 한다(그래서 필요한 컬럼만 딱 이만큼). role은 ADMIN_EMAILS
+// 환경변수와 대조해서 로그인 시점에 한 번 정해진다(lib/auth.ts 참고) —
+// "둥지"(개인 자산관리) 데이터를 사용자별로 나누는 다음 단계에서 이
+// User.id를 PortfolioSettings/PortfolioHolding의 FK로 쓰게 될 예정.
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  image     String?
+  role      String   @default("user") // "user" | "admin"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

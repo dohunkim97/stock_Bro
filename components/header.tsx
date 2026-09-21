@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useTheme } from "./theme-provider";
+import { UserMenu } from "./auth/user-menu";
 import { todayISO, formatDateLabel, currentMarketStatus, type MarketStatus } from "@/lib/dates";
 
 const NAV_ITEMS = [
@@ -142,6 +143,7 @@ export function Header() {
           {dateLabel} {status.label}
         </span>
       </div>
+      <UserMenu />
       <button
         onClick={toggleTheme}
         style={{
