@@ -373,6 +373,13 @@ export async function getSupplyDetail(code: string): Promise<SupplyDetail> {
 // 위에 과거 대비 체질 변화·현금흐름·부채 안전성 같은 심층 해설을 얹는다.
 export type FinancialDetail = {
   companyAnalysisFinancial: { parsed: Record<string, unknown>; reportName: string; reportUrl: string } | null;
+  // verified_financials(실측 매출/영업이익/재무상태표/현금흐름 수치)와
+  // financial_story(턴어라운드·현금흐름·재무안전성 스토리 + 종합결론)는
+  // finance_py.py가 나중에 스키마를 확장하며 추가한 필드 — financial_analysis
+  // 안이 아니라 rawJson 최상위에 형제로 들어있어서 따로 뽑아 내려준다(실측:
+  // ISC_095340, 2026-09-21). 둘 다 없을 수도 있는 필드라 optional.
+  verifiedFinancials: Record<string, unknown> | null;
+  financialStory: Record<string, unknown> | null;
   annual: YearlyFinancials[];
   quarterlyAvailable: false;
 };
@@ -385,6 +392,8 @@ export async function getFinancialDetail(code: string): Promise<FinancialDetail>
   ]);
 
   let companyAnalysisFinancial: FinancialDetail["companyAnalysisFinancial"] = null;
+  let verifiedFinancials: FinancialDetail["verifiedFinancials"] = null;
+  let financialStory: FinancialDetail["financialStory"] = null;
   if (analysis) {
     try {
       const parsed = JSON.parse(analysis.rawJson) as Record<string, unknown>;
@@ -395,10 +404,16 @@ export async function getFinancialDetail(code: string): Promise<FinancialDetail>
           reportUrl: analysis.reportUrl,
         };
       }
+      if (parsed.verified_financials && typeof parsed.verified_financials === "object") {
+        verifiedFinancials = parsed.verified_financials as Record<string, unknown>;
+      }
+      if (parsed.financial_story && typeof parsed.financial_story === "object") {
+        financialStory = parsed.financial_story as Record<string, unknown>;
+      }
     } catch {
       // rawJson이 깨져 있으면 그냥 DART 연간 수치만 보여준다
     }
   }
 
-  return { companyAnalysisFinancial, annual, quarterlyAvailable: false };
+  return { companyAnalysisFinancial, verifiedFinancials, financialStory, annual, quarterlyAvailable: false };
 }

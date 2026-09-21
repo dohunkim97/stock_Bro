@@ -1,6 +1,7 @@
 import { MarketNoteButton } from "./market-note-button";
 import { GlossaryTerm, GlossaryText } from "@/components/ui/glossary-term";
 import { findGlossaryMatch } from "@/lib/finance-glossary";
+import { chgColorVar, formatChg } from "@/lib/format";
 
 // scripts/watch-company-analysis.ts가 올려주는 CompanyAnalysis.rawJson을
 // 실제로 그리는 순수 렌더링 조각들 — DB 접근이 전혀 없어서(prisma import
@@ -125,6 +126,188 @@ function CategoryBlock({ category }: { category: Category }) {
   );
 }
 
+function numOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+function strOrNull(v: unknown): string | null {
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+function eok(n: number | null): string {
+  return n !== null ? `${n.toLocaleString(undefined, { maximumFractionDigits: 1 })}억원` : "-";
+}
+
+// finance_py.py가 나중에 추가한 verified_financials(실측 매출/영업이익/
+// 재무상태표/현금흐름 수치, rawJson 최상위)를 표 대신 라벨-값 줄글로
+// 간단히 보여준다 — 이미 있는 financial_analysis 6항목(서술 위주)과
+// 성격이 겹치지 않게, 여긴 "검증된 숫자"만 짧게 앞에 놓는다.
+function VerifiedFinancialsPanel({ data }: { data: Record<string, unknown> }) {
+  const revenue = isSubItem(data.revenue) ? data.revenue : null;
+  const op = isSubItem(data.operating_profit) ? data.operating_profit : null;
+  const bs = isSubItem(data.balance_sheet) ? data.balance_sheet : null;
+  const cf = isSubItem(data.cash_flow) ? data.cash_flow : null;
+  if (!revenue && !op && !bs && !cf) return null;
+
+  const rows: { label: string; value: React.ReactNode }[] = [];
+
+  if (revenue) {
+    const growth = numOrNull(revenue.growth_rate_pct);
+    rows.push({
+      label: "매출액",
+      value: (
+        <>
+          {strOrNull(revenue.previous_year) ?? ""}년 {eok(numOrNull(revenue.previous_eok))} → {strOrNull(revenue.current_year) ?? ""}
+          년 {eok(numOrNull(revenue.current_eok))}
+          {growth !== null && (
+            <span style={{ marginLeft: 6, color: chgColorVar(growth), fontWeight: 700 }}>{formatChg(growth)}</span>
+          )}
+        </>
+      ),
+    });
+  }
+  if (op) {
+    const prevM = numOrNull(op.previous_margin_pct);
+    const curM = numOrNull(op.current_margin_pct);
+    const changePp = numOrNull(op.margin_change_pp);
+    rows.push({
+      label: "영업이익",
+      value: (
+        <>
+          {eok(numOrNull(op.previous_eok))}
+          {prevM !== null ? `(${prevM.toFixed(1)}%)` : ""} → {eok(numOrNull(op.current_eok))}
+          {curM !== null ? `(${curM.toFixed(1)}%)` : ""}
+          {changePp !== null && (
+            <span style={{ marginLeft: 6, color: chgColorVar(changePp), fontWeight: 700 }}>
+              {changePp >= 0 ? "+" : ""}
+              {changePp.toFixed(1)}%p
+            </span>
+          )}
+        </>
+      ),
+    });
+  }
+  if (bs) {
+    const debtRatio = numOrNull(bs.debt_ratio_pct);
+    rows.push({
+      label: "재무상태표",
+      value: (
+        <>
+          자산 {eok(numOrNull(bs.assets_eok))} · 부채 {eok(numOrNull(bs.liabilities_eok))} · 자본 {eok(numOrNull(bs.equity_eok))}
+          {debtRatio !== null && <span style={{ marginLeft: 6, color: "var(--faint)" }}>(부채비율 {debtRatio.toFixed(1)}%)</span>}
+        </>
+      ),
+    });
+  }
+  if (cf) {
+    const patternType = strOrNull(cf.pattern_type);
+    rows.push({
+      label: "현금흐름",
+      value: (
+        <>
+          영업 {eok(numOrNull(cf.cf_operating_eok))} · 투자 {eok(numOrNull(cf.cf_investing_eok))} · 재무{" "}
+          {eok(numOrNull(cf.cf_financing_eok))}
+          {patternType && (
+            <span style={{ marginLeft: 6, display: "inline-block" }}>
+              <VerdictBadge text={patternType} color="var(--accent)" inline />
+            </span>
+          )}
+        </>
+      ),
+    });
+  }
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontWeight: 700, fontSize: 11.5, color: "var(--accent)", marginBottom: 8 }}>📊 실측 재무 수치</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {rows.map((r) => (
+          <div key={r.label} style={{ display: "flex", gap: 10, fontSize: 11.5, lineHeight: 1.6 }}>
+            <span style={{ flexShrink: 0, width: 64, color: "var(--faint)", fontWeight: 700 }}>{r.label}</span>
+            <span style={{ fontFamily: "var(--mono)", color: "var(--text)" }}>{r.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// financial_story(턴어라운드·현금흐름·재무안전성 3개 스토리 + 종합결론) —
+// 기존 6항목 financial_analysis와 서술 스타일이 비슷하지만 3개로 압축된
+// 더 최근 스키마(실측: ISC_095340, 2026-09-21). 둘 다 있으면 둘 다
+// 보여준다(하나가 다른 하나의 대체가 아니라 둘 다 유효한 분석이라 굳이
+// 하나를 숨길 이유가 없음).
+function FinancialStoryPanel({ data }: { data: Record<string, unknown> }) {
+  const turnaround = isSubItem(data.turnaround_story) ? data.turnaround_story : null;
+  const cashflow = isSubItem(data.cashflow_story) ? data.cashflow_story : null;
+  const safety = isSubItem(data.balance_safety_story) ? data.balance_safety_story : null;
+  const verdicts = Array.isArray(data.analyst_final_verdict)
+    ? (data.analyst_final_verdict as unknown[]).filter((v): v is string => typeof v === "string")
+    : [];
+
+  const blocks: { title: string; verdict: string | null; body: string | null }[] = [];
+  if (turnaround) {
+    blocks.push({
+      title: "실적 체질 변화",
+      verdict: strOrNull(turnaround.verdict),
+      body: [strOrNull(turnaround.why_changed), strOrNull(turnaround.sustainability)].filter(Boolean).join(" "),
+    });
+  }
+  if (cashflow) {
+    blocks.push({
+      title: "현금흐름 패턴",
+      verdict: strOrNull(cashflow.pattern_verdict),
+      body: strOrNull(cashflow.money_flow_analysis),
+    });
+  }
+  if (safety) {
+    blocks.push({ title: "재무 안전성", verdict: strOrNull(safety.safety_verdict), body: strOrNull(safety.story) });
+  }
+  if (blocks.length === 0 && verdicts.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--border2)" }}>
+      <div style={{ fontWeight: 700, fontSize: 11.5, color: "var(--accent)", marginBottom: 10 }}>📖 재무 스토리</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: verdicts.length > 0 ? 14 : 0 }}>
+        {blocks.map((b) => {
+          const color = b.verdict ? verdictColor(b.verdict) : null;
+          return (
+            <div key={b.title}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontWeight: 700, fontSize: 12 }}>{b.title}</span>
+                {b.verdict && color && <VerdictBadge text={b.verdict} color={color} inline />}
+              </div>
+              {b.body && (
+                <p style={{ margin: 0, fontSize: 12, lineHeight: 1.75, color: "var(--dim)" }}>
+                  <GlossaryText text={b.body} />
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {verdicts.length > 0 && (
+        <div
+          style={{
+            background: "var(--panel2)",
+            border: "1px solid var(--border2)",
+            borderRadius: 10,
+            padding: "12px 14px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+          }}
+        >
+          <div style={{ fontWeight: 700, fontSize: 11.5, color: "var(--accent)" }}>재무 스토리 종합 결론</div>
+          {verdicts.map((v, i) => (
+            <div key={i} style={{ fontSize: 12, lineHeight: 1.7, color: "var(--text)" }}>
+              <GlossaryText text={v} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export type CompanyAnalysisData = {
   parsed: Record<string, unknown>;
   reportName: string;
@@ -211,6 +394,8 @@ export function CompanyAnalysisContent({
               parsed: data.parsed.financial_analysis as Record<string, unknown>,
               reportName: data.reportName,
               reportUrl: data.reportUrl,
+              verifiedFinancials: isSubItem(data.parsed.verified_financials) ? data.parsed.verified_financials : null,
+              financialStory: isSubItem(data.parsed.financial_story) ? data.parsed.financial_story : null,
             }}
             showSourceLink={false}
           />
@@ -233,6 +418,11 @@ export type FinancialAnalysisData = {
   parsed: Record<string, unknown>; // financial_analysis 객체 자체
   reportName: string;
   reportUrl: string;
+  // verified_financials/financial_story는 financial_analysis 안이 아니라
+  // rawJson 최상위에 형제로 들어있는 필드라(lib/field-detail.ts가 따로
+  // 뽑아준다) 별도 prop으로 받는다 — 둘 다 optional(옛 스키마 파일엔 없음).
+  verifiedFinancials?: Record<string, unknown> | null;
+  financialStory?: Record<string, unknown> | null;
 };
 
 export function hasFinancialAnalysis(parsed: Record<string, unknown>): boolean {
@@ -290,6 +480,8 @@ export function FinancialAnalysisContent({ data, showSourceLink = true }: { data
         </div>
       )}
 
+      {data.verifiedFinancials && <VerifiedFinancialsPanel data={data.verifiedFinancials} />}
+
       {dimensions.length > 0 && (
         <div style={{ overflowX: "auto", marginBottom: 18 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -323,6 +515,8 @@ export function FinancialAnalysisContent({ data, showSourceLink = true }: { data
           <SubItemCard key={k} item={item} />
         ))}
       </div>
+
+      {data.financialStory && <FinancialStoryPanel data={data.financialStory} />}
     </div>
   );
 }

@@ -240,7 +240,13 @@ function FinancialView({ data }: { data: FinancialDetail }) {
       {data.companyAnalysisFinancial && (
         <div style={{ marginBottom: 18, paddingBottom: 16, borderBottom: "1px solid var(--border2)" }}>
           <div style={{ fontWeight: 800, fontSize: 12.5, marginBottom: 8 }}>AI 재무 분석</div>
-          <FinancialAnalysisContent data={data.companyAnalysisFinancial} />
+          <FinancialAnalysisContent
+            data={{
+              ...data.companyAnalysisFinancial,
+              verifiedFinancials: data.verifiedFinancials,
+              financialStory: data.financialStory,
+            }}
+          />
         </div>
       )}
       <div style={{ fontWeight: 800, fontSize: 12.5, marginBottom: 8 }}>공식 연간 실적 (DART)</div>
