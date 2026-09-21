@@ -22,7 +22,7 @@
     },
     {
       "path": "/api/cron/intraday-monitor",
-      "schedule": "0 0-6 * * 1-5"
+      "schedule": "0 4 * * 1-5"
     }
   ]
 }
