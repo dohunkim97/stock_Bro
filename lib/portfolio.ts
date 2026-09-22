@@ -4,14 +4,18 @@
 // lib/candidate-detail.ts의 buildChartNote와 같은 원리(5일선/20일선,
 // 최근 20거래일 고점/저점)를 쓰지만 그 파일은 "예측 후보" 전용 타입이라
 // 여기서는 보유 종목에 맞는 독립된 계산으로 다시 구현한다.
+//
+// 구글 로그인 도입(2026-09-22) 후 모든 함수가 userId를 받는다 — 예전엔
+// 사이트 전체에 둥지가 하나뿐이라 고정 id("singleton")로 조회했지만,
+// 이제 로그인한 사람마다 자기 것만 보게 userId로 소유권을 나눈다
+// (prisma/migrations/20260922022859_scope_portfolio_to_user 참고, 기존
+// 데이터는 그 시점의 유일한 로그인 사용자에게 귀속시켰다).
 
 import { prisma } from "@/lib/prisma";
 import { fetchKisQuote } from "@/lib/kis-quote";
 import { fetchKisChart } from "@/lib/kis-chart";
 import { resolveStock } from "@/lib/market-data";
 import { fetchKisCodeMaster, findInCodeMaster } from "@/lib/kis-code-master";
-
-const SETTINGS_ID = "singleton";
 
 export type PortfolioSettingsData = {
   totalSeed: number;
@@ -24,8 +28,8 @@ export type PortfolioSettingsData = {
   targetCashPct: number;
 };
 
-export async function getPortfolioSettings(): Promise<PortfolioSettingsData> {
-  const row = await prisma.portfolioSettings.findUnique({ where: { id: SETTINGS_ID } });
+export async function getPortfolioSettings(userId: string): Promise<PortfolioSettingsData> {
+  const row = await prisma.portfolioSettings.findUnique({ where: { userId } });
   if (row) return row;
   return {
     totalSeed: 0,
@@ -39,16 +43,16 @@ export async function getPortfolioSettings(): Promise<PortfolioSettingsData> {
   };
 }
 
-export async function updatePortfolioSettings(input: Partial<PortfolioSettingsData>) {
+export async function updatePortfolioSettings(userId: string, input: Partial<PortfolioSettingsData>) {
   return prisma.portfolioSettings.upsert({
-    where: { id: SETTINGS_ID },
-    create: { id: SETTINGS_ID, ...input },
+    where: { userId },
+    create: { userId, ...input },
     update: input,
   });
 }
 
-export function getHoldings() {
-  return prisma.portfolioHolding.findMany({ orderBy: { createdAt: "asc" } });
+export function getHoldings(userId: string) {
+  return prisma.portfolioHolding.findMany({ where: { userId }, orderBy: { createdAt: "asc" } });
 }
 
 // 종목명만으로도 추가할 수 있게 resolveStock → (실패 시) KIS 종목마스터
@@ -64,12 +68,16 @@ export async function resolveHoldingCode(name: string): Promise<{ code: string; 
   return found ? { code: found.code, name: found.name } : null;
 }
 
-export function addHolding(input: { name: string; code: string; buyPrice: number; quantity: number }) {
-  return prisma.portfolioHolding.create({ data: input });
+export function addHolding(userId: string, input: { name: string; code: string; buyPrice: number; quantity: number }) {
+  return prisma.portfolioHolding.create({ data: { ...input, userId } });
 }
 
-export function removeHolding(id: string) {
-  return prisma.portfolioHolding.delete({ where: { id } }).catch(() => null);
+// deleteMany + where userId — 그냥 delete({where:{id}})를 쓰면 다른
+// 사람의 id를 추측해서 지울 수 있으니(사용자별 소유권 체크 없음) 반드시
+// userId까지 같이 걸어서 "내 것만" 지워지게 한다.
+export async function removeHolding(userId: string, id: string) {
+  const result = await prisma.portfolioHolding.deleteMany({ where: { id, userId } }).catch(() => null);
+  return result;
 }
 
 function sma(closes: number[], period: number): number | null {
@@ -114,8 +122,8 @@ export type HoldingWithLiveData = {
 // 종목 하나당 시세 1회 + 차트 1회 — 보유 종목이 많아야 한 자릿수~십수 개
 // 수준일 걸 감안해 병렬로 다 가져온다(Promise.all), 페이지 하나에 순차
 // 호출 여러 번을 쌓지 않는다.
-export async function getHoldingsWithLiveData(): Promise<HoldingWithLiveData[]> {
-  const holdings = await getHoldings();
+export async function getHoldingsWithLiveData(userId: string): Promise<HoldingWithLiveData[]> {
+  const holdings = await getHoldings(userId);
   if (holdings.length === 0) return [];
 
   const [quotes, chartsCloses] = await Promise.all([

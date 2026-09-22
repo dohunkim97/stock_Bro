@@ -236,8 +236,14 @@ model TelegramNews {
 // 라이브 시세 소스가 없어(KIS는 국내 주식 전용) 종목별로 관리하지 않고
 // 총액만 입력받는다 — 실시간 평가금액·자동 손절가·AI 목표가는 주식
 // 보유분(PortfolioHolding)에만 적용된다.
+// 사용자당 설정 하나(userId가 곧 "싱글톤 키" 역할 — 예전엔 id 자체가
+// 고정값 "singleton"이라 전체 사이트에 딱 한 행뿐이었는데, 구글 로그인이
+// 생기면서 사용자별로 나눴다). onDelete: Cascade로 User가 지워지면 설정도
+// 같이 정리된다.
 model PortfolioSettings {
-  id             String   @id @default("singleton")
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   totalSeed      Float    @default(0)
   cashAmount     Float    @default(0)
   bondAmount     Float    @default(0)
@@ -252,14 +258,19 @@ model PortfolioSettings {
 // 보유 주식 한 종목 = 한 행. 같은 종목을 여러 번(분할 매수 등) 추가하면
 // 여러 행으로 남아 각자의 매수가를 따로 추적한다 — 평단가로 합치지 않는
 // 이유는, 손절가/목표가처럼 이 앱이 계산하는 지표들이 매수 시점의 맥락
-// (그때 얼마에 샀는지)에 의미가 있기 때문.
+// (그때 얼마에 샀는지)에 의미가 있기 때문. userId — PortfolioSettings와
+// 같은 이유(구글 로그인 후 사용자별 분리)로 붙었다.
 model PortfolioHolding {
   id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   name      String
   code      String
   buyPrice  Float
   quantity  Float
   createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 // A handful of short "이 회사가 실제로 뭘 파는가" keywords per stock (see
@@ -365,4 +376,7 @@ model User {
   role      String   @default("user") // "user" | "admin"
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  portfolioSettings PortfolioSettings?
+  portfolioHoldings PortfolioHolding[]
 }

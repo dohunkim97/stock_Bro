@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { getPortfolioSettings, updatePortfolioSettings, type PortfolioSettingsData } from "@/lib/portfolio";
 
 export async function GET() {
-  const settings = await getPortfolioSettings();
+  const session = await auth();
+  if (!session?.user?.id) return NextResponse.json({ error: "로그인이 필요해요" }, { status: 401 });
+  const settings = await getPortfolioSettings(session.user.id);
   return NextResponse.json(settings);
 }
 
@@ -18,6 +21,9 @@ const NUMERIC_KEYS: (keyof PortfolioSettingsData)[] = [
 ];
 
 export async function PUT(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) return NextResponse.json({ error: "로그인이 필요해요" }, { status: 401 });
+
   const body = await req.json().catch(() => ({}));
   const input: Partial<PortfolioSettingsData> = {};
   for (const key of NUMERIC_KEYS) {
@@ -25,7 +31,7 @@ export async function PUT(req: NextRequest) {
     if (Number.isFinite(v)) input[key] = v;
   }
   try {
-    const updated = await updatePortfolioSettings(input);
+    const updated = await updatePortfolioSettings(session.user.id, input);
     return NextResponse.json(updated);
   } catch {
     return NextResponse.json({ error: "설정을 저장하지 못했어요" }, { status: 400 });

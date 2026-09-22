@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { addHolding, getHoldings, resolveHoldingCode } from "@/lib/portfolio";
 
 export async function GET() {
-  const holdings = await getHoldings();
+  const session = await auth();
+  if (!session?.user?.id) return NextResponse.json({ error: "로그인이 필요해요" }, { status: 401 });
+  const holdings = await getHoldings(session.user.id);
   return NextResponse.json(holdings);
 }
 
 export async function POST(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) return NextResponse.json({ error: "로그인이 필요해요" }, { status: 401 });
+
   const body = await req.json().catch(() => ({}));
   const name = typeof body?.name === "string" ? body.name.trim() : "";
   const buyPrice = Number(body?.buyPrice);
@@ -26,7 +32,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const holding = await addHolding({ name, code, buyPrice, quantity });
+    const holding = await addHolding(session.user.id, { name, code, buyPrice, quantity });
     return NextResponse.json(holding);
   } catch {
     return NextResponse.json({ error: "보유 종목을 추가하지 못했어요" }, { status: 400 });

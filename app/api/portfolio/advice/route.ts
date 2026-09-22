@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { getPortfolioSettings, getHoldingsWithLiveData, computeOverview } from "@/lib/portfolio";
 import { generatePortfolioAdvice } from "@/lib/portfolio-advisor";
 
@@ -8,7 +9,13 @@ export const maxDuration = 30;
 // (components/nest/advisor-card.tsx)가 그때그때 호출한다. 결과를 저장하지
 // 않는 이유는 lib/portfolio-advisor.ts 상단 주석 참고.
 export async function POST() {
-  const [settings, holdings] = await Promise.all([getPortfolioSettings(), getHoldingsWithLiveData()]);
+  const session = await auth();
+  if (!session?.user?.id) return NextResponse.json({ error: "로그인이 필요해요" }, { status: 401 });
+
+  const [settings, holdings] = await Promise.all([
+    getPortfolioSettings(session.user.id),
+    getHoldingsWithLiveData(session.user.id),
+  ]);
   const overview = computeOverview(settings, holdings);
 
   if (holdings.length === 0 && settings.totalSeed === 0) {
