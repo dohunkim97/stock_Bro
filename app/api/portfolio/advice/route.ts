@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getPortfolioSettings, getHoldingsWithLiveData, computeOverview } from "@/lib/portfolio";
 import { generatePortfolioAdvice } from "@/lib/portfolio-advisor";
+import { getAssessmentReport } from "@/lib/holding-assessment-store";
 
-export const maxDuration = 30;
+export const maxDuration = 60; // 종목 진단 계산(lib/holding-assessment-store.ts)을 먼저 기다린다
 
 // 요청형(request-time) LLM 호출 — 사용자가 둥지 페이지를 열 때 클라이언트
 // (components/nest/advisor-card.tsx)가 그때그때 호출한다. 결과를 저장하지
@@ -23,7 +24,10 @@ export async function POST() {
   }
 
   try {
-    const advice = await generatePortfolioAdvice(overview, holdings);
+    // 진단 카드가 같은 계산을 동시에 부르지만 getAssessmentReport가 겹치는 요청을 합쳐준다.
+    // 진단이 실패해도 자산 배분 설명은 할 수 있게 null로 넘긴다.
+    const report = await getAssessmentReport(session.user.id).catch(() => null);
+    const advice = await generatePortfolioAdvice(overview, report);
     if (!advice) return NextResponse.json({ error: "지금은 분석을 가져오지 못했어요. 잠깐 뒤 다시 시도해줘." }, { status: 502 });
     return NextResponse.json(advice);
   } catch {

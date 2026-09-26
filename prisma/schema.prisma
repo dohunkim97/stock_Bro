@@ -515,4 +515,32 @@ model User {
   liabilities       Liability[]
   financialGoals    FinancialGoal[]
   financialSnapshots FinancialSnapshot[]
+  portfolioAssessments PortfolioAssessment[]
+}
+
+// 둥지 "AI 골구 종목 진단"(lib/holding-assessment.ts)의 하루 한 건 판정 기록 —
+// 종목 하나당 하루 한 행(같은 날 다시 계산하면 덮어씀). 나중에 "지난달 골구가 뭐라고
+// 했고 실제로 어땠나"를 보여주려면 판단과 그 근거(신호별 점수)를 그때그때 남겨둬야
+// 해서 지금부터 쌓는다 — 시간이 지나야만 생기는 데이터라 코드로 앞당길 수 없다.
+// signals는 JSON Signal[](신호별 점수/근거), 상태가 바뀐 이유는 인접한 두 날짜의
+// signals를 비교해서 화면에서 계산한다.
+model PortfolioAssessment {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code              String
+  name              String
+  date              String // YYYY-MM-DD (KST)
+  state             String // 유지 | 관찰 | 축소검토 | 정밀점검
+  totalScore        Int
+  signals           String // JSON Signal[]
+  avgBuyPrice       Float
+  currentPrice      Float
+  changePct         Float?
+  weightPct         Float?
+  recoveryNeededPct Float?
+  createdAt         DateTime @default(now())
+
+  @@unique([userId, code, date])
+  @@index([userId, date])
 }
