@@ -34,18 +34,45 @@ export function recoveryNeededPct(changePct: number | null): number | null {
   return (100 / (100 + changePct) - 1) * 100;
 }
 
-export type HoldingRow = { name: string; code: string; buyPrice: number; quantity: number };
-export type AggregatedHolding = { name: string; code: string; avgBuyPrice: number; quantity: number };
+export type HoldingRow = { name: string; code: string; buyPrice: number; quantity: number; buyDate?: string | null };
+export type AggregatedHolding = {
+  name: string;
+  code: string;
+  avgBuyPrice: number;
+  quantity: number;
+  firstBuyDate: string | null; // 여러 번 나눠 샀으면 가장 이른 매수일. 매수일을 안 넣은 건은 무시
+};
+
+// 두 YYYY-MM-DD 사이의 일수(to - from). 날짜 형식이 아니면 null.
+export function daysBetween(from: string, to: string): number | null {
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  if (Number.isNaN(a) || Number.isNaN(b)) return null;
+  return Math.round((b - a) / 86_400_000);
+}
+
+// 보유 일수 → "12일", "3개월", "1년 2개월". 30일 단위 근사가 아니라 달력 기준에 가깝게
+// 개월은 30.4일로 나눈다(정밀한 만기 계산이 아니라 "얼마나 들고 있었나" 감을 주는 용도).
+export function holdingPeriodLabel(days: number | null): string {
+  if (days === null || days < 0) return "-";
+  if (days < 30) return `${days}일`;
+  const months = Math.floor(days / 30.4);
+  if (months < 12) return `${months}개월`;
+  const years = Math.floor(months / 12);
+  const rest = months % 12;
+  return rest > 0 ? `${years}년 ${rest}개월` : `${years}년`;
+}
 
 // 같은 종목을 여러 번 나눠 샀으면 평균단가(수량 가중)로 합쳐서 판단한다 —
 // 저장은 매수 건별로 따로 두지만(손절가/목표가가 매수 시점 맥락에 의미가
 // 있어서), 진단은 "이 종목 전체를 계속 들고 갈 근거가 있나"라 종목 단위.
 export function aggregateHoldings(rows: HoldingRow[]): AggregatedHolding[] {
-  const byCode = new Map<string, { name: string; cost: number; quantity: number }>();
+  const byCode = new Map<string, { name: string; cost: number; quantity: number; firstBuyDate: string | null }>();
   for (const r of rows) {
-    const cur = byCode.get(r.code) ?? { name: r.name, cost: 0, quantity: 0 };
+    const cur = byCode.get(r.code) ?? { name: r.name, cost: 0, quantity: 0, firstBuyDate: null };
     cur.cost += r.buyPrice * r.quantity;
     cur.quantity += r.quantity;
+    if (r.buyDate && (!cur.firstBuyDate || r.buyDate < cur.firstBuyDate)) cur.firstBuyDate = r.buyDate;
     byCode.set(r.code, cur);
   }
   return [...byCode.entries()].map(([code, v]) => ({
@@ -53,6 +80,7 @@ export function aggregateHoldings(rows: HoldingRow[]): AggregatedHolding[] {
     code,
     avgBuyPrice: v.quantity > 0 ? v.cost / v.quantity : 0,
     quantity: v.quantity,
+    firstBuyDate: v.firstBuyDate,
   }));
 }
 
@@ -165,6 +193,8 @@ export type AssessmentInput = {
   flows: FlowRow[];
   financials: FinancialYear[];
   portfolioValuation: number; // 전체 포트폴리오 평가액(현금·채권 포함) — 비중 계산 기준
+  holdingDays?: number | null; // 첫 매수일부터 오늘까지 — 판정에는 쓰지 않고 보여주기만 한다
+  firstBuyDate?: string | null;
 };
 
 export type HoldingAssessment = {
@@ -181,6 +211,8 @@ export type HoldingAssessment = {
   lossAmount: number; // 평가손실 금액(손실일 때만 양수)
   recoveryNeededPct: number | null;
   weightPct: number | null;
+  firstBuyDate: string | null;
+  holdingDays: number | null;
   tech: TechMetrics;
   stateNote: string; // 왜 이 상태인지 한 줄
 };
@@ -246,6 +278,8 @@ export function assessHolding(input: AssessmentInput): HoldingAssessment {
     lossAmount: Math.max(0, (input.avgBuyPrice - input.currentPrice) * input.quantity),
     recoveryNeededPct: recoveryNeededPct(changePct),
     weightPct: input.portfolioValuation > 0 ? (valuation / input.portfolioValuation) * 100 : null,
+    firstBuyDate: input.firstBuyDate ?? null,
+    holdingDays: input.holdingDays ?? null,
     tech,
     stateNote,
   };

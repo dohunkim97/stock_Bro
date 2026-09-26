@@ -10,7 +10,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { marketDataBlock } from "@/lib/bro-context";
 import type { PortfolioOverview } from "@/lib/portfolio";
 import type { AssessmentReport } from "@/lib/holding-assessment-store";
-import { STATE_ICON } from "@/lib/holding-assessment";
+import { STATE_ICON, holdingPeriodLabel } from "@/lib/holding-assessment";
 import { formatChg, formatWon } from "@/lib/format";
 
 // 판정·숫자는 lib/holding-assessment.ts가 코드로 계산한 확정값이고, 이 LLM 호출은
@@ -49,6 +49,7 @@ function assessmentBlock(report: AssessmentReport | null): string {
     if (a.changePct !== null) parts.push(`매수가 대비 ${formatChg(a.changePct)}`);
     if (a.recoveryNeededPct !== null) parts.push(`원금 회복 필요 +${a.recoveryNeededPct.toFixed(1)}%`);
     if (a.weightPct !== null) parts.push(`비중 ${a.weightPct.toFixed(1)}%`);
+    if (a.holdingDays !== null) parts.push(`보유 ${holdingPeriodLabel(a.holdingDays)}`);
     lines.push(`- ${parts.join(" · ")}`);
     lines.push(`  신호: ${a.signals.map((x) => `${x.label}(${x.note})`).join(" / ")}`);
     const change = report.history[a.code]?.lastChange;

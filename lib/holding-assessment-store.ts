@@ -13,6 +13,7 @@ import { todayISO } from "@/lib/dates";
 import {
   aggregateHoldings,
   assessHolding,
+  daysBetween,
   portfolioFlags,
   sortByPriority,
   type AssessmentState,
@@ -129,6 +130,8 @@ async function build(userId: string): Promise<AssessmentReport> {
         flows: inp.flows,
         financials: inp.financials,
         portfolioValuation: totalValuation,
+        firstBuyDate: h.firstBuyDate,
+        holdingDays: h.firstBuyDate ? daysBetween(h.firstBuyDate, date) : null,
       })
     )
   );

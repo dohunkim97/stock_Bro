@@ -9,6 +9,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { estimateMonthsToGoal, monthsFromTodayLabel } from "@/lib/finance-goal-math";
 import { formatWon } from "@/lib/format";
+import { MoneyInput } from "@/components/ui/money-input";
 
 export type GoalRow = {
   id: string;
@@ -163,21 +164,9 @@ function AddGoalForm({ onAdded }: { onAdded: () => void }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <input placeholder="목표 이름 (예: 첫 1억)" value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} />
-      <input
-        placeholder="목표 금액(원)"
-        type="number"
-        value={targetAmount}
-        onChange={(e) => setTargetAmount(e.target.value)}
-        style={inputStyle}
-      />
+      <MoneyInput placeholder="목표 금액(원)" value={targetAmount} onValueChange={setTargetAmount} style={inputStyle} />
       <input placeholder="목표일" type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} style={inputStyle} />
-      <input
-        placeholder="현재 월 투자금(원)"
-        type="number"
-        value={monthlyContribution}
-        onChange={(e) => setMonthlyContribution(e.target.value)}
-        style={inputStyle}
-      />
+      <MoneyInput placeholder="현재 월 투자금(원)" value={monthlyContribution} onValueChange={setMonthlyContribution} style={inputStyle} />
       <div style={{ display: "flex", gap: 8 }}>
         <button
           onClick={submit}

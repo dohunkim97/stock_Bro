@@ -9,6 +9,7 @@ import {
   getFinancialGoals,
   getIncomeRecords,
   getExpenseRecords,
+  getUpcomingInstallments,
   getLiabilities,
 } from "@/lib/finance-engine";
 import { SummaryBar } from "@/components/nest/summary-bar";
@@ -36,13 +37,14 @@ export default async function NestPage() {
   if (!session?.user?.id) return <NestLoginGate />;
 
   const userId = session.user.id;
-  const [settings, holdings, stocks, goals, income, expense, liabilities] = await Promise.all([
+  const [settings, holdings, stocks, goals, income, expense, upcoming, liabilities] = await Promise.all([
     getPortfolioSettings(userId),
     getHoldingsWithLiveData(userId),
     prisma.stockMaster.findMany({ orderBy: { name: "asc" }, select: { code: true, name: true, market: true } }),
     getFinancialGoals(userId),
     getIncomeRecords(userId),
     getExpenseRecords(userId),
+    getUpcomingInstallments(userId),
     getLiabilities(userId),
   ]);
 
@@ -92,7 +94,7 @@ export default async function NestPage() {
         <NetWorthPanel current={netWorthNow} history={netWorthHistory} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "7fr 5fr", gap: 20, alignItems: "start", marginTop: 20 }}>
-        <CashFlowPanel income={income} expense={expense} liabilities={liabilities} />
+        <CashFlowPanel income={income} expense={expense} upcoming={upcoming} liabilities={liabilities} />
         <GoalsPanel goals={goals} netWorth={netWorthNow.netWorth} />
       </div>
     </main>
