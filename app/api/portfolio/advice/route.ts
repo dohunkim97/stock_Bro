@@ -7,7 +7,7 @@ import { getAssessmentReport } from "@/lib/holding-assessment-store";
 export const maxDuration = 60; // 종목 진단 계산(lib/holding-assessment-store.ts)을 먼저 기다린다
 
 // 요청형(request-time) LLM 호출 — 사용자가 둥지 페이지를 열 때 클라이언트
-// (components/nest/advisor-card.tsx)가 그때그때 호출한다. 결과를 저장하지
+// (components/nest/assessment-panel.tsx)가 그때그때 호출한다. 결과를 저장하지
 // 않는 이유는 lib/portfolio-advisor.ts 상단 주석 참고.
 export async function POST() {
   const session = await auth();

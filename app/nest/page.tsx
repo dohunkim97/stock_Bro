@@ -15,7 +15,6 @@ import { SummaryBar } from "@/components/nest/summary-bar";
 import { SettingsEditor } from "@/components/nest/settings-editor";
 import { AllocationChart } from "@/components/nest/allocation-chart";
 import { HoldingsTable } from "@/components/nest/holdings-table";
-import { AdvisorCard } from "@/components/nest/advisor-card";
 import { AssessmentPanel } from "@/components/nest/assessment-panel";
 import { FeedPanel } from "@/components/nest/feed-panel";
 import { NestLoginGate } from "@/components/nest/login-gate";
@@ -25,9 +24,9 @@ import { CashFlowPanel } from "@/components/nest/cashflow-panel";
 
 export const dynamic = "force-dynamic";
 
-// 둥지(My Page) — 개인 포트폴리오. 레이아웃은 상단 요약 바 + 좌(7):자산
-// 배분·보유 종목 관리 / 우(5):AI 어드바이저·실시간 피드, 사용자가 정리해준
-// 구성을 그대로 따른다.
+// 둥지(My Page) — 개인 포트폴리오. 레이아웃은 상단 요약 바 + 좌(7):AI 골구 포트폴리오
+// 진단(요약·경고·종목 판정·제안을 한 카드로 통합)·보유 종목 관리 / 우(5):자산
+// 배분·실시간 피드.
 //
 // 구글 로그인 도입(2026-09-22) 후 이 페이지는 "각자의 자산"이라 로그인
 // 없이는 못 들어온다 — 다른 페이지(시황/예상종목 등)는 여전히 로그인 없이
@@ -77,18 +76,13 @@ export default async function NestPage() {
 
       <div style={{ display: "grid", gridTemplateColumns: "7fr 5fr", gap: 20, alignItems: "start" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <AllocationChart overview={overview} />
+          <AssessmentPanel />
           <HoldingsTable initialHoldings={holdings} stocks={stocks} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <AdvisorCard />
+          <AllocationChart overview={overview} />
           <FeedPanel items={feed} holdingNames={holdingNames} />
         </div>
-      </div>
-
-      {/* 규칙 기반 종목 진단 — 판정은 코드가 계산하고 AI 어드바이저는 설명만 한다 */}
-      <div style={{ marginTop: 20 }}>
-        <AssessmentPanel />
       </div>
 
       {/* 둥지 리뉴얼 Phase 1(재무관리) — 순자산 추이 + 목표 관리 +
