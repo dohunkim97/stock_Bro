@@ -8,16 +8,22 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { marketDataBlock } from "@/lib/bro-context";
-import type { PortfolioOverview, HoldingWithLiveData } from "@/lib/portfolio";
+import type { PortfolioOverview } from "@/lib/portfolio";
+import type { AssessmentReport } from "@/lib/holding-assessment-store";
+import { STATE_ICON } from "@/lib/holding-assessment";
 import { formatChg, formatWon } from "@/lib/format";
 
+// 판정·숫자는 lib/holding-assessment.ts가 코드로 계산한 확정값이고, 이 LLM 호출은
+// 그 결과를 쉬운 말로 풀어 설명만 한다(직접 계산/판정/수치 창작 금지).
 const SYSTEM_PROMPT = [
-  "너는 한국 주식시장에 밝은 개인 포트폴리오 어드바이저 '골구'야. 친한 형/친구처럼 편한 반말로, 짧고 명확하게 조언해.",
-  "아래 [내 포트폴리오 현황]에서 목표 비중 대비 실제 비중이 얼마나 벌어졌는지, [보유 종목 상태]에서 손절가 근접/이탈 종목이 있는지, [오늘의 시장 데이터]를 종합해서 리밸런싱 방향을 제안해.",
-  "확정적 매수/매도 지시가 아니라 데이터에 근거한 관찰과 제안이라는 톤을 유지해. 손절가 이탈/근접 종목이 있으면 반드시 짚어줘.",
+  "너는 한국 주식시장에 밝은 개인 포트폴리오 어드바이저 '골구'야. 친한 형/친구처럼 편한 반말로, 짧고 명확하게 말해.",
+  "[내 포트폴리오 현황]의 자산 비중, [종목별 규칙 판정]의 판정·신호·경고는 이미 코드가 계산한 확정 결과야. 너는 그 숫자와 판정을 바꾸거나 새로 계산하지 말고, 왜 그렇게 나왔는지 쉬운 말로 풀어서 설명만 해.",
+  "주어진 데이터에 없는 수치(목표가, 확률, 미래 주가 등)는 절대 지어내지 마. 근거가 없으면 '데이터로는 알 수 없다'고 해.",
+  "손실률만 보고 팔라고 하지 마. 원금 회복에 필요한 수익률이 크다는 점과 판정 신호(차트·수급·거래량·재무)를 같이 짚어줘. 확정적 매수/매도 지시가 아니라 관찰과 제안 톤을 유지해.",
+  "[오늘의 시장 데이터]는 배경 참고용이야. 판정을 뒤집는 근거로 쓰지 마.",
   "중요한 문장이나 핵심 수치는 **이렇게** 별 두 개로 감싸서 강조해.",
   "다른 설명 없이 아래 JSON 형식으로만 답해:",
-  '{"summary": "전체 진단 2-3문장", "suggestions": [{"action": "구체적 행동 한 문장(예: 채권 비중 5%p 확대 검토)", "reason": "근거 한 문장"}] (2-4개)}',
+  '{"summary": "전체 진단 2-3문장", "suggestions": [{"action": "구체적 행동 한 문장(예: 정밀점검 종목 ○○의 실적 공시부터 확인)", "reason": "근거 한 문장(규칙 판정 결과 인용)"}] (2-4개)}',
 ].join("\n");
 
 function overviewBlock(overview: PortfolioOverview): string {
@@ -35,14 +41,22 @@ function overviewBlock(overview: PortfolioOverview): string {
   return lines.join("\n");
 }
 
-function holdingsBlock(holdings: HoldingWithLiveData[]): string {
-  if (holdings.length === 0) return "";
-  const lines = ["[보유 종목 상태]"];
-  for (const h of holdings) {
-    const parts = [h.name];
-    if (h.changePct !== null) parts.push(`매수가 대비 ${formatChg(h.changePct)}`);
-    if (h.riskStatus) parts.push(`상태: ${h.riskStatus}`);
+function assessmentBlock(report: AssessmentReport | null): string {
+  if (!report || report.assessments.length === 0) return "";
+  const lines = ["[종목별 규칙 판정]"];
+  for (const a of report.assessments) {
+    const parts = [`${STATE_ICON[a.state]} ${a.name}: ${a.state}`];
+    if (a.changePct !== null) parts.push(`매수가 대비 ${formatChg(a.changePct)}`);
+    if (a.recoveryNeededPct !== null) parts.push(`원금 회복 필요 +${a.recoveryNeededPct.toFixed(1)}%`);
+    if (a.weightPct !== null) parts.push(`비중 ${a.weightPct.toFixed(1)}%`);
     lines.push(`- ${parts.join(" · ")}`);
+    lines.push(`  신호: ${a.signals.map((x) => `${x.label}(${x.note})`).join(" / ")}`);
+    const change = report.history[a.code]?.lastChange;
+    if (change) lines.push(`  이전 판정: ${change.fromDate} ${change.fromState}`);
+  }
+  if (report.flags.length > 0) {
+    lines.push("", "[포트폴리오 경고]");
+    for (const f of report.flags) lines.push(`- ${f.text}`);
   }
   return lines.join("\n");
 }
@@ -72,12 +86,12 @@ function parseAdvice(text: string): PortfolioAdvice | null {
 
 export async function generatePortfolioAdvice(
   overview: PortfolioOverview,
-  holdings: HoldingWithLiveData[]
+  report: AssessmentReport | null
 ): Promise<PortfolioAdvice | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null;
 
   const [marketBlock] = await Promise.all([marketDataBlock()]);
-  const userPrompt = [overviewBlock(overview), holdingsBlock(holdings), marketBlock].filter(Boolean).join("\n\n");
+  const userPrompt = [overviewBlock(overview), assessmentBlock(report), marketBlock].filter(Boolean).join("\n\n");
 
   const client = new Anthropic();
   const response = await client.messages.create({

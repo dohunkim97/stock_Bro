@@ -16,6 +16,7 @@ import { SettingsEditor } from "@/components/nest/settings-editor";
 import { AllocationChart } from "@/components/nest/allocation-chart";
 import { HoldingsTable } from "@/components/nest/holdings-table";
 import { AdvisorCard } from "@/components/nest/advisor-card";
+import { AssessmentPanel } from "@/components/nest/assessment-panel";
 import { FeedPanel } from "@/components/nest/feed-panel";
 import { NestLoginGate } from "@/components/nest/login-gate";
 import { NetWorthPanel } from "@/components/nest/net-worth-panel";
@@ -83,6 +84,11 @@ export default async function NestPage() {
           <AdvisorCard />
           <FeedPanel items={feed} holdingNames={holdingNames} />
         </div>
+      </div>
+
+      {/* 규칙 기반 종목 진단 — 판정은 코드가 계산하고 AI 어드바이저는 설명만 한다 */}
+      <div style={{ marginTop: 20 }}>
+        <AssessmentPanel />
       </div>
 
       {/* 둥지 리뉴얼 Phase 1(재무관리) — 순자산 추이 + 목표 관리 +
