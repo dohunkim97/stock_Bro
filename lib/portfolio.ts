@@ -68,8 +68,16 @@ export async function resolveHoldingCode(name: string): Promise<{ code: string; 
   return found ? { code: found.code, name: found.name } : null;
 }
 
-export function addHolding(userId: string, input: { name: string; code: string; buyPrice: number; quantity: number }) {
+export function addHolding(
+  userId: string,
+  input: { name: string; code: string; buyPrice: number; quantity: number; buyDate?: string | null }
+) {
   return prisma.portfolioHolding.create({ data: { ...input, userId } });
+}
+
+// 매수일 수정(보유 기간 계산용) — userId까지 걸어 내 종목만 바뀌게 한다. null이면 지운다.
+export async function updateHoldingBuyDate(userId: string, id: string, buyDate: string | null) {
+  return prisma.portfolioHolding.updateMany({ where: { id, userId }, data: { buyDate } });
 }
 
 // deleteMany + where userId — 그냥 delete({where:{id}})를 쓰면 다른
@@ -110,6 +118,7 @@ export type HoldingWithLiveData = {
   code: string;
   buyPrice: number;
   quantity: number;
+  buyDate: string | null;
   currentPrice: number | null;
   valuation: number | null; // currentPrice * quantity
   changePct: number | null; // vs buyPrice
@@ -142,6 +151,7 @@ export async function getHoldingsWithLiveData(userId: string): Promise<HoldingWi
         code: h.code,
         buyPrice: h.buyPrice,
         quantity: h.quantity,
+        buyDate: h.buyDate,
         currentPrice: null,
         valuation: null,
         changePct: null,
@@ -168,6 +178,7 @@ export async function getHoldingsWithLiveData(userId: string): Promise<HoldingWi
       code: h.code,
       buyPrice: h.buyPrice,
       quantity: h.quantity,
+      buyDate: h.buyDate,
       currentPrice,
       valuation: currentPrice * h.quantity,
       changePct,

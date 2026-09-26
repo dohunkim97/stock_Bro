@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { HoldingWithLiveData, RiskStatus } from "@/lib/portfolio";
 import { chgColorVar, formatChg } from "@/lib/format";
+import { MoneyInput } from "@/components/ui/money-input";
 
 type SearchableStock = { code: string; name: string; market: string };
 
@@ -48,6 +49,7 @@ function AddHoldingForm({ stocks, onAdded }: { stocks: SearchableStock[]; onAdde
   const [open, setOpen] = useState(false);
   const [buyPrice, setBuyPrice] = useState("");
   const [quantity, setQuantity] = useState("");
+  const [buyDate, setBuyDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -68,7 +70,7 @@ function AddHoldingForm({ stocks, onAdded }: { stocks: SearchableStock[]; onAdde
       const res = await fetch("/api/portfolio/holdings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, code: selected?.code, buyPrice: price, quantity: qty }),
+        body: JSON.stringify({ name, code: selected?.code, buyPrice: price, quantity: qty, buyDate: buyDate || null }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -89,7 +91,7 @@ function AddHoldingForm({ stocks, onAdded }: { stocks: SearchableStock[]; onAdde
 
   return (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
         <div style={{ position: "relative", width: 180 }}>
           <input
             value={selected ? selected.name : query}
@@ -151,19 +153,27 @@ function AddHoldingForm({ stocks, onAdded }: { stocks: SearchableStock[]; onAdde
             </>
           )}
         </div>
-        <input
+        <MoneyInput
           value={buyPrice}
-          onChange={(e) => setBuyPrice(e.target.value)}
+          onValueChange={setBuyPrice}
           placeholder="매수가"
-          inputMode="numeric"
-          style={{ ...inputStyle, width: 90, fontFamily: "var(--mono)" }}
+          style={{ ...inputStyle, fontFamily: "var(--mono)" }}
+          wrapperStyle={{ width: 120 }}
+        />
+        <MoneyInput
+          value={quantity}
+          onValueChange={setQuantity}
+          placeholder="수량"
+          korean={false}
+          style={{ ...inputStyle, fontFamily: "var(--mono)" }}
+          wrapperStyle={{ width: 80 }}
         />
         <input
-          value={quantity}
-          onChange={(e) => setQuantity(e.target.value)}
-          placeholder="수량"
-          inputMode="numeric"
-          style={{ ...inputStyle, width: 70, fontFamily: "var(--mono)" }}
+          type="date"
+          value={buyDate}
+          onChange={(e) => setBuyDate(e.target.value)}
+          title="매수일"
+          style={{ ...inputStyle, width: 132, fontFamily: "var(--mono)" }}
         />
         <button
           onClick={submit}
@@ -186,6 +196,47 @@ function AddHoldingForm({ stocks, onAdded }: { stocks: SearchableStock[]; onAdde
       </div>
       {error && <div style={{ fontSize: 11.5, color: "var(--up)", marginTop: 6 }}>{error}</div>}
     </div>
+  );
+}
+
+// 매수일 칸 — 예전에 등록해 비어 있는 종목도 여기서 바로 채운다(바꾸면 저장). 값이 바뀔 때만 PATCH.
+function BuyDateCell({ id, value }: { id: string; value: string | null }) {
+  const router = useRouter();
+  const [date, setDate] = useState(value ?? "");
+  const [saving, setSaving] = useState(false);
+
+  async function save(next: string) {
+    setDate(next);
+    if (next === (value ?? "")) return;
+    setSaving(true);
+    try {
+      await fetch(`/api/portfolio/holdings/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ buyDate: next || null }),
+      });
+      router.refresh();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <input
+      type="date"
+      value={date}
+      onChange={(e) => save(e.target.value)}
+      disabled={saving}
+      title={value ? "매수일" : "매수일을 넣으면 진단에 보유 기간이 나와요"}
+      style={{
+        ...inputStyle,
+        height: 28,
+        width: 128,
+        fontFamily: "var(--mono)",
+        fontSize: 11.5,
+        borderColor: value ? "var(--border)" : "var(--accent)",
+      }}
+    />
   );
 }
 
@@ -218,7 +269,7 @@ export function HoldingsTable({ initialHoldings, stocks }: { initialHoldings: Ho
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                {["종목명", "매수가", "현재가", "등락률", "평가금액", "자동 손절가", "AI 목표가", "상태", ""].map((h) => (
+                {["종목명", "매수일", "매수가", "현재가", "등락률", "평가금액", "자동 손절가", "AI 목표가", "상태", ""].map((h) => (
                   <th key={h} style={{ textAlign: "left", padding: "8px 10px", color: "var(--faint)", fontWeight: 600, fontSize: 11 }}>
                     {h}
                   </th>
@@ -232,6 +283,9 @@ export function HoldingsTable({ initialHoldings, stocks }: { initialHoldings: Ho
                     <Link href={`/stock?code=${h.code}`} style={{ fontWeight: 700, color: "var(--text)" }}>
                       {h.name}
                     </Link>
+                  </td>
+                  <td style={{ padding: "6px 10px" }}>
+                    <BuyDateCell id={h.id} value={h.buyDate} />
                   </td>
                   <td style={{ padding: "10px", fontFamily: "var(--mono)" }}>{Math.round(h.buyPrice).toLocaleString()}</td>
                   <td style={{ padding: "10px", fontFamily: "var(--mono)" }}>

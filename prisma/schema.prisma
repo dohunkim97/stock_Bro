@@ -305,6 +305,7 @@ model PortfolioHolding {
   code      String
   buyPrice  Float
   quantity  Float
+  buyDate   String? // YYYY-MM-DD — 보유 기간 계산용. 없으면(예전에 등록한 종목) 화면에서 직접 입력
   createdAt DateTime @default(now())
 
   @@index([userId])
@@ -339,9 +340,15 @@ model ExpenseRecord {
   amount    Float
   recurring Boolean  @default(false)
   memo      String?
+  // 할부 — 할부는 회차마다 한 행씩 만들어(date=회차별 결제일, amount=그 회차 납부액)
+  // 월별 지출 합계가 그대로 맞게 한다. 같은 할부의 행은 groupId로 묶는다.
+  installmentGroupId String?
+  installmentIndex   Int? // 1부터
+  installmentMonths  Int? // 총 개월 수
   createdAt DateTime @default(now())
 
   @@index([userId, date])
+  @@index([installmentGroupId])
 }
 
 // 부채 한 건(대출 등) — 순자산 계산(총자산-총부채)과, 나중에 "고금리

@@ -31,8 +31,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `"${name}" 종목을 찾지 못했어요` }, { status: 400 });
   }
 
+  const buyDate = typeof body?.buyDate === "string" && /^d{4}-d{2}-d{2}$/.test(body.buyDate) ? body.buyDate : null;
+
   try {
-    const holding = await addHolding(session.user.id, { name, code, buyPrice, quantity });
+    const holding = await addHolding(session.user.id, { name, code, buyPrice, quantity, buyDate });
     return NextResponse.json(holding);
   } catch {
     return NextResponse.json({ error: "보유 종목을 추가하지 못했어요" }, { status: 400 });

@@ -9,6 +9,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { todayISO } from "@/lib/dates";
+import { calcInstallment, addMonthsISO } from "@/lib/installment";
 import { getPortfolioSettings, getHoldingsWithLiveData, type PortfolioSettingsData, type HoldingWithLiveData } from "@/lib/portfolio";
 
 // 카테고리 목록은 lib/finance-constants.ts(prisma 없음)에 — 클라이언트
@@ -41,10 +42,20 @@ export async function removeIncomeRecord(userId: string, id: string) {
   return prisma.incomeRecord.deleteMany({ where: { id, userId } }).catch(() => null);
 }
 
+// 오늘까지 실제로 나간 지출만 — 할부는 앞으로 낼 회차도 행으로 미리 만들어 두므로
+// (아래 addInstallmentExpense) 미래 날짜 행이 "최근 지출"에 섞이지 않게 상한을 건다.
 export function getExpenseRecords(userId: string, sinceDays = 90) {
   return prisma.expenseRecord.findMany({
-    where: { userId, date: { gte: daysAgoISO(sinceDays) } },
+    where: { userId, date: { gte: daysAgoISO(sinceDays), lte: todayISO() } },
     orderBy: { date: "desc" },
+  });
+}
+
+// 아직 안 낸 할부 회차(내일 이후) — 화면의 "예정된 할부"용
+export function getUpcomingInstallments(userId: string) {
+  return prisma.expenseRecord.findMany({
+    where: { userId, installmentGroupId: { not: null }, date: { gt: todayISO() } },
+    orderBy: { date: "asc" },
   });
 }
 
@@ -52,7 +63,36 @@ export function addExpenseRecord(userId: string, input: CashFlowRecordInput) {
   return prisma.expenseRecord.create({ data: { ...input, userId } });
 }
 
+// 할부 등록 — 총액·개월수·(연)이율만 받아 회차별 금액과 결제일을 여기서 계산해
+// 회차마다 한 행씩 만든다. 1회차 날짜가 startDate이고 이후 매월 같은 날.
+export async function addInstallmentExpense(
+  userId: string,
+  input: { startDate: string; category: string; totalAmount: number; months: number; annualRatePct?: number; memo?: string }
+) {
+  const plan = calcInstallment(input.totalAmount, input.months, input.annualRatePct ?? 0);
+  if (!plan) return null;
+  const groupId = crypto.randomUUID();
+  await prisma.expenseRecord.createMany({
+    data: plan.payments.map((amount, i) => ({
+      userId,
+      date: addMonthsISO(input.startDate, i),
+      category: input.category,
+      amount,
+      memo: input.memo ?? null,
+      installmentGroupId: groupId,
+      installmentIndex: i + 1,
+      installmentMonths: plan.months,
+    })),
+  });
+  return { groupId, plan };
+}
+
+// 할부 행을 지우면 그 할부의 모든 회차를 같이 지운다(한 회차만 남기면 총액이 안 맞아서).
 export async function removeExpenseRecord(userId: string, id: string) {
+  const row = await prisma.expenseRecord.findFirst({ where: { id, userId }, select: { installmentGroupId: true } }).catch(() => null);
+  if (row?.installmentGroupId) {
+    return prisma.expenseRecord.deleteMany({ where: { userId, installmentGroupId: row.installmentGroupId } }).catch(() => null);
+  }
   return prisma.expenseRecord.deleteMany({ where: { id, userId } }).catch(() => null);
 }
 
@@ -66,7 +106,7 @@ async function sumRecentIncome(userId: string, days: number): Promise<number> {
 
 async function sumRecentExpense(userId: string, days: number): Promise<number> {
   const rows = await prisma.expenseRecord.findMany({
-    where: { userId, date: { gte: daysAgoISO(days) } },
+    where: { userId, date: { gte: daysAgoISO(days), lte: todayISO() } },
     select: { amount: true },
   });
   return rows.reduce((sum, r) => sum + r.amount, 0);

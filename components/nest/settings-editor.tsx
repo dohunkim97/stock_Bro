@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/modal";
+import { MoneyInput } from "@/components/ui/money-input";
 import type { PortfolioSettingsData } from "@/lib/portfolio";
 
 const fieldStyle: React.CSSProperties = {
@@ -93,15 +94,15 @@ export function SettingsEditor({ settings }: { settings: PortfolioSettingsData }
             <div style={{ fontSize: 11.5, color: "var(--faint)", marginBottom: 8, fontWeight: 700 }}>자산 총액</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {FIELDS.map((f) => (
-                <label key={f.key} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 }}>
-                  <span style={{ width: 130, flexShrink: 0, color: "var(--dim)" }}>{f.label}</span>
-                  <input
-                    value={form[f.key]}
-                    onChange={(e) => setForm({ ...form, [f.key]: Number(e.target.value) || 0 })}
-                    inputMode="numeric"
+                <label key={f.key} style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: 12.5 }}>
+                  <span style={{ width: 130, flexShrink: 0, color: "var(--dim)", lineHeight: "36px" }}>{f.label}</span>
+                  <MoneyInput
+                    value={form[f.key] ? String(form[f.key]) : ""}
+                    onValueChange={(d) => setForm({ ...form, [f.key]: Number(d) || 0 })}
                     style={fieldStyle}
+                    wrapperStyle={{ flex: 1 }}
                   />
-                  <span style={{ color: "var(--faint)", flexShrink: 0 }}>{f.suffix}</span>
+                  <span style={{ color: "var(--faint)", flexShrink: 0, lineHeight: "36px" }}>{f.suffix}</span>
                 </label>
               ))}
             </div>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { chgColorVar, formatChg } from "@/lib/format";
-import { STATE_ICON, type AssessmentState, type HoldingAssessment } from "@/lib/holding-assessment";
+import { STATE_ICON, holdingPeriodLabel, type AssessmentState, type HoldingAssessment } from "@/lib/holding-assessment";
 import type { AssessmentReport } from "@/lib/holding-assessment-store";
 import type { PortfolioAdvice } from "@/lib/portfolio-advisor";
 import { renderBold } from "@/components/ui/rich-text";
@@ -52,6 +52,7 @@ function HoldingDetail({ a, report }: { a: HoldingAssessment; report: Assessment
         <Metric label="현재가" value={`${fmt(a.currentPrice)}원`} />
         <Metric label="손익" value={a.changePct !== null ? formatChg(a.changePct) : "-"} color={a.changePct !== null ? chgColorVar(a.changePct) : undefined} />
         <Metric label="원금 회복 필요" value={a.recoveryNeededPct !== null ? `+${a.recoveryNeededPct.toFixed(1)}%` : "-"} />
+        <Metric label="보유 기간" value={a.holdingDays !== null ? `${holdingPeriodLabel(a.holdingDays)} (${a.firstBuyDate}~)` : "매수일 미입력"} />
         <Metric label="1개월" value={opt(t.ret1m)} />
         <Metric label="3개월" value={opt(t.ret3m)} />
         <Metric label="1년" value={opt(t.ret1y)} />
@@ -222,7 +223,7 @@ export function AssessmentPanel() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 72px 86px 56px 86px",
+              gridTemplateColumns: "1fr 64px 72px 86px 56px 86px",
               gap: 6,
               padding: "5px 12px",
               fontSize: 10.5,
@@ -232,6 +233,7 @@ export function AssessmentPanel() {
             }}
           >
             <span>종목</span>
+            <span style={{ textAlign: "right" }}>보유</span>
             <span style={{ textAlign: "right" }}>손익</span>
             <span style={{ textAlign: "right" }}>회복 필요</span>
             <span style={{ textAlign: "right" }}>비중</span>
@@ -242,9 +244,10 @@ export function AssessmentPanel() {
               <div
                 onClick={() => setOpen(open === a.code ? null : a.code)}
                 className="hover-row"
-                style={{ display: "grid", gridTemplateColumns: "1fr 72px 86px 56px 86px", gap: 6, padding: "9px 12px", fontSize: 12.5, alignItems: "center", cursor: "pointer" }}
+                style={{ display: "grid", gridTemplateColumns: "1fr 64px 72px 86px 56px 86px", gap: 6, padding: "9px 12px", fontSize: 12.5, alignItems: "center", cursor: "pointer" }}
               >
                 <span style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
+                <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 11.5, color: "var(--dim)" }}>{a.holdingDays !== null ? holdingPeriodLabel(a.holdingDays) : "-"}</span>
                 <span style={{ textAlign: "right", fontFamily: "var(--mono)", fontWeight: 600, color: a.changePct !== null ? chgColorVar(a.changePct) : "var(--faint)" }}>
                   {a.changePct !== null ? formatChg(a.changePct) : "-"}
                 </span>
