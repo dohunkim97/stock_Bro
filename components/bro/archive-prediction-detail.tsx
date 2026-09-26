@@ -6,7 +6,7 @@ import type { CandidateDetail } from "@/lib/candidate-detail";
 import type { SectorPrediction, CandidatePrediction } from "@/lib/prediction-scoring";
 import type { DailyChangePoint } from "@/lib/candidate-tracking";
 import type { TechnicalSignal } from "@/lib/technical-signals";
-import { blockStyle, blockHeaderStyle, badgeStyle, blockLabelStyle, DetailCard } from "./detail-card";
+import { blockStyle, blockHeaderStyle, badgeStyle, blockLabelStyle, DetailCard, type CardOutcome } from "./detail-card";
 
 type CandidateWithSeries = CandidatePrediction & { series: DailyChangePoint[] };
 type DetailWithSignals = CandidateDetail & { signals: TechnicalSignal[] };
@@ -30,6 +30,8 @@ export function ArchivePredictionDetail({
 }) {
   const [details, setDetails] = useState<DetailWithSignals[] | null>(null);
   const [failed, setFailed] = useState(false);
+  const [outcomes, setOutcomes] = useState<Record<string, CardOutcome>>({});
+  const [filtered, setFiltered] = useState<{ name: string; code?: string; reason: string }[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,7 +40,10 @@ export function ArchivePredictionDetail({
     fetch(`/api/bro/prediction-detail?forDate=${forDate}`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
       .then((data) => {
-        if (!cancelled) setDetails(Array.isArray(data.candidates) ? data.candidates : []);
+        if (cancelled) return;
+        setDetails(Array.isArray(data.candidates) ? data.candidates : []);
+        setOutcomes(data.outcomes ?? {});
+        setFiltered(Array.isArray(data.filtered) ? data.filtered : []);
       })
       .catch(() => {
         if (!cancelled) setFailed(true);
@@ -86,7 +91,7 @@ export function ArchivePredictionDetail({
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {details
               ? details.map((d) => (
-                  <DetailCard key={d.name} d={d} series={seriesByName.get(d.name)} signals={d.signals} />
+                  <DetailCard key={d.name} d={d} series={seriesByName.get(d.name)} signals={d.signals} outcome={d.code ? outcomes[d.code] : undefined} />
                 ))
               : failed
                 ? <div style={{ fontSize: 12, color: "var(--faint)" }}>종목 상세 정보를 불러오지 못했어요.</div>
@@ -96,6 +101,16 @@ export function ArchivePredictionDetail({
                     </div>
                   ))}
           </div>
+          {filtered.length > 0 && (
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border)", fontSize: 11.5, lineHeight: 1.7, color: "var(--dim)" }}>
+              <div style={{ fontWeight: 800, color: "var(--text)", marginBottom: 4 }}>🚫 이날 걸러진 후보 ({filtered.length})</div>
+              {filtered.map((f) => (
+                <div key={f.name}>
+                  <b style={{ color: "var(--text)" }}>{f.name}</b> — {f.reason}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

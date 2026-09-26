@@ -187,7 +187,44 @@ model WeeklyPrediction {
   // 나타났다 사라졌다 바뀌는 걸 막기 위함. null이면(마이그레이션 이전 옛
   // 레코드) 호출부가 그때만 예전처럼 즉석에서 계산해 보여준다.
   details    String?
+  // 추천 후보로 골랐지만 과열 필터(lib/prediction-features.ts noTradeReason)에
+  // 걸려 발행에서 뺀 종목과 그 이유 — JSON [{name, code?, reason}]. 억지로
+  // 채우지 않고 "왜 추천 안 했는지"도 기록으로 남겨서 화면에 투명하게
+  // 보여주기 위함. null이면 그날 제외된 종목이 없었거나 옛 레코드.
+  filtered   String?
   createdAt  DateTime @default(now())
+}
+
+// 예상종목 한 건의 5거래일 "결과 확정본"(Outcome DB) — 채점을 화면을 열 때마다
+// KIS 차트를 다시 받아 계산하는 대신 창이 끝나면 한 번만 계산해서 굳힌다
+// (lib/prediction-outcome-store.ts). 목표/손절 중 무엇이 먼저였는지, 최종
+// 수익률과 실현수익률은 왜 다른지가 한 행에 다 남는다. features는 추천 시점
+// (매수일 종가까지)의 캔들로만 계산한 수치라 사후정보가 섞이지 않는다.
+// 조건별 통계(거래량 폭증+수급 같은 조합의 목표도달률)는 이 테이블을 그대로
+// 집계하면 된다.
+model PredictionOutcome {
+  id             String   @id @default(cuid())
+  forDate        String
+  code           String
+  name           String
+  entryPrice     Float
+  targetPrice    Float?
+  stopPrice      Float?
+  outcome        String // TARGET | STOP | TIMEOUT | AMBIGUOUS | UNRATED(목표/손절이 저장 안 된 옛 레코드)
+  exitDay        Int?
+  exitPrice      Float?
+  realizedPct    Float? // 청산가 기준 실현 수익률 — 가상 포트폴리오 집계용
+  closePct       Float? // 5일차 종가 기준 수익률
+  targetTouchDay Int?
+  stopTouchDay   Int?
+  mfePct         Float?
+  maePct         Float?
+  features       String // JSON EntryFeatures(추천 시점 수치)
+  verdicts       String? // JSON 추천 당시 시황/거래량/차트/재료/수급/재무 O/X(WeeklyPrediction.details에서 복사)
+  resolvedAt     DateTime @default(now())
+
+  @@unique([forDate, code])
+  @@index([forDate])
 }
 
 // A "지금 자금 흐름을 보면 어디에 선제적으로 관심 가질 만한지" personal take,

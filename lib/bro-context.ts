@@ -6,12 +6,8 @@ import { formatChg } from "@/lib/format";
 import { currentWeekKey, prevWeekKey, weekInfoFromKey } from "@/lib/week";
 import { formatDateLabel } from "@/lib/dates";
 import { getRecentTelegramNews } from "@/lib/telegram-news";
-import {
-  getLatestPrediction,
-  getScoredPredictionHistory,
-  parsePredictionSectors,
-  parsePredictionCandidates,
-} from "@/lib/prediction-scoring";
+import { getLatestPrediction, parsePredictionSectors, parsePredictionCandidates } from "@/lib/prediction-scoring";
+import { loadOutcomeRows, outcomeOneLiner } from "@/lib/prediction-learning";
 import { prisma } from "@/lib/prisma";
 
 // Exported so lib/market-briefing.ts (the daily cron-generated AI summary)
@@ -170,7 +166,7 @@ export async function recentIssuesBlock(limit = 20): Promise<string> {
 // draw on instead of improvising from scratch each time, and the track
 // record keeps the answer honest about how reliable it's actually been.
 export async function predictionBlock(): Promise<string> {
-  const [latest, history] = await Promise.all([getLatestPrediction(), getScoredPredictionHistory(4)]);
+  const [latest, outcomeRows] = await Promise.all([getLatestPrediction(), loadOutcomeRows()]);
   if (!latest) return "";
 
   const sectors = parsePredictionSectors(latest.sectors);
@@ -184,14 +180,11 @@ export async function predictionBlock(): Promise<string> {
     lines.push("예측 종목: " + candidates.map((c) => `${c.name}(${c.reasoning})`).join(" / "));
   }
 
-  if (history.length) {
-    lines.push("", "[과거 예측 적중 이력]");
-    for (const h of history) {
-      const sectorPct = h.sectorHitRate !== null ? `${Math.round(h.sectorHitRate * 100)}%` : "-";
-      const candPct = h.candidateHitRate !== null ? `${Math.round(h.candidateHitRate * 100)}%` : "-";
-      lines.push(`${h.label}: 섹터 적중 ${sectorPct}, 종목 적중 ${candPct}`);
-    }
-  }
+  // 옛 "종목 적중률"(5일 종가>0 기준)은 목표/손절 결과와 어긋나 헷갈려서
+  // (+2.48%인데 손절 같은 표기) 결과 DB 기준 요약으로 대체 — 목표/손절 중
+  // 먼저 닿은 쪽, 실현수익, 판정 가능 건수를 코드가 집계한 값 그대로.
+  const track = outcomeOneLiner(outcomeRows);
+  if (track) lines.push("", "[과거 예측 성과 — 5거래일 결과 확정 기준]", track);
 
   return lines.join("\n");
 }

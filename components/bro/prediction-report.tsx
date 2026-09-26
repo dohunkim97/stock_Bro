@@ -66,12 +66,28 @@ export async function PredictionReport() {
     signals: signalsByName.get(d.name),
   }));
 
+  // 이번 예측에서 걸러진 후보(과열/무효 목표가 등)와 사유 — "왜 이건 안 넣었나"
+  let filtered: { name: string; reason: string }[] = [];
+  try {
+    filtered = latest.filtered ? JSON.parse(latest.filtered) : [];
+  } catch {}
+
   return (
     <section style={panelStyle}>
       <GolgooWorkspace
         initialCards={initialCards}
         headerTitle={`📝 Golgoo 예상 리포트 · ${formatDateLabel(latest.forDate)} (5거래일 추적)`}
       />
+      {filtered.length > 0 && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border)", fontSize: 11.5, lineHeight: 1.7, color: "var(--dim)" }}>
+          <div style={{ fontWeight: 800, color: "var(--text)", marginBottom: 4 }}>🚫 이번에 걸러진 후보 ({filtered.length})</div>
+          {filtered.map((f) => (
+            <div key={f.name}>
+              <b style={{ color: "var(--text)" }}>{f.name}</b> — {f.reason}
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

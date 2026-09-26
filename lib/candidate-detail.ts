@@ -15,6 +15,7 @@ import { fetchDartBusinessBundle } from "@/lib/dart";
 import { prisma } from "@/lib/prisma";
 import { formatWon } from "@/lib/format";
 import { sentimentVerdict } from "@/lib/sentiment";
+import { computeEntryFeatures, type EntryFeatures } from "@/lib/prediction-features";
 
 // 골구 종목예상 "종목 근거"는 항상 이 7항목 틀로 고정한다 — 시황/거래량/차트/
 // 재료/수급/재무/매수타이밍 순서로 번호를 매겨 누가 봐도 같은 순서로 훑을 수
@@ -43,6 +44,11 @@ export type CandidateDetail = {
     targetPct: number | null;
     stopLossPrice: number | null; // 손절가 = 매수기준가*0.96(고정 -4%)
   };
+  // 추천 시점(매수 기준일 종가까지의 캔들)에만 알 수 있던 수치 특성 + 과열
+  // 점수 — 생성 때 한 번 굳혀서 저장한다(lib/prediction-features.ts). 옛
+  // 레코드엔 없어서 optional. 카드의 과열 경고와, 나중에 결과와 짝지어
+  // 조건별 성과를 집계할 때(lib/prediction-outcome-store.ts) 쓴다.
+  features?: EntryFeatures | null;
   verdicts: {
     marketContext: boolean | null; // 1. 시황
     volume: boolean | null; // 2. 거래량
@@ -331,6 +337,14 @@ async function synthesizeNarratives(inputs: GroundedInput[]): Promise<Map<string
   return result;
 }
 
+// 매수 기준일(forDate 이후 첫 캔들)까지의 캔들만으로 추천 시점 수치를 계산 —
+// 이후 캔들이 있더라도(옛 레코드를 나중에 다시 계산하는 경우) 섞이지 않는다.
+function featuresAsOf(candles: ChartCandle[], forDate: string): EntryFeatures | null {
+  if (candles.length === 0) return null;
+  const idx = candles.findIndex((c) => c.date >= forDate);
+  return computeEntryFeatures(idx === -1 ? candles : candles.slice(0, idx + 1));
+}
+
 // forDate: 이 후보들이 발행된 예측의 기준일("오늘 종가에 매수했다고 가정"하는
 // 그 날짜) — 매수타이밍(목표가/손절가)의 기준 시세를 정확히 이 날짜 종가로
 // 고정하기 위해 반드시 필요하다(anchorPrice 주석 참고). 생성 당일 바로
@@ -416,6 +430,7 @@ export async function getCandidateDetails(
         targetPct: target !== null && currentPrice ? ((target - currentPrice) / currentPrice) * 100 : null,
         stopLossPrice: stopLoss,
       },
+      features: featuresAsOf(charts[withCode.indexOf(g.candidate)] ?? [], forDate),
       verdicts: {
         marketContext: llm?.marketContextPositive ?? null,
         volume: g.volumeNote.positive,

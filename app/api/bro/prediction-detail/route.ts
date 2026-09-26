@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { parsePredictionCandidates } from "@/lib/prediction-scoring";
 import { getCandidateDetails, parseStoredCandidateDetails } from "@/lib/candidate-detail";
 import { fetchKisChart } from "@/lib/kis-chart";
+import { loadOutcomeRows } from "@/lib/prediction-learning";
 import { computeTechnicalSignals, LONG_TERM_SIGNAL_CANDLES } from "@/lib/technical-signals";
 
 export const maxDuration = 60;
@@ -35,5 +36,19 @@ export async function GET(req: NextRequest) {
   ]);
 
   const merged = details.map((d, i) => ({ ...d, signals: computeTechnicalSignals(candlesList[i]) }));
-  return NextResponse.json({ candidates: merged });
+
+  // 5거래일 결과가 확정된 종목이면 카드에 결과 배지를 붙이고, 그날 추천에서
+  // 걸러진(과열 등) 종목과 사유도 같이 내려준다.
+  const outcomeRows = await loadOutcomeRows({ from: forDate, to: forDate });
+  const outcomes = Object.fromEntries(
+    outcomeRows.map((r) => [
+      r.code,
+      { outcome: r.outcome, exitDay: r.exitDay, realizedPct: r.realizedPct, closePct: r.closePct, mfePct: r.mfePct, maePct: r.maePct },
+    ])
+  );
+  let filtered: { name: string; code?: string; reason: string }[] = [];
+  try {
+    filtered = row.filtered ? JSON.parse(row.filtered) : [];
+  } catch {}
+  return NextResponse.json({ candidates: merged, outcomes, filtered });
 }

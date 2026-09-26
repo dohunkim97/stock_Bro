@@ -1,58 +1,40 @@
-// 기록보관소의 주간분석/월간분석 — 그 기간에 나온 모든 일간 예상종목의
-// 5거래일 추적이 전부 끝난 뒤(scorePrediction이 그 기간 모든 행에 대해
-// non-null을 반환해야) 딱 한 번 생성되는 리포트. 실제로 오른 종목은 왜
-// 올랐는지, 내린 종목은 왜 내렸는지를 관련 실제 뉴스에 근거해서 LLM이
-// 설명하고, 전체 적중률과 총평을 남긴다. week/month는 스키마·생성 로직이
-// 완전히 동일하고 기간 키 포맷만 다르므로 한 함수에 파라미터로 합쳤다.
+// 기록보관소의 주간분석/월간분석 — 그 기간 예상종목의 5거래일 추적이 전부
+// 끝난 뒤 딱 한 번 생성되는 리포트. 2026-09-25 개편(GPT 피드백 반영):
 //
-// "자체 학습": 여기서 시황/거래량/차트/재료/수급/재무 6개 항목의 O/X 판단
-// (lib/candidate-detail.ts의 verdicts, 생성 시점에 이미 저장돼 있음)이
-// 실제 수익률과 얼마나 맞아떨어졌는지 항목별로 집계하고(categoryStats),
-// 그 데이터를 근거로 LLM이 "다음에 참고할 점"(insights) 몇 개를 뽑는다 —
-// lib/weekly-prediction.ts가 다음 종목 선정 프롬프트에 이 insights를 그대로
-// 읽어 넣어서, 쌓인 성공/실패 데이터가 실제로 다음 예측에 반영되는 피드백
-// 루프를 만든다(latestWeeklyInsightsBlock).
+//  1) 숫자는 전부 PredictionOutcome(결과 DB)에서 코드가 집계한다 — 목표/손절
+//     "먼저 닿은 쪽", 실현수익 vs 5일 종가 수익률, 손익비, 가상 포트폴리오,
+//     조건별 성과(+표본 크기). LLM은 숫자를 만들지 않는다(lib/prediction-stats.ts).
+//  2) LLM 호출을 둘로 나눴다. (a) 종목별 사후 해설 — 5일 뒤의 실제 뉴스를
+//     써서 "왜 이렇게 끝났나"를 풀어주는 표시용 텍스트이고, (b) 총평/교훈 —
+//     결과 통계(추천 당시 수치 + 확정된 결과)만 보고 쓴다. 사후 뉴스가
+//     다음 종목 선정에 들어가는 교훈에 섞이지 않게(look-ahead 방지) 하는 게
+//     이 분리의 목적이다.
+//  3) 같은 종목이 여러 번 추천됐으면 하나로 묶어서(StockGroup) 보여준다.
+//
+// week/month는 스키마·생성 로직이 동일하고 기간 키 포맷만 다르다.
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/prisma";
-import { scorePrediction, type ScoredCandidate } from "@/lib/prediction-scoring";
-import { parseStoredCandidateDetails, type CandidateDetail } from "@/lib/candidate-detail";
 import { fetchNews } from "@/lib/naver-news";
 import { weekInfoFromDate, weekInfoFromKey } from "@/lib/week";
 import { todayISO } from "@/lib/dates";
-import { formatChg } from "@/lib/format";
+import { resolvePendingOutcomes } from "@/lib/prediction-outcome-store";
+import { loadOutcomeRows, learningBlockFromRows } from "@/lib/prediction-learning";
+import { OUTCOME_LABEL } from "@/lib/prediction-outcome";
+import {
+  summarize,
+  groupByStock,
+  verdictConditionStats,
+  featureConditionStats,
+  type SummaryStats,
+  type StockGroup,
+  type ConditionStat,
+  type VerdictStat,
+  type OutcomeRow,
+} from "@/lib/prediction-stats";
 
 export type PeriodType = "week" | "month";
 
-export type CandidateResult = {
-  name: string;
-  code?: string;
-  reasoning: string;
-  finalChangePct: number | null;
-  hit: boolean;
-  hitTarget: boolean; // 5거래일 안에 목표가 도달
-  hitStop: boolean; // 5거래일 안에 손절가 도달
-  explanation: string; // 왜 올랐는지/내렸는지 — 상위 변동 종목만 채워지고 나머지는 빈 문자열
-};
-
-type CategoryKey = "marketContext" | "volume" | "chart" | "material" | "supplyDemand" | "financial";
-
-const CATEGORY_LABEL: Record<CategoryKey, string> = {
-  marketContext: "시황",
-  volume: "거래량",
-  chart: "차트",
-  material: "재료",
-  supplyDemand: "수급",
-  financial: "재무",
-};
-
-export type CategoryStat = {
-  key: CategoryKey;
-  label: string;
-  positiveCount: number;
-  positiveAvgReturn: number | null;
-  negativeCount: number;
-  negativeAvgReturn: number | null;
-};
+export type StockExplanation = { code: string; name: string; text: string };
 
 export type PeriodAnalysisData = {
   periodType: PeriodType;
@@ -61,9 +43,12 @@ export type PeriodAnalysisData = {
   startDate: string;
   endDate: string;
   summary: string;
-  candidateHitRate: number | null;
-  results: CandidateResult[];
-  categoryStats: CategoryStat[];
+  candidateHitRate: number | null; // = 목표 도달률(0~1). 옛 이름 유지(기록보관소 meta용) — 정의는 "목표가 먼저 닿은 비율(판정 가능 건 기준)"
+  stats: SummaryStats;
+  stockGroups: StockGroup[];
+  verdictStats: VerdictStat[];
+  featureStats: ConditionStat[];
+  explanations: StockExplanation[];
   insights: string[];
 };
 
@@ -90,161 +75,160 @@ function periodRangeFor(type: PeriodType, key: string): { start: string; end: st
   return { start: `${key}-01`, end: `${key}-${String(daysInMonth(y, m)).padStart(2, "0")}` };
 }
 
-// LLM에 개별 근거를 요청하는 건 변동폭이 큰(=사용자가 실제로 궁금해할)
-// 종목으로 제한한다 — 월간분석은 후보가 최대 100개 가까이 쌓일 수 있어
-// 전부 다 물어보면 프롬프트가 지나치게 커진다. 나머지는 적중률 통계에는
-// 그대로 포함되지만 개별 설명 없이 결과 목록에만 나온다.
-const MAX_EXPLAINED = 12;
-
-// 시황/거래량/차트/재료/수급/재무 판단(O/X)이 실제 수익률과 얼마나
-// 맞아떨어졌는지 항목별로 집계 — O 평균과 X 평균이 뚜렷이 갈릴수록 그
-// 항목이 실제로 잘 맞았다는 뜻. 순수 실데이터 계산이라 LLM이 관여하지
-// 않는다(synthesizeNarrative가 이 결과를 문장으로 풀어쓰기만 함).
-function buildCategoryStats(
-  rows: { finalChangePct: number | null; verdicts: CandidateDetail["verdicts"] | null }[]
-): CategoryStat[] {
-  const keys = Object.keys(CATEGORY_LABEL) as CategoryKey[];
-  return keys.map((key) => {
-    const withVerdict = rows.filter(
-      (r): r is typeof r & { finalChangePct: number } => r.verdicts !== null && r.verdicts[key] !== null && r.finalChangePct !== null
-    );
-    const positive = withVerdict.filter((r) => r.verdicts![key] === true);
-    const negative = withVerdict.filter((r) => r.verdicts![key] === false);
-    const avg = (list: typeof withVerdict) =>
-      list.length > 0 ? list.reduce((s, r) => s + r.finalChangePct, 0) / list.length : null;
-    return {
-      key,
-      label: CATEGORY_LABEL[key],
-      positiveCount: positive.length,
-      positiveAvgReturn: avg(positive),
-      negativeCount: negative.length,
-      negativeAvgReturn: avg(negative),
-    };
-  });
+function daysAgoISO(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
 }
 
-function parseAnalysisResponse(
-  text: string
-): { summary: string; explanations: Map<string, string>; insights: string[] } | null {
+// 사후 해설은 이 개수의 종목(묶음)까지만 — 월간은 후보가 100개 가까이 쌓일 수
+// 있어 전부 물으면 프롬프트가 너무 커진다. 나머지는 통계에는 그대로 포함된다.
+const MAX_EXPLAINED = 12;
+
+function fmtPct(v: number | null, digits = 1): string {
+  return v === null ? "-" : `${v >= 0 ? "+" : ""}${v.toFixed(digits)}%`;
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) return null;
   try {
-    const parsed = JSON.parse(match[0]);
-    if (typeof parsed.summary !== "string" || !parsed.summary.trim()) return null;
-    const explanations = new Map<string, string>();
-    if (Array.isArray(parsed.explanations)) {
-      for (const e of parsed.explanations) {
-        if (e && typeof e.name === "string" && typeof e.explanation === "string") {
-          explanations.set(e.name, e.explanation);
-        }
-      }
-    }
-    const insights = Array.isArray(parsed.insights) ? parsed.insights.filter((x: unknown) => typeof x === "string") : [];
-    return { summary: parsed.summary, explanations, insights };
+    return JSON.parse(match[0]) as Record<string, unknown>;
   } catch {
     return null;
   }
 }
 
-async function explainMovers(
-  label: string,
-  candidates: ScoredCandidate[],
-  categoryStats: CategoryStat[]
-): Promise<{ summary: string; explanations: Map<string, string>; insights: string[] } | null> {
+async function callLlm(system: string, user: string, maxTokens: number): Promise<string | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null;
+  try {
+    const client = new Anthropic();
+    const response = await client.messages.create({
+      model: "claude-sonnet-5",
+      max_tokens: maxTokens,
+      output_config: { effort: "low" },
+      system,
+      messages: [{ role: "user", content: user }],
+    });
+    return response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+  } catch {
+    return null;
+  }
+}
 
-  const byMagnitude = [...candidates]
-    .sort((a, b) => Math.abs(b.finalChangePct ?? 0) - Math.abs(a.finalChangePct ?? 0))
-    .slice(0, MAX_EXPLAINED);
-  // 오르긴 했는데 목표가까지는 못 간 종목("왜 목표가 도달을 못 했는지"도
-  // 판단해달라는 요청) — 등락폭이 작아서 위 상위 12개에 안 뽑혔더라도
-  // 별도로 몇 개 더 챙긴다. 이미 뽑힌 종목과는 중복하지 않는다.
-  const missedTarget = candidates
-    .filter((c) => !byMagnitude.includes(c) && !c.hitTarget && (c.finalChangePct ?? -1) > 0)
-    .slice(0, 5);
-  const toExplain = [...byMagnitude, ...missedTarget];
+// (a) 종목별 사후 해설 — 표시 전용. 5일 뒤 시점의 실제 뉴스를 쓰므로 여기서
+// 나온 문장은 절대 다음 예측의 학습 입력으로 쓰지 않는다.
+async function explainStocks(
+  label: string,
+  groups: StockGroup[],
+  reasoningByKey: Map<string, string>
+): Promise<StockExplanation[]> {
+  const importance = (g: StockGroup) =>
+    Math.max(Math.abs(g.avgClosePct ?? 0), Math.abs(g.avgRealizedPct ?? 0)) + (g.predictions - 1) * 5;
+  const picked = [...groups].sort((a, b) => importance(b) - importance(a)).slice(0, MAX_EXPLAINED);
+  if (picked.length === 0) return [];
 
-  const newsByName = new Map(
-    await Promise.all(
-      toExplain.map(async (c) => [c.name, await fetchNews(c.name, 3)] as const)
-    )
-  );
+  const news = new Map(await Promise.all(picked.map(async (g) => [g.code, await fetchNews(g.name, 3)] as const)));
 
-  const stockBlocks = toExplain
-    .map((c) => {
-      const news = newsByName.get(c.name) ?? [];
-      const newsLine = news.length > 0 ? news.map((n) => n.title).join(" / ") : "관련 뉴스 없음";
-      const pct = c.finalChangePct !== null ? `${c.finalChangePct >= 0 ? "+" : ""}${c.finalChangePct.toFixed(2)}%` : "추적 불가";
-      const outcome = c.hitTarget
-        ? " (목표가 도달)"
-        : c.hitStop
-          ? " (손절가 도달)"
-          : (c.finalChangePct ?? 0) > 0
-            ? " (상승했지만 목표가 미달성)"
-            : "";
-      return `- ${c.name}: 결과 ${pct}${outcome} (당시 추천 근거: "${c.reasoning}") / 최근 뉴스: ${newsLine}`;
-    })
-    .join("\n");
-
-  const total = candidates.length;
-  const hitCount = candidates.filter((c) => c.hit).length;
-  const targetCount = candidates.filter((c) => c.hitTarget).length;
-  const stopCount = candidates.filter((c) => c.hitStop).length;
-
-  const categoryLines = categoryStats
-    .map((c) => {
-      const pos = c.positiveCount > 0 ? `(O) ${c.positiveCount}건 평균 ${formatChg(c.positiveAvgReturn ?? 0)}` : "(O) 데이터 없음";
-      const neg = c.negativeCount > 0 ? `(X) ${c.negativeCount}건 평균 ${formatChg(c.negativeAvgReturn ?? 0)}` : "(X) 데이터 없음";
-      return `- ${c.label}: ${pos} / ${neg}`;
+  const blocks = picked
+    .map((g) => {
+      const entryLines = g.entries
+        .map((e) => {
+          const reasoning = reasoningByKey.get(`${e.forDate}|${e.code}`) ?? "";
+          return `  · ${e.forDate.slice(5)} 추천 → ${OUTCOME_LABEL[e.outcome]}${e.exitDay ? `(${e.exitDay}일차)` : ""}, 실현 ${fmtPct(e.realizedPct)} / 5일 종가 ${fmtPct(e.closePct)} (당시 근거: "${reasoning.slice(0, 120)}")`;
+        })
+        .join("\n");
+      const newsLine = (news.get(g.code) ?? []).map((n) => n.title).join(" / ") || "관련 뉴스 없음";
+      return `- ${g.name}(${g.code}) 총 ${g.predictions}회 추천\n${entryLines}\n  최근 뉴스: ${newsLine}`;
     })
     .join("\n");
 
   const system = [
-    '너는 "Golgoo"라는 개인 투자 AI야. 친한 형/친구처럼 편한 반말로, 확신 있는 어조로 말해.',
-    `아래는 ${label} 동안 네가 예상 리포트에서 추천했던 종목들이 실제로 5거래일 지난 뒤 나온 결과(매수가 대비 최종 등락률)와, 그 종목 관련 최근 뉴스야. 이번 기간 전체 적중률은 ${total}개 중 ${hitCount}개(${((hitCount / total) * 100).toFixed(0)}%), 목표가 도달 ${targetCount}건, 손절가 도달 ${stopCount}건이야.`,
-    "각 종목이 왜 올랐는지 내렸는지, 뉴스를 최대한 활용해서 설명해줘 — 관련 뉴스가 마땅치 않으면 당시 추천 근거(재료)가 그대로 먹혔는지 안 먹혔는지로 판단해.",
-    "'상승했지만 목표가 미달성'이라고 표시된 종목은 특히 신경 써서 — 방향은 맞았는데 왜 목표가(저항선)까지는 못 뚫었는지(거래량 부족, 시장 전체 조정, 저항이 예상보다 강했는지 등) 짚어줘. 손절가 도달 종목도 마찬가지로 애초에 근거가 틀렸던 건지, 맞는 방향인데 단기 조정에 걸린 건지 구분해서 설명해.",
-    "[항목별(O/X) 판단과 실제 수익률 — 실데이터로 이미 계산됨, 숫자는 지어내지 마]",
-    categoryLines,
-    "1) summary: 전체 총평(적중률과 함께, 위 항목별 데이터를 근거로 어떤 유형의 근거가 실제로 잘 맞았는지 안 맞았는지 구체적으로) 3~4문장.",
-    "2) insights: 다음 주 종목을 고를 때 실제로 반영할 수 있는 구체적인 교훈 3~5개, 각각 한 문장으로 — 위 항목별 데이터에서 실제로 드러난 패턴만 반영해(막연한 일반론 금지). 예: '거래량이 늘지 않은 종목은 신중하게 접근'.",
-    "확정적 보장이 아니라 데이터에 근거한 관찰이라는 톤을 유지해.",
-    "다른 설명 없이 아래 JSON 형식으로만 답해:",
-    '{"summary": "전체 총평 3-4문장", "explanations": [{"name": "종목명", "explanation": "오르거나 내린 이유 한두 문장"}], "insights": ["...", "..."]}',
+    '너는 "Golgoo"라는 개인 투자 AI야. 친한 형/친구처럼 편한 반말로 짧게 말해.',
+    `아래는 ${label} 동안 추천했던 종목들의 5거래일 결과(이미 확정된 사실)와 그 종목 최근 뉴스야. 이 해설은 화면에 보여주는 '사후 해설'이야 — 결과나 숫자를 바꾸지 말고, 왜 그렇게 끝났는지만 1~2문장으로 설명해.`,
+    "결과 표기의 뜻: '실현'은 목표가/손절가에 먼저 닿으면 그 가격, 아니면 5일차 종가로 청산했다고 본 수익률이고, '5일 종가'는 그냥 5일 뒤 종가 수익률이야. '손절인데 5일 종가는 플러스'면 장중에 손절가를 먼저 찍고 나중에 회복한 거라고 구분해서 말해줘.",
+    "같은 종목이 여러 번 추천됐으면 그 종목에 대해 한 번만, 반복된 패턴(계속 실패/성공한 이유)을 중심으로 설명해. 뉴스가 마땅치 않으면 당시 근거가 먹혔는지로 판단하고, 데이터에 없는 건 추측하지 마.",
+    '다른 설명 없이 JSON으로만: {"explanations": [{"code": "종목코드", "explanation": "해설"}]}',
   ].join("\n");
 
-  const client = new Anthropic();
-  try {
-    const response = await client.messages.create({
-      model: "claude-sonnet-5",
-      max_tokens: 2200,
-      output_config: { effort: "low" },
-      system,
-      messages: [{ role: "user", content: stockBlocks }],
-    });
-    const text = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-    return parseAnalysisResponse(text);
-  } catch {
-    return null;
+  const text = await callLlm(system, blocks, 2200);
+  const parsed = text ? parseJsonObject(text) : null;
+  const list = Array.isArray(parsed?.explanations) ? (parsed!.explanations as unknown[]) : [];
+  const byCode = new Map(picked.map((g) => [g.code, g.name]));
+  const out: StockExplanation[] = [];
+  for (const e of list) {
+    const o = e as Record<string, unknown>;
+    if (typeof o?.code === "string" && typeof o?.explanation === "string" && byCode.has(o.code)) {
+      out.push({ code: o.code, name: byCode.get(o.code)!, text: o.explanation });
+    }
   }
+  return out;
 }
 
-// 최근 rows를 기간별로 묶고, 그중 (a) 아직 분석이 없고 (b) 모든 행의
-// 5거래일 창이 다 끝난 기간만 골라 하나씩 생성한다 — 크론이 매일 돌면서
+// (b) 총평 + 다음 예측에 반영할 교훈 — 결과 통계(+추천 당시 수치)만 입력.
+// 뉴스/사후 정보는 일부러 안 준다. 표본이 작으면 "아직 결론 내기 이르다"고
+// 말하게 강제해서 우연을 패턴으로 착각하지 않게 한다.
+async function writeNarrative(
+  label: string,
+  rows: OutcomeRow[],
+  groups: StockGroup[]
+): Promise<{ summary: string; insights: string[] } | null> {
+  const repeated = groups
+    .filter((g) => g.predictions >= 2)
+    .map((g) => `- ${g.name}: ${g.predictions}회 추천 → 목표 ${g.target} / 손절 ${g.stop} / 기간종료 ${g.timeout} / 판정불가 ${g.ambiguous}, 평균 실현 ${fmtPct(g.avgRealizedPct)}`)
+    .join("\n");
+
+  const user = [learningBlockFromRows(rows), repeated ? `[같은 종목 반복 추천]\n${repeated}` : ""].filter(Boolean).join("\n\n");
+
+  const system = [
+    '너는 "Golgoo"라는 개인 투자 AI야. 친한 형/친구처럼 편한 반말로, 확신 있지만 과장 없는 어조로 말해.',
+    `아래는 ${label} 예상종목 결과를 코드가 집계한 숫자야(누적 성과 + 조건별 성과). 숫자는 전부 주어진 것만 쓰고 새로 계산하거나 지어내지 마.`,
+    "1) summary: 이번 기간 총평 3~4문장. 목표 도달률만 보지 말고 손익비와 손익분기 목표도달률, 평균 실현수익을 같이 짚어서 '지금 전략이 돈을 벌고 있는지'를 솔직하게 말해.",
+    "2) insights: 다음 종목 선정에 반영할 교훈 최대 3개(각 한 문장). 조건별 성과는 반드시 '전체 평균(기준선)'과 비교해서 판단해 — 어떤 조건의 성과가 나쁘다는 건 기준선보다 나쁠 때만 의미가 있어(후보 대부분이 해당하는 조건은 기준선과 같은 얘기일 뿐). 교훈의 근거는 표본 10건 이상이고 '비교 불가' 표시가 없는 조건만 쓸 수 있어. '표본 부족'이거나 비교 불가인 조건은 교훈으로 삼지 말고, 근거 있는 교훈이 없으면 insights에 '아직 표본이 부족해서 조건별 가중치는 바꾸지 않고 관찰 중'이라고만 써.",
+    "확정적 보장이 아니라 데이터에 근거한 관찰이라는 톤을 유지해.",
+    '다른 설명 없이 JSON으로만: {"summary": "총평", "insights": ["교훈"]}',
+  ].join("\n");
+
+  const text = await callLlm(system, user, 1200);
+  const parsed = text ? parseJsonObject(text) : null;
+  if (!parsed || typeof parsed.summary !== "string" || !parsed.summary.trim()) return null;
+  const insights = Array.isArray(parsed.insights) ? parsed.insights.filter((x): x is string => typeof x === "string") : [];
+  return { summary: parsed.summary, insights };
+}
+
+// 그 기간 행들의 후보 중 코드가 있는(=추적 가능한) 것 수 — 결과 DB에 그만큼
+// 있어야 "이 기간 추적이 다 끝났다"고 본다.
+function expectedTrackableCount(rows: { candidates: string }[]): number {
+  let n = 0;
+  for (const r of rows) {
+    try {
+      const list = JSON.parse(r.candidates) as { code?: unknown }[];
+      n += list.filter((c) => typeof c?.code === "string").length;
+    } catch {
+      // 파싱 안 되는 옛 행은 셈에서 제외
+    }
+  }
+  return n;
+}
+
+// 최근 rows를 기간별로 묶고, 그중 (a) 아직 분석이 없고 (b) 모든 추적 가능한
+// 후보의 결과가 확정된 기간만 골라 하나씩 생성한다 — 크론이 매일 돌면서
 // "이제 막 끝난 기간이 있는지"만 확인하는 형태라, 이미 분석된 기간은 계속
 // 건너뛴다(멱등).
 export async function generatePeriodAnalysis(periodType: PeriodType): Promise<void> {
-  // 하루 안 지난 forDate는 애초에 5일 창이 끝날 수 없으니 제외 — 대략
-  // 최근 4개월치(월간이 가장 넓은 창을 필요로 함)만 훑는다.
   const rows = await prisma.weeklyPrediction.findMany({
     where: { forDate: { lt: todayISO() } },
     orderBy: { forDate: "asc" },
     take: 400,
   });
   if (rows.length === 0) return;
+
+  // 창이 막 끝난 예측의 결과를 먼저 확정해서 결과 DB에 넣는다(이미 있는 건
+  // 건너뛰는 멱등 호출이라 매번 불러도 싸다).
+  await resolvePendingOutcomes().catch((e) => console.error("[period-analysis] resolvePendingOutcomes failed:", e));
 
   const groups = new Map<string, typeof rows>();
   for (const row of rows) {
@@ -254,11 +238,11 @@ export async function generatePeriodAnalysis(periodType: PeriodType): Promise<vo
     groups.set(key, group);
   }
 
-  // 가장 최근 기간(진행 중일 확률이 매우 높음)은 아예 건너뛴다 — 굳이
-  // scorePrediction까지 다 불러서 "아직 안 끝났다"는 결론을 매번 다시
-  // 낼 필요 없이, 마지막 그룹 하나는 애초에 제외.
+  // 가장 최근 기간(진행 중일 확률이 매우 높음)은 아예 건너뛴다.
   const keys = [...groups.keys()].sort();
   keys.pop();
+
+  const stalenessCutoff = daysAgoISO(14);
 
   for (const key of keys) {
     const existing = await prisma.periodAnalysis.findUnique({
@@ -266,52 +250,51 @@ export async function generatePeriodAnalysis(periodType: PeriodType): Promise<vo
     });
     if (existing) continue;
 
-    // 한 행당 최대 5종목이 각자 KIS 차트를 불러오는데(scorePrediction 내부),
-    // 여러 행을 Promise.all로 한꺼번에 돌리면(한 달치는 최대 20여 행) 동시
-    // 요청이 너무 많아져 KIS 레이트리밋에 걸린다 — 실제로 겪은 문제: 같은
-    // 8월 데이터를 주간/월간 두 번 채점했더니 매번 다른 종목이 랜덤하게
-    // "결과 없음"으로 빠졌다(scorePrediction 자체엔 재시도가 있지만, 그래도
-    // 동시 요청 수 자체를 줄이는 게 안전하다). 행 단위로는 순차 처리.
     const groupRows = groups.get(key)!;
-    const scored: Awaited<ReturnType<typeof scorePrediction>>[] = [];
-    for (const r of groupRows) {
-      scored.push(await scorePrediction(r));
-    }
-    if (scored.some((s) => s === null)) continue; // 이 기간 안 어느 하루라도 아직 5거래일이 안 끝났으면 다음에 다시 시도
+    const dates = new Set(groupRows.map((r) => r.forDate));
+    const outcomes = (await loadOutcomeRows({ from: groupRows[0].forDate, to: groupRows[groupRows.length - 1].forDate })).filter((o) =>
+      dates.has(o.forDate)
+    );
 
-    // verdicts(시황/거래량/차트/재료/수급/재무 O/X)는 candidate-detail.ts가
-    // 생성 시점에 이미 계산해 WeeklyPrediction.details에 저장해둔 값을 그대로
-    // 재사용한다 — forDate별로 이름→verdicts 맵을 만들어 매칭.
-    const verdictsByForDate = new Map<string, Map<string, CandidateDetail["verdicts"]>>();
-    for (const r of groupRows) {
-      const stored = parseStoredCandidateDetails(r.details);
-      verdictsByForDate.set(r.forDate, new Map((stored ?? []).map((d) => [d.name, d.verdicts])));
-    }
+    // 결과가 다 확정되기 전에는 다음에 다시 시도. 단, KIS에서 차트를 계속
+    // 못 받는 종목 하나 때문에 기간 전체가 영영 안 만들어지지 않게, 마지막
+    // 추천일이 14일보다 더 지났으면 있는 결과만으로 진행한다.
+    const expected = expectedTrackableCount(groupRows);
+    const allSettled = outcomes.length >= expected;
+    const oldEnough = groupRows.every((r) => r.forDate <= stalenessCutoff);
+    if (outcomes.length === 0 || (!allSettled && !oldEnough)) continue;
 
-    const enrichedCandidates = scored
-      .flatMap((s) =>
-        s!.candidates.map((c) => ({ ...c, verdicts: verdictsByForDate.get(s!.forDate)?.get(c.name) ?? null }))
-      )
-      .filter((c) => c.finalChangePct !== null);
-    if (enrichedCandidates.length === 0) continue;
-
-    const categoryStats = buildCategoryStats(enrichedCandidates);
+    const stats = summarize(outcomes);
+    const stockGroups = groupByStock(outcomes);
     const label = periodLabelFor(periodType, key);
     const { start, end } = periodRangeFor(periodType, key);
-    const llm = await explainMovers(label, enrichedCandidates, categoryStats);
 
-    const results: CandidateResult[] = enrichedCandidates.map((c) => ({
-      name: c.name,
-      code: c.code,
-      reasoning: c.reasoning,
-      finalChangePct: c.finalChangePct,
-      hit: c.hit,
-      hitTarget: c.hitTarget,
-      hitStop: c.hitStop,
-      explanation: llm?.explanations.get(c.name) ?? "",
-    }));
+    // 종목 해설에 붙일 "당시 추천 근거"(추천 시점에 저장된 텍스트)
+    const reasoningByKey = new Map<string, string>();
+    for (const r of groupRows) {
+      try {
+        for (const c of JSON.parse(r.candidates) as { code?: string; reasoning?: string }[]) {
+          if (c.code && c.reasoning) reasoningByKey.set(`${r.forDate}|${c.code}`, c.reasoning);
+        }
+      } catch {
+        // 무시
+      }
+    }
 
-    const hitCount = enrichedCandidates.filter((c) => c.hit).length;
+    // 추천 당시 목표가/손절가가 저장되기 전의 옛 기록만 있는 기간(판정 가능 0건)
+    // 은 LLM에게 넘길 통계가 없어서 총평이 어색해진다(빈 데이터를 "데이터가
+    // 없다"고 말하는 문장이 나옴) — 이런 기간은 5일 종가 기준 사실만 코드로
+    // 정직하게 요약하고 교훈도 만들지 않는다.
+    const [explanations, narrative] = await Promise.all([
+      explainStocks(label, stockGroups, reasoningByKey),
+      stats.rated > 0 ? writeNarrative(label, outcomes, stockGroups) : Promise.resolve(null),
+    ]);
+
+    const closeOnlySummary = `${label} 예상 ${stats.total}건은 추천 당시 목표가·손절가가 저장되기 전의 기록이라 목표/손절 판정은 할 수 없어요. 5일 종가 기준으로는 ${stats.closeUp}건 상승 마감, ${stats.closeDown}건 하락 마감, 평균 ${fmtPct(stats.avgClosePct, 2)} (중앙값 ${fmtPct(stats.medianClosePct, 2)})였어요.`;
+    const fallbackSummary =
+      stats.rated === 0
+        ? closeOnlySummary
+        : `${label} 예상 ${stats.total}건 중 판정 가능 ${stats.rated}건 — 목표 ${stats.target} / 손절 ${stats.stop} / 기간종료 ${stats.timeout}${stats.ambiguous ? ` / 판정불가 ${stats.ambiguous}` : ""}.`;
 
     await prisma.periodAnalysis.upsert({
       where: { periodType_periodKey: { periodType, periodKey: key } },
@@ -321,24 +304,14 @@ export async function generatePeriodAnalysis(periodType: PeriodType): Promise<vo
         label,
         startDate: start,
         endDate: end,
-        summary: llm?.summary ?? `${label} 예상 종목 ${enrichedCandidates.length}개 중 ${hitCount}개 적중했어.`,
-        candidateHitRate: enrichedCandidates.length ? hitCount / enrichedCandidates.length : null,
-        results: JSON.stringify(results),
-        categoryStats: JSON.stringify(categoryStats),
-        insights: JSON.stringify(llm?.insights ?? []),
+        summary: narrative?.summary ?? fallbackSummary,
+        candidateHitRate: stats.targetRate !== null ? stats.targetRate / 100 : null,
+        results: JSON.stringify({ v: 2, explanations }),
+        categoryStats: JSON.stringify([]), // v2부터는 읽을 때 결과 DB에서 즉석 계산(getPeriodAnalyses) — 컬럼은 옛 스키마 호환용으로만 남김
+        insights: JSON.stringify(narrative?.insights ?? []),
       },
-      update: {}, // 이미 있으면 그대로 — 위에서 existing 체크로 사실상 도달 안 함
+      update: {}, // 이미 있으면 그대로 — 위 existing 체크로 사실상 도달 안 함
     });
-  }
-}
-
-function parseCategoryStats(raw: string | null | undefined): CategoryStat[] {
-  if (!raw) return [];
-  try {
-    const p: unknown = JSON.parse(raw);
-    return Array.isArray(p) ? (p as CategoryStat[]) : [];
-  } catch {
-    return [];
   }
 }
 
@@ -352,30 +325,53 @@ function parseInsights(raw: string | null | undefined): string[] {
   }
 }
 
+function parseExplanations(raw: string): StockExplanation[] {
+  try {
+    const p = JSON.parse(raw) as { v?: number; explanations?: StockExplanation[] } | unknown[];
+    if (!Array.isArray(p) && p && Array.isArray(p.explanations)) return p.explanations;
+  } catch {
+    // 옛 v1(배열) 형식이나 깨진 값 — 해설 없이 보여준다
+  }
+  return [];
+}
+
 export async function getPeriodAnalyses(periodType: PeriodType, limit = 12): Promise<PeriodAnalysisData[]> {
   const rows = await prisma.periodAnalysis.findMany({
     where: { periodType },
     orderBy: { periodKey: "desc" },
     take: limit,
   });
-  return rows.map((r) => ({
-    periodType: periodType,
-    periodKey: r.periodKey,
-    label: r.label,
-    startDate: r.startDate,
-    endDate: r.endDate,
-    summary: r.summary,
-    candidateHitRate: r.candidateHitRate,
-    results: JSON.parse(r.results) as CandidateResult[],
-    categoryStats: parseCategoryStats(r.categoryStats),
-    insights: parseInsights(r.insights),
-  }));
+  if (rows.length === 0) return [];
+
+  // 통계는 저장해두지 않고 읽을 때마다 결과 DB에서 집계한다 — 저장본은 옛
+  // 정의(종가 기준)로 굳어버리지만 이쪽은 항상 최신 정의와 일치한다.
+  const allOutcomes = await loadOutcomeRows();
+
+  return rows.map((r) => {
+    const outcomes = allOutcomes.filter((o) => o.forDate >= r.startDate && o.forDate <= r.endDate);
+    const stats = summarize(outcomes);
+    return {
+      periodType,
+      periodKey: r.periodKey,
+      label: r.label,
+      startDate: r.startDate,
+      endDate: r.endDate,
+      summary: r.summary,
+      candidateHitRate: stats.targetRate !== null ? stats.targetRate / 100 : r.candidateHitRate,
+      stats,
+      stockGroups: groupByStock(outcomes),
+      verdictStats: verdictConditionStats(outcomes),
+      featureStats: featureConditionStats(outcomes),
+      explanations: parseExplanations(r.results),
+      insights: parseInsights(r.insights),
+    };
+  });
 }
 
-// lib/weekly-prediction.ts가 다음 종목 선정 프롬프트에 그대로 읽어 넣는
-// "자체 학습" 연결 지점 — 가장 최근 주간분석의 insights(다음에 참고할 점)만
-// 뽑아준다. 없으면(아직 한 번도 채점 안 됨) 빈 문자열이라 프롬프트에서
-// 조건부로 빠진다.
+// lib/weekly-prediction.ts가 다음 종목 선정 프롬프트에 읽어 넣는 연결 지점 —
+// 가장 최근 주간분석의 insights. 이제 그 insights는 표본 10건 이상인 조건에서만
+// 나오도록 강제돼 있고(writeNarrative), 없으면 "관찰 중"이라고만 적힌다.
+// 실제 숫자 근거는 lib/prediction-learning.ts의 누적 블록이 따로 준다.
 export async function latestWeeklyInsightsBlock(): Promise<string> {
   const latest = await prisma.periodAnalysis.findFirst({
     where: { periodType: "week" },
@@ -384,6 +380,6 @@ export async function latestWeeklyInsightsBlock(): Promise<string> {
   if (!latest) return "";
   const insights = parseInsights(latest.insights);
   if (insights.length === 0) return "";
-  const lines = [`[지난 주간분석(${latest.label})에서 배운 점 — 이번 선정에 반영해]`, ...insights.map((s) => `- ${s}`)];
+  const lines = [`[지난 주간분석(${latest.label}) 교훈 — 표본이 충분한 조건에서만 나온 것]`, ...insights.map((s) => `- ${s}`)];
   return lines.join("\n");
 }

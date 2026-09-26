@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/prisma";
 import { recentWeeksHistoryBlock, recentIssuesBlock, telegramBlock } from "@/lib/bro-context";
-import { getScoredPredictionHistory, type CandidatePrediction } from "@/lib/prediction-scoring";
+import type { CandidatePrediction } from "@/lib/prediction-scoring";
 import { todayISO } from "@/lib/dates";
 import { resolveStock } from "@/lib/market-data";
 import { fetchKisCodeMaster, findInCodeMaster } from "@/lib/kis-code-master";
@@ -9,6 +9,9 @@ import { fetchKisChart } from "@/lib/kis-chart";
 import { computeTechnicalSignals, LONG_TERM_SIGNAL_CANDLES } from "@/lib/technical-signals";
 import { buildVolumeNote, getCandidateDetails } from "@/lib/candidate-detail";
 import { latestWeeklyInsightsBlock } from "@/lib/period-analysis";
+import { cumulativeLearningBlock } from "@/lib/prediction-learning";
+import { resolvePendingOutcomes } from "@/lib/prediction-outcome-store";
+import { noTradeReason } from "@/lib/prediction-features";
 
 const SYSTEM_PROMPT = [
   "너는 한국 주식시장의 향후 5거래일 유망 종목을 뽑는 애널리스트야.",
@@ -16,10 +19,10 @@ const SYSTEM_PROMPT = [
   "summary·reasoning 안에서 진짜 중요한 문장이나 핵심 단어(강세 근거, 결정적 수치, 종목명 등)는 **이렇게** 별 두 개로 감싸서 강조해 — 한 항목에 한두 곳 정도면 충분해, 남발하지 마.",
   "이 리포트는 매일 새로 나가고, 오늘 장마감 무렵 가격에 매수했다고 가정하고 5거래일 동안의 성과를 추적해 — 그러니 '다음 주' 같은 표현 대신 '오늘부터 5거래일' 식으로 말해.",
   "종목 판단은 항상 다음 7가지 관점으로 훑어: 1.시황(지금 시장 주도 섹터인지) 2.거래량(평소보다 최근 5거래일 거래량이 늘었는지, 시장 관심이 붙었는지) 3.차트(이평선 정배열/역배열, 지지·저항) 4.재료(뉴스/텔레그램 제보로 본 상승 이력이나 기대감) 5.수급(외국인/기관 매수) 6.재무(매출·이익 적자 여부) 7.매수타이밍(지지선/저항선 대비 지금 진입할 만한 자리인지). 이 중 실제 데이터로 뒷받침되는 관점 위주로 reasoning에 자연스럽게 녹여 써 — 없는 관점을 억지로 채우지 마.",
-  "아래 최근 몇 주간의 섹터·언급 흐름, 최근 종목별 실제 뉴스 이슈, 텔레그램 제보, [관심 종목군의 기술적 시그널 및 거래량], (있다면) 과거 예측 적중 이력을 종합해서 종목을 선정해.",
+  "아래 최근 몇 주간의 섹터·언급 흐름, 최근 종목별 실제 뉴스 이슈, 텔레그램 제보, [관심 종목군의 기술적 시그널 및 거래량], (있다면) [누적 예측 성과]를 종합해서 종목을 선정해.",
   "[관심 종목군의 기술적 시그널 및 거래량]은 실제 차트 데이터로 계산된 값이야(거래량 급감+음봉·지지선 지지 확인·8일선 지지·33일선 정찰병 매수·45일선 반등·이동평균선 정배열·300일선/480일선 지지 확인 같은 bullish 시그널 / 저항선 돌파 실패·단기 급락·이동평균선 역배열·45일선 터치 시 거래량 증가(반등 제외)·300일선/480일선 붕괴 같은 bearish 시그널, 그리고 종목별 최근 5거래일 평균 거래량이 평소 대비 몇% 늘었는지/줄었는지) — 종목을 고를 때 반드시 참고하고, 있는 종목은 reasoning에 자연스럽게 녹여서 언급해. 특히 평소보다 거래량이 크게(대략 50% 이상) 늘어난 종목은 시장 관심이 붙고 있다는 뜻이니 긍정적으로 반영해.",
   "특히 480일선은 마지막 장기 지지선이야 — '480일선 붕괴' 시그널이 뜬 종목은 위험 신호로 보고 후보에서 제외하거나, 이미 후보로 다뤄야 한다면 반드시 매도/손절 관점에서 경고를 명확히 해.",
-  "과거 예측 적중 이력이 있다면 반드시 참고해 — 어떤 유형의 근거가 잘 맞았는지, 안 맞았는지를 이번 선정에 반영해.",
+  "[누적 예측 성과]가 있다면 반드시 참고해 — 목표/손절 중 어느 쪽이 먼저 닿았는지(장중 고가/저가 기준)로 확정된 결과를 코드가 집계한 숫자야. 조건별 성과는 표본 크기(n)와 신뢰도가 같이 적혀 있으니, 표본 부족(10건 미만) 조건은 우연일 수 있어서 결론 근거로 삼지 말고 참고만 해. 손익비 대비 목표 도달률이 손익분기에 못 미치면 그만큼 더 확실한 종목만 골라.",
   "[지난 주간분석에서 배운 점]이 있다면(있을 때만) 반드시 실제로 반영해 — 그건 지난주 실제 추천 종목들이 5거래일 지난 뒤 어떤 근거(시황/거래량/차트/재료/수급/재무)가 실제로 잘 맞았는지 데이터로 분석한 결과야. 예를 들어 '거래량이 늘지 않은 종목은 실패율이 높았다'고 나왔으면 이번엔 거래량 증가가 뚜렷한 종목 위주로 더 신중하게 골라.",
   "종목 개수는 반드시 5개를 채울 필요 없어 — 확신이 가는(여러 근거가 실제로 겹치는) 종목만 1~5개 골라. 근거가 약한데 억지로 채운 종목 하나가 전체 적중률을 깎아먹으니, 개수보다 성공 확률을 우선해.",
   "매수타이밍(7번)은 실제 저항선을 목표가로 그대로 쓰고, 손절은 고정 -4%야 — 목표가를 인위적으로 끌어올리지 않아. 그러니 저항선이 코앞이라 매수 기준가 대비 +3%도 안 남은 종목은 5거래일 짧은 보유로는 시도할 값어치가 없어 — 그런 종목은 애초에 후보로 고르지 마(고르더라도 발행 전에 실데이터로 걸러짐).",
@@ -51,21 +54,6 @@ function parseResponse(text: string): ParsedPrediction | null {
   } catch {
     return null;
   }
-}
-
-async function pastAccuracyBlock(): Promise<string> {
-  const scored = await getScoredPredictionHistory(5);
-  if (scored.length === 0) return "";
-
-  const lines = ["[과거 예측 적중 이력 — 5거래일 뒤 기준]"];
-  for (const s of scored) {
-    const sectorPct = s.sectorHitRate !== null ? `${Math.round(s.sectorHitRate * 100)}%` : "-";
-    const candPct = s.candidateHitRate !== null ? `${Math.round(s.candidateHitRate * 100)}%` : "-";
-    lines.push(
-      `${s.label}: 섹터 적중 ${sectorPct}, 종목 적중 ${candPct} (예측 섹터: ${s.sectors.map((x) => x.name).join(", ") || "-"} / 실제 주도 섹터: ${s.actualHotSector ?? "-"})`
-    );
-  }
-  return lines.join("\n");
 }
 
 const SHORTLIST_SIZE = 15;
@@ -179,11 +167,14 @@ export async function generateWeeklyPrediction(): Promise<void> {
 
   const forDate = todayISO();
 
+  // 5거래일이 막 지난 예측의 결과를 먼저 확정해야 아래 누적 성과 블록에 반영된다.
+  await resolvePendingOutcomes().catch((e) => console.error("[weekly-prediction] resolvePendingOutcomes failed:", e));
+
   const [historyBlock, issuesBlock, tgBlock, accBlock, signalsBlock, insightsBlock] = await Promise.all([
     recentWeeksHistoryBlock(4),
     recentIssuesBlock(20),
     telegramBlock(),
-    pastAccuracyBlock(),
+    cumulativeLearningBlock(),
     signalShortlistBlock(),
     latestWeeklyInsightsBlock(),
   ]);
@@ -244,18 +235,40 @@ export async function generateWeeklyPrediction(): Promise<void> {
   // (코드 미확인 등, targetPct === null)도 검증 불가능하니 같이 제외한다.
   // 이 필터 때문에 그날 후보가 0개가 될 수도 있는데, 그건 "오늘은 확신
   // 가는 종목이 없었다"는 정직한 결과라 그대로 둔다(억지로 채우지 않음).
-  const filteredDetails = rawDetails.filter(
-    (d) => d.strategy.targetPct !== null && d.strategy.targetPct >= MIN_TARGET_PCT
-  );
+  // 발행에서 뺀 종목과 그 이유를 같이 기록한다 — 조용히 사라지는 대신 "왜 추천
+  // 안 했는지"를 화면에서 볼 수 있게(GPT 피드백: 억지로 채우지 않고 제외 사유 공개).
+  const excluded: { name: string; code?: string; reason: string }[] = [];
+  const filteredDetails = rawDetails.filter((d) => {
+    if (d.strategy.targetPct === null || d.strategy.targetPct < MIN_TARGET_PCT) {
+      excluded.push({
+        name: d.name,
+        code: d.code,
+        reason:
+          d.strategy.targetPct === null
+            ? "목표가를 계산할 수 없어 제외"
+            : `목표가까지 여력 +${d.strategy.targetPct.toFixed(1)}% (최소 +${MIN_TARGET_PCT}% 미만)`,
+      });
+      return false;
+    }
+    // 극단적 과열(프리티급, 점수 80↑)만 제외 — 더 넓게 잡으면 큰 승자도 같이
+    // 걸러진다는 소급 검증 결과는 lib/prediction-features.ts noTradeReason 주석 참고.
+    const overheat = d.features ? noTradeReason(d.features) : null;
+    if (overheat) {
+      excluded.push({ name: d.name, code: d.code, reason: overheat });
+      return false;
+    }
+    return true;
+  });
   const keptNames = new Set(filteredDetails.map((d) => d.name));
   const filteredCandidateList = candidateList.filter((c) => keptNames.has(c.name));
 
   const candidates = JSON.stringify(filteredCandidateList);
   const details = JSON.stringify(filteredDetails);
+  const filtered = excluded.length > 0 ? JSON.stringify(excluded) : null;
 
   await prisma.weeklyPrediction.upsert({
     where: { forDate },
-    create: { forDate, summary: parsed.summary, sectors, candidates, details },
-    update: { summary: parsed.summary, sectors, candidates, details },
+    create: { forDate, summary: parsed.summary, sectors, candidates, details, filtered },
+    update: { summary: parsed.summary, sectors, candidates, details, filtered },
   });
 }

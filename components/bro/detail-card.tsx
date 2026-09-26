@@ -1,5 +1,7 @@
 "use client";
 
+import type { OutcomeKind } from "@/lib/prediction-outcome";
+import { OutcomeBadge, fmtSigned, pnlColor } from "./outcome-badge";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { chgColorVar, formatChg } from "@/lib/format";
@@ -269,14 +271,25 @@ function markDays(series: DailyChangePoint[], stopLossPrice: number | null, targ
   });
 }
 
+export type CardOutcome = {
+  outcome: OutcomeKind;
+  exitDay: number | null;
+  realizedPct: number | null;
+  closePct: number | null;
+  mfePct: number | null;
+  maePct: number | null;
+};
+
 export function DetailCard({
   d,
   series,
   signals,
+  outcome,
 }: {
   d: CandidateDetail;
   series?: DailyChangePoint[];
   signals?: TechnicalSignal[];
+  outcome?: CardOutcome;
 }) {
   // 기술적 시그널은 이제 "3. 차트" 카드를 선택했을 때 그 우측 상세 뷰어
   // (ChartView, field-detail-modal.tsx) 안에서만 보여준다 — 모든 후보 카드
@@ -363,6 +376,28 @@ export function DetailCard({
             }}
           >
             대장주
+          </span>
+        )}
+        {d.features && d.features.overheatScore >= 40 && (
+          <span
+            title={`추천 당시 과열 점수 ${d.features.overheatScore}/100 — ${d.features.overheatReasons.join(", ")}`}
+            style={{ fontSize: 9.5, fontWeight: 800, color: "var(--accent)", background: "var(--accent-soft)", borderRadius: 20, padding: "2px 9px" }}
+          >
+            ⚠️ 과열 {d.features.overheatScore}
+          </span>
+        )}
+        {outcome && (
+          <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <OutcomeBadge outcome={outcome.outcome} day={outcome.exitDay} />
+            {outcome.outcome !== "UNRATED" ? (
+              <span style={{ fontFamily: "var(--mono)", fontSize: 11, fontWeight: 800, color: pnlColor(outcome.realizedPct) }} title="목표/손절 먼저 닿은 쪽 기준 실현수익">
+                {fmtSigned(outcome.realizedPct)}
+              </span>
+            ) : (
+              <span style={{ fontFamily: "var(--mono)", fontSize: 11, fontWeight: 800, color: pnlColor(outcome.closePct) }} title="5거래일 뒤 종가 기준">
+                5일 종가 {fmtSigned(outcome.closePct)}
+              </span>
+            )}
           </span>
         )}
       </div>

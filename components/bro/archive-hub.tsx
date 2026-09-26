@@ -95,21 +95,22 @@ export async function ArchiveHub() {
   }));
 
   const buildPeriodRows = (periods: PeriodAnalysisData[]): ArchiveRow[] =>
-    periods.map((p) => ({
-      key: p.periodKey,
-      date: p.label,
-      summary: plainPreview(p.summary),
-      meta: p.candidateHitRate !== null ? `적중률 ${Math.round(p.candidateHitRate * 100)}%` : undefined,
-      detail: (
-        <PeriodAnalysisDetail
-          summary={p.summary}
-          candidateHitRate={p.candidateHitRate}
-          results={p.results}
-          categoryStats={p.categoryStats}
-          insights={p.insights}
-        />
-      ),
-    }));
+    periods.map((p) => {
+      const s = p.stats;
+      // 접힌 줄에서도 "몇 건 중 무슨 결과였고 실제로 벌었나"가 바로 보이게 —
+      // 예전엔 적중률(5일 종가>0 기준) 하나만 보였다.
+      const meta =
+        s.rated > 0
+          ? `🎯${s.target} 🛑${s.stop} ⏱${s.timeout}${s.ambiguous ? ` ❓${s.ambiguous}` : ""} · 실현 ${s.avgRealizedPct !== null ? `${s.avgRealizedPct >= 0 ? "+" : ""}${s.avgRealizedPct.toFixed(1)}%` : "-"}`
+          : undefined;
+      return {
+        key: p.periodKey,
+        date: p.label,
+        summary: plainPreview(p.summary),
+        meta,
+        detail: <PeriodAnalysisDetail data={p} />,
+      };
+    });
   const weeklyRows = buildPeriodRows(weeklyAnalyses);
   const monthlyRows = buildPeriodRows(monthlyAnalyses);
 
