@@ -54,7 +54,7 @@ export async function handleTelegramText(userId: string, chatId: string, text: s
     return;
   }
 
-  const history = await getTodayMessagesForChat(date, 20);
+  const history = await getTodayMessagesForChat(userId, date, 20);
   const result = await runChatTurn({ userId, messages: [...history, { role: "user", content: text }] });
   const reply = result.error ?? result.replyText;
   await sendTelegramMessage(chatId, strip(reply));

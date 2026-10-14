@@ -345,7 +345,7 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       // 턴만 추가된 상태) 저장은 그 새 턴 하나만 — 아래 lastUser.content가
       // 그 턴이다. 텔레그램도 같은 함수를 타므로 여기 한 곳에만 저장하면
       // 두 채널이 같은 "오늘의 대화"에 자연히 합쳐진다.
-      if (lastUser) await saveChatTurn(todayISO(), lastUser.content, replyText);
+      if (lastUser) await saveChatTurn(userId, todayISO(), lastUser.content, replyText);
 
       return {
         replyText,
