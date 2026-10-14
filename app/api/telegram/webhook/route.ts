@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { saveTelegramMessage, type TelegramUpdate } from "@/lib/telegram-news";
+import { sendTelegramMessage } from "@/lib/telegram-send";
+import { prisma } from "@/lib/prisma";
 
 // Telegram calls this on every message sent to the bot. Registered via
 // setWebhook with a secret_token, which Telegram echoes back on every
@@ -31,12 +33,21 @@ export async function POST(req: NextRequest) {
   }
 
   if (!chatId || !allowedChatIds.includes(chatId)) {
-    // Not silent — logging (not storing) an unrecognized chat id is what
-    // makes onboarding a new contributor a log lookup instead of a guess:
-    // have them send the bot anything, find their id in the logs, add it
-    // to the comma-separated list. No error response either way, so this
-    // never confirms to a stranger that the bot is listening for anyone.
-    if (chatId) console.log("[telegram-webhook] message from non-allowlisted chat id:", chatId);
+    // 제보(news) 채널이 아닌 채팅 — 둥지 능동적 알림(lib/portfolio-alerts.ts)을
+    // 받을 개인 DM일 가능성이 커서, 여기서 chat id를 직접 알려준다(사용자가
+    // Vercel 로그를 뒤질 필요 없이 텔레그램 화면에서 바로 복사해 둥지 설정에
+    // 붙여넣게). 이미 어떤 계정에 연결된 chat id면 조용히 넘어간다(매번 같은
+    // 안내를 반복하지 않게).
+    if (chatId) {
+      console.log("[telegram-webhook] message from non-allowlisted chat id:", chatId);
+      const linked = await prisma.user.findUnique({ where: { telegramChatId: chatId }, select: { id: true } }).catch(() => null);
+      if (!linked) {
+        await sendTelegramMessage(
+          chatId,
+          `이 chat id를 둥지 설정 > 텔레그램 알림에 넣어줘:\n${chatId}\n\n연결하면 보유 종목 판정이 나빠질 때 내가 먼저 메시지 보낼게.`
+        );
+      }
+    }
     return NextResponse.json({ ok: true });
   }
 
