@@ -243,14 +243,22 @@ model MoneyFlowTake {
 // calendar date for that archive, the same way MarketBriefing/
 // WeeklyPrediction's own archives already group by day/week — no separate
 // "session" concept, just every message stamped with the day it was sent.
+// userId는 nullable — 로그인 없이도 /bro에서 채팅이 되니, 그 턴은 누구 것도
+// 아닌 채로 남는다(둥지 기록 도구는 로그인했을 때만 켜지니 비로그인 턴에
+// 개인 정보가 섞일 일은 없다). 로그인한 사용자끼리는 서로의 대화를 절대
+// 섞지 않아야 해서(둘째 사용자 온보딩 계기로 발견: 텔레그램 "오늘의 대화"
+// 기억이 userId 없이 날짜만으로 묶여 있었음) 반드시 userId로 가른다.
 model ChatMessage {
   id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   date      String
   role      String
   text      String
   createdAt DateTime @default(now())
 
   @@index([date])
+  @@index([userId, date])
 }
 
 // Articles forwarded from Telegram into the bot (see app/api/telegram/webhook).
@@ -525,6 +533,7 @@ model User {
   financialSnapshots FinancialSnapshot[]
   portfolioAssessments PortfolioAssessment[]
   portfolioAlertLogs   PortfolioAlertLog[]
+  chatMessages         ChatMessage[]
 }
 
 // 능동적 알림(lib/portfolio-alerts.ts)이 같은 악화를 하루에 여러 번 보내지 않게
