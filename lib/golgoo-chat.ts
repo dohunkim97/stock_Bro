@@ -21,6 +21,12 @@ import {
 } from "@/lib/portfolio";
 import { addExpenseRecord, addIncomeRecord, addLiability, addFinancialGoal, getExpenseSummary } from "@/lib/finance-engine";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "@/lib/finance-constants";
+import { prisma } from "@/lib/prisma";
+import { upsertThesis } from "@/lib/holding-thesis";
+import { resolveStock } from "@/lib/market-data";
+import { getAssessmentReport } from "@/lib/holding-assessment-store";
+import { buildHoldingDeepDiveBlock, buildRiskTopBlock, buildScenarioBlock, buildNewsImpactBlock } from "@/lib/golgoo-deep-dive";
+import { cumulativeLearningBlock } from "@/lib/prediction-learning";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -301,6 +307,64 @@ async function addGoalFromChat(
   return { ok: true, message: `✅ 목표 추가했어: ${name}, ${targetDate}까지 ₩${targetAmount.toLocaleString()}` };
 }
 
+// module ③/⑩ — "왜 이 종목을 샀는지"를 말해주면 기록해둔다. 다음에 이
+// 종목에 대해 "보유 이유 아직 유효해?"라고 물으면(lib/golgoo-deep-dive.ts)
+// 이 기록과 지금 신호를 대조한다. 종목당 하나로 덮어쓴다(과거 버전 보관
+// 안 함, Phase 1 범위).
+const RECORD_THESIS_TOOL: Anthropic.Tool = {
+  name: "record_investment_thesis",
+  description:
+    "사용자가 '왜 이 종목을 샀는지/계속 들고 있는지' 투자 논리를 말했을 때 호출해(예: 'LG에너지솔루션은 2차전지 수요 때문에 샀어', " +
+    "'삼성전자는 반도체 업황 회복 보고 들고 있어'). 종목명을 정확히 특정할 수 있을 때만 호출하고, 애매하면 어떤 종목인지 먼저 물어봐.",
+  input_schema: {
+    type: "object",
+    properties: {
+      stockName: { type: "string", description: "종목명" },
+      reason: { type: "string", description: "매수/보유 이유" },
+      invalidation: { type: "string", description: "이 논리가 깨지는 조건(예: '영업이익률이 계속 떨어지면'). 사용자가 말했으면만." },
+    },
+    required: ["stockName", "reason"],
+  },
+};
+
+type RecordThesisResult = { ok: boolean; message: string };
+
+async function recordThesis(
+  userId: string,
+  input: { stockName?: unknown; reason?: unknown; invalidation?: unknown }
+): Promise<RecordThesisResult> {
+  const stockName = typeof input.stockName === "string" ? input.stockName.trim() : "";
+  const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+  if (!stockName || !reason) return { ok: false, message: "어떤 종목인지랑 왜 샀는지 둘 다 말해줄래?" };
+  const resolved = await resolveStock(stockName);
+  if (!resolved) return { ok: false, message: `"${stockName}" 종목을 찾지 못했어.` };
+  const invalidation = typeof input.invalidation === "string" && input.invalidation.trim() ? input.invalidation.trim() : null;
+  await upsertThesis(userId, { code: resolved.code, name: resolved.name, reason, invalidation });
+  return { ok: true, message: `✅ ${resolved.name} 보유 이유 기록했어. 나중에 "보유 이유 아직 유효해?" 하고 물어보면 이거랑 비교해줄게.` };
+}
+
+// module ⑩ — "나는 -20% 손실이면 무조건 재검토해" 같은 사용자 자신의 투자
+// 원칙. 쌓지 않고 최신 걸로 교체(User.investmentPrinciples) — 매번 바뀔 수
+// 있는 "지금 내 기준"이라 이력 관리는 과하다고 판단.
+const SET_PRINCIPLE_TOOL: Anthropic.Tool = {
+  name: "set_investment_principle",
+  description:
+    "사용자가 자기 투자 원칙/기준을 말해줬을 때 호출해(예: '나는 -20% 손실나면 무조건 재검토해', '한 종목에 20% 넘게 안 담아'). " +
+    "일회성 질문이 아니라 '앞으로 이렇게 할래/이게 내 원칙이야' 같은 선언일 때만.",
+  input_schema: {
+    type: "object",
+    properties: { principle: { type: "string", description: "사용자의 투자 원칙 — 말한 그대로" } },
+    required: ["principle"],
+  },
+};
+
+async function setPrinciple(userId: string, input: { principle?: unknown }): Promise<RecordThesisResult> {
+  const principle = typeof input.principle === "string" ? input.principle.trim() : "";
+  if (!principle) return { ok: false, message: "어떤 원칙인지 다시 말해줄래?" };
+  await prisma.user.update({ where: { id: userId }, data: { investmentPrinciples: principle } });
+  return { ok: true, message: `✅ 기억해둘게: "${principle}"` };
+}
+
 // "이번주/이번달/오늘 얼마 썼어" — LLM이 대충 말하지 않게 실제 집계(lib/
 // finance-engine.ts)를 코드로 계산해 시스템 프롬프트에 블록으로 넣어준다
 // (buildPortfolioBlock과 같은 원칙). record_expense 같은 "쓰기" 도구와 달리
@@ -415,6 +479,66 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   const portfolioBlock = userId && wantsPortfolioInfo ? await buildPortfolioBlock(userId) : "";
   const expenseSummaryBlock = userId && lastUser ? await buildExpenseSummaryBlock(userId, lastUser.content) : "";
 
+  // module ③/④/⑤/⑦ — 보유종목 진단(lib/holding-assessment-store.ts)이
+  // 이미 계산해둔 신호·판정을 그대로 재사용해 깊은 질문에 답한다. 네 질문
+  // 유형이 전부 "지금 신호가 뭔지" 공유하니 report는 한 번만 계산하고
+  // 블록별로 다르게 써먹는다 — 종목마다 KIS 호출이 들어가 비싸서.
+  const DEEP_DIVE_RE = /보유\s*이유|계속\s*들고|들고\s*가도|종목\s*분석|보유\s*검증/;
+  const RISK_TOP_RE = /위험한\s*문제|긴급\s*점검|가장\s*위험/;
+  const SCENARIO_RE = /시나리오|상승.*하락.*조건|조건.*상승.*하락/;
+  const NEWS_IMPACT_RE = /오늘.*(공시|뉴스)|보유종목.*뉴스|뉴스.*영향/;
+  const PREDICTION_REVIEW_RE = /예측.*(검증|실패|조건)|지난\s*(주|달).*예측|승률/;
+  const ALLOC_RE = /자산배분|목표\s*비중|신규\s*투자금|어디에\s*넣/;
+
+  const needsAssessmentReport =
+    !!userId &&
+    !!lastUser &&
+    (DEEP_DIVE_RE.test(lastUser.content) ||
+      RISK_TOP_RE.test(lastUser.content) ||
+      SCENARIO_RE.test(lastUser.content) ||
+      NEWS_IMPACT_RE.test(lastUser.content));
+  const assessmentReport = needsAssessmentReport ? await getAssessmentReport(userId!).catch(() => null) : null;
+
+  let deepDiveBlock = "";
+  let riskTopBlock = "";
+  let scenarioBlock = "";
+  let newsImpactBlock = "";
+  if (userId && assessmentReport && lastUser) {
+    if (DEEP_DIVE_RE.test(lastUser.content)) deepDiveBlock = await buildHoldingDeepDiveBlock(userId, lastUser.content, assessmentReport);
+    if (RISK_TOP_RE.test(lastUser.content)) riskTopBlock = await buildRiskTopBlock(assessmentReport);
+    if (SCENARIO_RE.test(lastUser.content)) scenarioBlock = buildScenarioBlock(lastUser.content, assessmentReport);
+    if (NEWS_IMPACT_RE.test(lastUser.content)) newsImpactBlock = await buildNewsImpactBlock(assessmentReport);
+  }
+
+  // module ⑥ 자산배분 — "신규 투자금 어디에 넣을까"는 wantsPortfolioInfo가
+  // 안 걸릴 수도 있는 문구라(예: "자산배분 점검") 따로 다시 불러온다.
+  let allocationBlock = "";
+  if (userId && ALLOC_RE.test(lastUser?.content ?? "")) {
+    const overview = portfolioBlock
+      ? null // 이미 wantsPortfolioInfo로 포트폴리오 숫자가 들어갔으면 중복 계산 안 함
+      : computeOverview(await getPortfolioSettings(userId), await getHoldingsWithLiveData(userId));
+    if (overview) {
+      const gaps = overview.allocation
+        .map((a) => ({ ...a, diff: a.pct - a.targetPct }))
+        .sort((a, b) => a.diff - b.diff); // 가장 많이 모자란(음수) 게 먼저
+      const mostUnderweight = gaps[0];
+      allocationBlock =
+        `\n\n[자산배분 — 목표 대비 현재 비중, 아래 숫자 그대로 써]\n` +
+        gaps.map((a) => `- ${a.label}: 현재 ${a.pct.toFixed(1)}% / 목표 ${a.targetPct.toFixed(1)}% (${a.diff >= 0 ? "+" : ""}${a.diff.toFixed(1)}%p)`).join("\n") +
+        (mostUnderweight.diff < -1
+          ? `\n신규 투자금이 있다면 가장 부족한 "${mostUnderweight.label}"부터 채우는 게 목표 비중에 가까워져.`
+          : "\n지금은 목표 비중에서 크게 안 벗어나 있어.");
+    }
+  }
+
+  // module ⑧ 예측 성능 검증관 — 이미 있는 통계(lib/prediction-learning.ts,
+  // 표본 3건 미만 조건은 자동으로 뺀다)를 그대로 재사용. 여기서 새로
+  // 계산하지 않는다.
+  const predictionReviewBlock =
+    lastUser && PREDICTION_REVIEW_RE.test(lastUser.content)
+      ? "\n\n[예측 성과 검증 — 이미 집계된 통계, 표본 작은 조건은 이미 제외됨]\n" + (await cumulativeLearningBlock())
+      : "";
+
   const client = new Anthropic();
   const baseSystem = await buildSystemPrompt();
   const cardsBlock =
@@ -422,6 +546,11 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       ? "\n\n[지금 화면에 떠 있는 카드]\n" +
         cards.map((c) => `- ${c.name}(${c.code}): 목표가=${c.targetPrice ?? "-"} 손절가=${c.stopLossPrice ?? "-"}`).join("\n")
       : "";
+  const principlesBlock = userId
+    ? await prisma.user
+        .findUnique({ where: { id: userId }, select: { investmentPrinciples: true } })
+        .then((u) => (u?.investmentPrinciples ? `\n\n[사용자의 투자 원칙 — 조언할 때 참고해]\n${u.investmentPrinciples}` : ""))
+    : "";
   const loginNote = userId
     ? ""
     : "\n\n[참고] 이 사용자는 로그인하지 않았어 — '얼마 샀어'/'~썼어'처럼 기록을 요청하면 기록할 수 없고, 구글로 로그인하면 둥지에 자동으로 기록된다고 안내해줘.";
@@ -431,11 +560,27 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
     (reports.length > 0 ? "\n\n" + stockContextBlock(reports) : "") +
     portfolioBlock +
     expenseSummaryBlock +
+    deepDiveBlock +
+    riskTopBlock +
+    scenarioBlock +
+    newsImpactBlock +
+    allocationBlock +
+    predictionReviewBlock +
+    principlesBlock +
     loginNote;
 
   const tools: Anthropic.Tool[] = [];
   if (cards) tools.push(ADJUST_TOOL); // 화면 카드 개념이 있는 채널(웹)에서만
-  if (userId) tools.push(RECORD_HOLDING_TOOL, RECORD_EXPENSE_TOOL, RECORD_INCOME_TOOL, RECORD_LIABILITY_TOOL, ADD_GOAL_TOOL);
+  if (userId)
+    tools.push(
+      RECORD_HOLDING_TOOL,
+      RECORD_EXPENSE_TOOL,
+      RECORD_INCOME_TOOL,
+      RECORD_LIABILITY_TOOL,
+      ADD_GOAL_TOOL,
+      RECORD_THESIS_TOOL,
+      SET_PRINCIPLE_TOOL
+    );
 
   const anthropicMessages = messages.map((m) => ({ role: m.role, content: m.content }));
 
@@ -473,6 +618,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       const recordIncomeUse = findTool("record_income");
       const recordLiabilityUse = findTool("record_liability");
       const addGoalUse = findTool("add_financial_goal");
+      const recordThesisUse = findTool("record_investment_thesis");
+      const setPrincipleUse = findTool("set_investment_principle");
 
       const holdingResult =
         recordHoldingUse && userId ? await recordHoldingPurchase(userId, recordHoldingUse.input as Record<string, unknown>) : null;
@@ -483,6 +630,10 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       const liabilityResult =
         recordLiabilityUse && userId ? await recordLiability(userId, recordLiabilityUse.input as Record<string, unknown>) : null;
       const goalResult = addGoalUse && userId ? await addGoalFromChat(userId, addGoalUse.input as Record<string, unknown>) : null;
+      const thesisResult =
+        recordThesisUse && userId ? await recordThesis(userId, recordThesisUse.input as Record<string, unknown>) : null;
+      const principleResult =
+        setPrincipleUse && userId ? await setPrinciple(userId, setPrincipleUse.input as Record<string, unknown>) : null;
 
       const replyText =
         holdingResult?.message ??
@@ -490,6 +641,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
         incomeResult?.message ??
         liabilityResult?.message ??
         goalResult?.message ??
+        thesisResult?.message ??
+        principleResult?.message ??
         (text || "카드에 반영했어.");
 
       // 웹은 매 요청마다 자기 쪽 history를 통째로 보내니(한 번의 새 user

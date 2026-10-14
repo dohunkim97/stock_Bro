@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateBriefing, pushBriefingToTelegram, BRIEFING_SLOTS, type BriefingSlot } from "@/lib/market-briefing";
-import { todayISO } from "@/lib/dates";
+import { todayISO, weekdayLabel } from "@/lib/dates";
+import { sendWeeklyPortfolioDigest } from "@/lib/portfolio-alerts";
 
 export const maxDuration = 60;
 
@@ -24,6 +25,12 @@ export async function GET(req: NextRequest) {
     // 텔레그램 연결된 사용자에게 먼저 보내기 — 실패해도 브리핑 생성 자체는
     // 이미 끝났으니 크론을 실패 처리하지 않는다.
     await pushBriefingToTelegram(date, slot as BriefingSlot).catch((e) => console.error("[daily-briefing] push failed", e));
+
+    // 주간 자산 진단(module ⑨) — 새 크론을 못 만들어(Hobby 12개 한도) 매주
+    // 금요일 장마감 브리핑에 얹는다.
+    if (slot === "close" && weekdayLabel(date) === "금") {
+      await sendWeeklyPortfolioDigest().catch((e) => console.error("[daily-briefing] weekly digest failed", e));
+    }
     return NextResponse.json({ ok: true, slot });
   } catch (e) {
     const message = e instanceof Error ? e.message : "브리핑 생성 실패";

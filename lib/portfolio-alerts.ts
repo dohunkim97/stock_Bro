@@ -19,6 +19,65 @@ import { STATE_ICON, STATE_RANK, type AssessmentState } from "@/lib/holding-asse
 
 export type AlertRunSummary = { usersChecked: number; messagesSent: number };
 
+// module ⑨ "주간 자산 진단" — 매주 금요일 장마감 브리핑(app/api/cron/daily-
+// briefing)에 얹어서 돈다(새 크론 못 만드는 건 위 설명과 같은 이유). 순자산
+// 변화는 FinancialSnapshot(둥지 방문 시 하루 1행 upsert)에 기록이 있을 때만
+// — 일주일간 둥지를 안 열었으면 억지로 추정하지 않고 "데이터 없음"이라 한다.
+export async function sendWeeklyPortfolioDigest(): Promise<AlertRunSummary> {
+  const users = await prisma.user.findMany({ where: { telegramChatId: { not: null } }, select: { id: true, telegramChatId: true } });
+  let usersChecked = 0;
+  let messagesSent = 0;
+
+  for (const user of users) {
+    if (!user.telegramChatId) continue;
+    const holdings = await getHoldings(user.id);
+    if (holdings.length === 0) continue;
+    usersChecked++;
+
+    try {
+      const report = await getAssessmentReport(user.id);
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      const weekAgoISO = sevenDaysAgo.toISOString().slice(0, 10);
+
+      const [latestSnap, pastSnap] = await Promise.all([
+        prisma.financialSnapshot.findFirst({ where: { userId: user.id }, orderBy: { date: "desc" } }),
+        prisma.financialSnapshot.findFirst({ where: { userId: user.id, date: { lte: weekAgoISO } }, orderBy: { date: "desc" } }),
+      ]);
+
+      const lines = [`📅 주간 자산 진단 (${report.date})`];
+      if (latestSnap && pastSnap) {
+        const diff = latestSnap.netWorth - pastSnap.netWorth;
+        const diffPct = pastSnap.netWorth !== 0 ? (diff / Math.abs(pastSnap.netWorth)) * 100 : null;
+        lines.push(
+          `순자산 ${Math.round(latestSnap.netWorth).toLocaleString()}원 (1주일 전 대비 ${diff >= 0 ? "+" : ""}${Math.round(diff).toLocaleString()}원${diffPct !== null ? ` / ${diff >= 0 ? "+" : ""}${diffPct.toFixed(1)}%` : ""})`
+        );
+      } else {
+        lines.push("순자산 변화: 1주일 전 기록이 없어 비교 못 함(둥지를 방문해야 그날 스냅샷이 남아).");
+      }
+
+      const byState = { 유지: 0, 관찰: 0, 축소검토: 0, 정밀점검: 0 };
+      for (const a of report.assessments) byState[a.state]++;
+      lines.push(
+        `종목 판정: 유지 ${byState.유지} · 관찰 ${byState.관찰} · 축소검토 ${byState.축소검토} · 정밀점검 ${byState.정밀점검}`
+      );
+
+      const risky = report.assessments.filter((a) => a.state === "축소검토" || a.state === "정밀점검").slice(0, 3);
+      if (risky.length > 0) {
+        lines.push("주의가 필요한 종목:", ...risky.map((a) => `- ${a.name}: ${a.state} (${a.stateNote})`));
+      }
+      if (report.flags.length > 0) lines.push("포트폴리오 경고:", ...report.flags.map((f) => `- ${f.text}`));
+
+      const sent = await sendTelegramMessage(user.telegramChatId, lines.join("\n"));
+      if (sent) messagesSent++;
+    } catch (e) {
+      console.error("[weekly-digest] failed for user", user.id, e);
+    }
+  }
+
+  return { usersChecked, messagesSent };
+}
+
 async function alertLinesFor(userId: string, report: AssessmentReport): Promise<string[]> {
   const date = report.date;
   const lines: string[] = [];

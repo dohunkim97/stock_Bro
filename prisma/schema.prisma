@@ -530,6 +530,7 @@ model User {
   image     String?
   role      String   @default("user") // "user" | "admin"
   telegramChatId String? @unique // 골구가 먼저 말 거는 능동적 알림(손절/판정 악화) 수신처. app/api/telegram/webhook이 발견을 돕는다.
+  investmentPrinciples String? // 채팅으로 말해준 "나는 이런 원칙으로 투자해" 한 덩어리 텍스트(set_investment_principle 도구) — 쌓지 않고 최신 걸로 교체
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -543,6 +544,26 @@ model User {
   portfolioAssessments PortfolioAssessment[]
   portfolioAlertLogs   PortfolioAlertLog[]
   chatMessages         ChatMessage[]
+  holdingTheses        HoldingThesis[]
+}
+
+// "왜 이 종목을 샀는지/계속 들고 가는지"와 "어떤 조건이면 그 논리가 깨졌다고
+// 볼지" — 채팅으로 말해준 걸 기록해(record_investment_thesis 도구), 보유종목
+// 전담 분석("~보유 이유 아직 유효해?")이 지금 신호와 이 논리를 대조한다.
+// 종목당 하나(계속 갱신) — 논리가 바뀌면 덮어쓰고, 과거 버전은 안 남긴다
+// (Phase 1 범위; 필요해지면 이력 테이블로 분리).
+model HoldingThesis {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code         String
+  name         String
+  reason       String
+  invalidation String? // 이 논리가 무효화되는 조건(예: "영업이익률 10% 밑으로 떨어지면")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, code])
 }
 
 // 능동적 알림(lib/portfolio-alerts.ts)이 같은 악화를 하루에 여러 번 보내지 않게

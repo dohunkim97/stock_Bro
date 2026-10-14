@@ -16,6 +16,16 @@ export const STATE_ICON: Record<AssessmentState, string> = { 유지: "🟢", 관
 
 export type SignalKey = "chart" | "flow" | "volume" | "financial";
 
+// "이 신호 어디서 나온 거야"에 답할 수 있게 신호별 출처를 고정 라벨로 —
+// Signal 자체에 필드를 추가하면 PortfolioAssessment.signals에 이미 저장된
+// 과거 JSON 모양이 달라져 파싱이 꼬일 수 있어, 저장하지 않는 별도 상수로 둔다.
+export const SIGNAL_SOURCE_LABEL: Record<SignalKey, string> = {
+  chart: "KIS 일봉(20·60일 이동평균)",
+  flow: "KIS 투자자별 매매동향(최근 5거래일 외국인·기관)",
+  volume: "KIS 일봉 거래량(최근 5일 vs 직전 20일)",
+  financial: "KRX 재무제표(최근 3개년)",
+};
+
 export type Signal = {
   key: SignalKey;
   label: string;
