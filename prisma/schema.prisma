@@ -261,6 +261,15 @@ model ChatMessage {
   @@index([userId, date])
 }
 
+// 텔레그램 webhook 중복 전달(응답이 늦으면 재시도함) 방지 — update_id는 이
+// 봇 전체에서 유일/단조증가라, 이미 처리한 update_id면 그대로 재처리(지출/
+// 매수 기록이 두 번 쌓이는 것 등)를 막는다. updateId만으로 충분해 다른
+// 컬럼은 없다.
+model TelegramProcessedUpdate {
+  updateId  Int      @id
+  createdAt DateTime @default(now())
+}
+
 // Articles forwarded from Telegram into the bot (see app/api/telegram/webhook).
 // messageId is unique per chat, not globally — Telegram also retries webhook
 // deliveries on timeout, so the composite unique key makes storage idempotent.

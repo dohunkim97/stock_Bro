@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateBriefing, BRIEFING_SLOTS, type BriefingSlot } from "@/lib/market-briefing";
+import { generateBriefing, pushBriefingToTelegram, BRIEFING_SLOTS, type BriefingSlot } from "@/lib/market-briefing";
 import { todayISO } from "@/lib/dates";
 
 export const maxDuration = 60;
@@ -19,7 +19,11 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    await generateBriefing(slot as BriefingSlot, todayISO());
+    const date = todayISO();
+    await generateBriefing(slot as BriefingSlot, date);
+    // 텔레그램 연결된 사용자에게 먼저 보내기 — 실패해도 브리핑 생성 자체는
+    // 이미 끝났으니 크론을 실패 처리하지 않는다.
+    await pushBriefingToTelegram(date, slot as BriefingSlot).catch((e) => console.error("[daily-briefing] push failed", e));
     return NextResponse.json({ ok: true, slot });
   } catch (e) {
     const message = e instanceof Error ? e.message : "브리핑 생성 실패";
