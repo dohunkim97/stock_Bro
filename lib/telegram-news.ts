@@ -15,7 +15,9 @@ export type TelegramUpdate = {
   };
 };
 
-function extractLink(text: string): string | undefined {
+// webhook(app/api/telegram/webhook)이 "기사 링크면 제보, 아니면 대화"로
+// 갈라 처리하는 데 같은 판정을 재사용하려고 export한다.
+export function extractLink(text: string): string | undefined {
   const m = text.match(URL_RE);
   return m ? m[0].replace(/[)\].,!?]+$/, "") : undefined;
 }
