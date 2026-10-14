@@ -96,6 +96,47 @@ export async function removeExpenseRecord(userId: string, id: string) {
   return prisma.expenseRecord.deleteMany({ where: { id, userId } }).catch(() => null);
 }
 
+function startOfWeekISO(dateISO: string): string {
+  const [y, m, d] = dateISO.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  const day = date.getDay(); // 0=일 .. 6=토
+  const diffToMonday = day === 0 ? 6 : day - 1;
+  date.setDate(date.getDate() - diffToMonday);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function startOfMonthISO(dateISO: string): string {
+  return `${dateISO.slice(0, 7)}-01`;
+}
+
+export type ExpenseSummary = {
+  periodLabel: string;
+  from: string;
+  to: string;
+  total: number;
+  count: number;
+  byCategory: { category: string; amount: number }[];
+};
+
+// 채팅에서 "이번주/이번달 얼마 썼어" 질문에 쓰는 실제 집계 — LLM이 대충
+// 어림잡지 않고 이 숫자를 그대로 인용하게 lib/golgoo-chat.ts가 시스템
+// 프롬프트에 블록으로 넣는다(portfolioBlock과 같은 원칙).
+export async function getExpenseSummary(userId: string, period: "today" | "week" | "month"): Promise<ExpenseSummary> {
+  const to = todayISO();
+  const from = period === "today" ? to : period === "week" ? startOfWeekISO(to) : startOfMonthISO(to);
+  const rows = await prisma.expenseRecord.findMany({
+    where: { userId, date: { gte: from, lte: to } },
+    select: { category: true, amount: true },
+  });
+  const byCategoryMap = new Map<string, number>();
+  for (const r of rows) byCategoryMap.set(r.category, (byCategoryMap.get(r.category) ?? 0) + r.amount);
+  const byCategory = [...byCategoryMap.entries()]
+    .map(([category, amount]) => ({ category, amount }))
+    .sort((a, b) => b.amount - a.amount);
+  const periodLabel = period === "today" ? "오늘" : period === "week" ? "이번주" : "이번달";
+  return { periodLabel, from, to, total: rows.reduce((s, r) => s + r.amount, 0), count: rows.length, byCategory };
+}
+
 async function sumRecentIncome(userId: string, days: number): Promise<number> {
   const rows = await prisma.incomeRecord.findMany({
     where: { userId, date: { gte: daysAgoISO(days) } },

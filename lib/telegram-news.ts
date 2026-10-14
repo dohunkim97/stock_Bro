@@ -4,11 +4,14 @@ import { extractThemes, saveThemes } from "@/lib/theme-extraction";
 const URL_RE = /https?:\/\/\S+/;
 
 export type TelegramUpdate = {
+  update_id?: number;
   message?: {
     message_id: number;
     chat: { id: number | string };
     text?: string;
     caption?: string;
+    voice?: { file_id: string; duration?: number };
+    photo?: { file_id: string; width: number; height: number }[]; // 작은 것부터 큰 것 순
     forward_from?: { first_name?: string; last_name?: string };
     forward_from_chat?: { title?: string };
     forward_sender_name?: string;

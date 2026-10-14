@@ -19,8 +19,8 @@ import {
   getPortfolioSettings,
   resolveHoldingCode,
 } from "@/lib/portfolio";
-import { addExpenseRecord } from "@/lib/finance-engine";
-import { EXPENSE_CATEGORIES } from "@/lib/finance-constants";
+import { addExpenseRecord, addIncomeRecord, addLiability, addFinancialGoal, getExpenseSummary } from "@/lib/finance-engine";
+import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "@/lib/finance-constants";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -179,7 +179,9 @@ const RECORD_EXPENSE_TOOL: Anthropic.Tool = {
 
 type RecordExpenseResult = { ok: boolean; message: string };
 
-async function recordExpense(
+// export됨 — lib/telegram-chat.ts가 영수증 사진 OCR(이미 구조화된 결과)을
+// 도구 왕복 없이 바로 기록할 때도 이 함수를 그대로 쓴다.
+export async function recordExpense(
   userId: string,
   input: { amount?: unknown; category?: unknown; memo?: unknown }
 ): Promise<RecordExpenseResult> {
@@ -194,6 +196,134 @@ async function recordExpense(
   await addExpenseRecord(userId, { date: todayISO(), category, amount, memo });
 
   return { ok: true, message: `✅ 지출 기록했어: ${category} ₩${amount.toLocaleString()}${memo ? ` (${memo})` : ""}` };
+}
+
+// 일상 수입 보고("월급 300만원 들어왔어", "부업으로 20만원 벌었어")를 들었을 때
+// 호출하는 도구 — record_expense와 반대쪽. 숫자 기록은 서버가, 모델은 추출만.
+const RECORD_INCOME_TOOL: Anthropic.Tool = {
+  name: "record_income",
+  description:
+    "사용자가 실제로 돈이 들어왔다고 말했을 때만 호출해(예: '월급 300만원 들어왔어', '부업으로 20만원 벌었어', '보너스 50만원 받았어'). " +
+    "돈을 쓴 거면(지출) 이 도구 대신 record_expense를 써. amount(금액)는 필수고, 못 들었으면 호출하지 말고 되물어봐.",
+  input_schema: {
+    type: "object",
+    properties: {
+      amount: { type: "number", description: "수입 금액(원). 필수." },
+      category: { type: "string", enum: [...INCOME_CATEGORIES], description: "가장 가까운 카테고리 하나. 애매하면 '기타'." },
+      memo: { type: "string", description: "짧은 메모. 모르면 생략." },
+    },
+    required: ["amount"],
+  },
+};
+
+type RecordIncomeResult = { ok: boolean; message: string };
+
+async function recordIncome(userId: string, input: { amount?: unknown; category?: unknown; memo?: unknown }): Promise<RecordIncomeResult> {
+  const amount = typeof input.amount === "number" && input.amount > 0 ? Math.round(input.amount) : null;
+  if (amount === null) return { ok: false, message: "얼마 들어왔는지 금액을 말해줄래?" };
+  const category =
+    typeof input.category === "string" && (INCOME_CATEGORIES as readonly string[]).includes(input.category) ? input.category : "기타";
+  const memo = typeof input.memo === "string" && input.memo.trim() ? input.memo.trim() : undefined;
+  await addIncomeRecord(userId, { date: todayISO(), category, amount, memo });
+  return { ok: true, message: `✅ 수입 기록했어: ${category} ₩${amount.toLocaleString()}${memo ? ` (${memo})` : ""}` };
+}
+
+// 새 대출/빚이 생겼다는 보고("학자금 대출 500만원 받았어")를 들었을 때 호출 —
+// 기존 부채 수정/상환 완료는 아직 이 도구 범위 밖(새 행 추가만).
+const RECORD_LIABILITY_TOOL: Anthropic.Tool = {
+  name: "record_liability",
+  description:
+    "사용자가 새로운 대출/빚이 생겼다고 말했을 때만 호출해(예: '학자금 대출 500만원 받았어', '카드론 300만원 있어'). " +
+    "기존 빚의 상환이나 금액 수정 요청이면 이 도구를 쓰지 말고 둥지(수입·지출·부채 탭)에서 직접 고치라고 안내해. principal(원금)은 필수.",
+  input_schema: {
+    type: "object",
+    properties: {
+      name: { type: "string", description: "부채 이름(예: '학자금 대출'). 모르면 생략." },
+      type: { type: "string", enum: ["신용대출", "전세자금대출", "카드론", "기타"], description: "모르면 '기타'." },
+      principal: { type: "number", description: "원금(원). 필수." },
+      interestRate: { type: "number", description: "연 금리(%). 모르면 생략(0으로 기록)." },
+    },
+    required: ["principal"],
+  },
+};
+
+type RecordLiabilityResult = { ok: boolean; message: string };
+
+async function recordLiability(
+  userId: string,
+  input: { name?: unknown; type?: unknown; principal?: unknown; interestRate?: unknown }
+): Promise<RecordLiabilityResult> {
+  const principal = typeof input.principal === "number" && input.principal > 0 ? Math.round(input.principal) : null;
+  if (principal === null) return { ok: false, message: "원금이 얼마인지 말해줄래?" };
+  const name = typeof input.name === "string" && input.name.trim() ? input.name.trim() : "대출";
+  const type =
+    typeof input.type === "string" && ["신용대출", "전세자금대출", "카드론", "기타"].includes(input.type) ? input.type : "기타";
+  const interestRate = typeof input.interestRate === "number" && input.interestRate >= 0 ? input.interestRate : 0;
+  await addLiability(userId, { name, type, principal, interestRate });
+  return { ok: true, message: `✅ 부채 기록했어: ${name} ₩${principal.toLocaleString()} (금리 ${interestRate}%)` };
+}
+
+// 새 재무 목표 추가("2030년까지 1억 모으기 목표 추가해줘") — targetDate 없이는
+// lib/finance-goal-math.ts의 달성일 계산이 안 돼서 반드시 받아야 한다.
+const ADD_GOAL_TOOL: Anthropic.Tool = {
+  name: "add_financial_goal",
+  description:
+    "사용자가 새 저축/투자 목표를 만들어달라고 했을 때만 호출해(예: '2030년까지 1억 모으기 목표 추가해줘'). " +
+    "targetAmount와 targetDate가 둘 다 있어야 호출할 수 있어 — 목표일을 안 말했으면 호출하지 말고 먼저 언제까지인지 물어봐. " +
+    "targetDate는 반드시 YYYY-MM-DD로 변환해(예: '2030년까지'면 2030-12-31).",
+  input_schema: {
+    type: "object",
+    properties: {
+      name: { type: "string", description: "목표 이름(예: '첫 1억'). 모르면 금액 기반으로 자동 생성." },
+      targetAmount: { type: "number", description: "목표 금액(원). 필수." },
+      targetDate: { type: "string", description: "목표일 YYYY-MM-DD. 필수." },
+      monthlyContribution: { type: "number", description: "현재 월 투자금(원). 모르면 0." },
+    },
+    required: ["targetAmount", "targetDate"],
+  },
+};
+
+type AddGoalResult = { ok: boolean; message: string };
+
+async function addGoalFromChat(
+  userId: string,
+  input: { name?: unknown; targetAmount?: unknown; targetDate?: unknown; monthlyContribution?: unknown }
+): Promise<AddGoalResult> {
+  const targetAmount = typeof input.targetAmount === "number" && input.targetAmount > 0 ? Math.round(input.targetAmount) : null;
+  const targetDate = typeof input.targetDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input.targetDate) ? input.targetDate : null;
+  if (targetAmount === null || targetDate === null) {
+    return { ok: false, message: "목표 금액이랑 언제까지인지(연도면 충분해) 둘 다 말해줄래?" };
+  }
+  const monthlyContribution =
+    typeof input.monthlyContribution === "number" && input.monthlyContribution >= 0 ? input.monthlyContribution : 0;
+  const name = typeof input.name === "string" && input.name.trim() ? input.name.trim() : `${targetAmount.toLocaleString()}원 목표`;
+  await addFinancialGoal(userId, { name, targetAmount, targetDate, monthlyContribution });
+  return { ok: true, message: `✅ 목표 추가했어: ${name}, ${targetDate}까지 ₩${targetAmount.toLocaleString()}` };
+}
+
+// "이번주/이번달/오늘 얼마 썼어" — LLM이 대충 말하지 않게 실제 집계(lib/
+// finance-engine.ts)를 코드로 계산해 시스템 프롬프트에 블록으로 넣어준다
+// (buildPortfolioBlock과 같은 원칙). record_expense 같은 "쓰기" 도구와 달리
+// 이건 조회라 Anthropic 도구 왕복 없이 매 턴 키워드로 감지해 먼저 계산한다.
+const EXPENSE_SUMMARY_RE = /이번\s*주.*(얼마|지출)|이번\s*달.*(얼마|지출)|오늘.*(얼마|지출).*(썼|썼어|지출)|얼마\s*썼/;
+
+function detectExpensePeriod(text: string): "today" | "week" | "month" | null {
+  if (!EXPENSE_SUMMARY_RE.test(text)) return null;
+  if (/이번\s*달/.test(text)) return "month";
+  if (/이번\s*주/.test(text)) return "week";
+  return "today";
+}
+
+async function buildExpenseSummaryBlock(userId: string, text: string): Promise<string> {
+  const period = detectExpensePeriod(text);
+  if (!period) return "";
+  const s = await getExpenseSummary(userId, period);
+  const lines = [
+    `\n\n[지출 집계 — 아래 숫자를 그대로 근거로 써, 직접 계산하지 마]`,
+    `${s.periodLabel}(${s.from}~${s.to}) 총 지출 ₩${s.total.toLocaleString()} (${s.count}건)`,
+  ];
+  for (const c of s.byCategory) lines.push(`- ${c.category}: ₩${c.amount.toLocaleString()}`);
+  return lines.join("\n");
 }
 
 // "내 포트폴리오 어때", "리포트 줘" 류 질문에 바로 답할 수 있게 둥지 현황을
@@ -283,6 +413,7 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   // 불필요하게 외부 API를 때리지 않는다.
   const wantsPortfolioInfo = !!lastUser && /포트폴리오|보유\s*종목|둥지|내\s*자산|수익률|평가\s*금액|리포트|계좌/.test(lastUser.content);
   const portfolioBlock = userId && wantsPortfolioInfo ? await buildPortfolioBlock(userId) : "";
+  const expenseSummaryBlock = userId && lastUser ? await buildExpenseSummaryBlock(userId, lastUser.content) : "";
 
   const client = new Anthropic();
   const baseSystem = await buildSystemPrompt();
@@ -295,11 +426,16 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
     ? ""
     : "\n\n[참고] 이 사용자는 로그인하지 않았어 — '얼마 샀어'/'~썼어'처럼 기록을 요청하면 기록할 수 없고, 구글로 로그인하면 둥지에 자동으로 기록된다고 안내해줘.";
   const system =
-    baseSystem + cardsBlock + (reports.length > 0 ? "\n\n" + stockContextBlock(reports) : "") + portfolioBlock + loginNote;
+    baseSystem +
+    cardsBlock +
+    (reports.length > 0 ? "\n\n" + stockContextBlock(reports) : "") +
+    portfolioBlock +
+    expenseSummaryBlock +
+    loginNote;
 
   const tools: Anthropic.Tool[] = [];
   if (cards) tools.push(ADJUST_TOOL); // 화면 카드 개념이 있는 채널(웹)에서만
-  if (userId) tools.push(RECORD_HOLDING_TOOL, RECORD_EXPENSE_TOOL);
+  if (userId) tools.push(RECORD_HOLDING_TOOL, RECORD_EXPENSE_TOOL, RECORD_INCOME_TOOL, RECORD_LIABILITY_TOOL, ADD_GOAL_TOOL);
 
   const anthropicMessages = messages.map((m) => ({ role: m.role, content: m.content }));
 
@@ -328,18 +464,33 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
 
       // record_* 도구는 실제 DB 쓰기라서, 결과를 모른 채 같은 턴에 생성된
       // 모델의 말보다 실행 결과 메시지를 우선한다(성공/실패는 실행 후에야 안다).
-      const recordHoldingUse = response.content.find(
-        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === "record_holding_purchase"
-      );
-      const recordExpenseUse = response.content.find(
-        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === "record_expense"
-      );
+      // 한 턴에 하나만 부를 걸 기대하지만(도구 설명이 서로 다른 의도), 혹시
+      // 여럿이 겹치면 이 순서(매수>지출>수입>부채>목표)로 하나만 반영한다.
+      const findTool = (name: string) =>
+        response.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === name);
+      const recordHoldingUse = findTool("record_holding_purchase");
+      const recordExpenseUse = findTool("record_expense");
+      const recordIncomeUse = findTool("record_income");
+      const recordLiabilityUse = findTool("record_liability");
+      const addGoalUse = findTool("add_financial_goal");
+
       const holdingResult =
         recordHoldingUse && userId ? await recordHoldingPurchase(userId, recordHoldingUse.input as Record<string, unknown>) : null;
       const expenseResult =
         recordExpenseUse && userId ? await recordExpense(userId, recordExpenseUse.input as Record<string, unknown>) : null;
+      const incomeResult =
+        recordIncomeUse && userId ? await recordIncome(userId, recordIncomeUse.input as Record<string, unknown>) : null;
+      const liabilityResult =
+        recordLiabilityUse && userId ? await recordLiability(userId, recordLiabilityUse.input as Record<string, unknown>) : null;
+      const goalResult = addGoalUse && userId ? await addGoalFromChat(userId, addGoalUse.input as Record<string, unknown>) : null;
 
-      const replyText = holdingResult?.message ?? expenseResult?.message ?? (text || "카드에 반영했어.");
+      const replyText =
+        holdingResult?.message ??
+        expenseResult?.message ??
+        incomeResult?.message ??
+        liabilityResult?.message ??
+        goalResult?.message ??
+        (text || "카드에 반영했어.");
 
       // 웹은 매 요청마다 자기 쪽 history를 통째로 보내니(한 번의 새 user
       // 턴만 추가된 상태) 저장은 그 새 턴 하나만 — 아래 lastUser.content가
