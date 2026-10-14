@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runIntradayCycle } from "@/lib/intraday-signal";
+import { sendPortfolioAlerts } from "@/lib/portfolio-alerts";
 
-export const maxDuration = 30;
+// 둥지 능동적 알림(lib/portfolio-alerts.ts)이 종목마다 시세·차트·수급·재무를
+// 더 가져오는 만큼 기존 30초로는 빠듯해질 수 있어 60초(Vercel Hobby 상한)로.
+export const maxDuration = 60;
 
 // 장중(09:00~15:00 KST) 매 정시마다 호출되는 장중 시그널 크론 — 원래
 // scan(1분 간격)/monitor(5분 간격) 크론 2개로 나뉘어 있었는데, 배포가
@@ -16,17 +19,29 @@ export const maxDuration = 30;
 // 이 라우트 자체는 "몇 시에 불렸는지"를 몰라도 되고(runIntradayCycle이
 // 매번 현재 시각을 직접 읽어서 스캔/모니터링/장마감 강제청산을 알아서
 // 갈라 처리) — 그래서 slot 값 자체는 여기서 아예 안 쓴다.
+//
+// 둥지 능동적 알림도 크론을 새로 못 만들어(Hobby 12개 한도 이미 꽉 참) 여기
+// 얹어서 같이 돈다 — 시장 전체 후보 스캔과는 무관한 일이라 실패해도
+// runIntradayCycle에 영향 주지 않게 완전히 분리해서 둘 다 시도한다.
 export async function GET(req: NextRequest) {
   const auth = req.headers.get("authorization");
   if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  try {
-    await runIntradayCycle();
-    return NextResponse.json({ ok: true });
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "장중 시그널 처리 실패";
-    return NextResponse.json({ error: message }, { status: 500 });
+  const results = await Promise.allSettled([runIntradayCycle(), sendPortfolioAlerts()]);
+  const [cycle, alerts] = results;
+
+  if (cycle.status === "rejected") {
+    const message = cycle.reason instanceof Error ? cycle.reason.message : "장중 시그널 처리 실패";
+    return NextResponse.json(
+      { error: message, alerts: alerts.status === "fulfilled" ? alerts.value : null },
+      { status: 500 }
+    );
   }
+
+  return NextResponse.json({
+    ok: true,
+    alerts: alerts.status === "fulfilled" ? alerts.value : { error: String(alerts.reason) },
+  });
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/modal";
 import { MoneyInput } from "@/components/ui/money-input";
@@ -32,6 +32,96 @@ const TARGET_FIELDS: { key: keyof PortfolioSettingsData; label: string }[] = [
   { key: "targetAltPct", label: "목표 대체자산 비중" },
   { key: "targetCashPct", label: "목표 현금 비중" },
 ];
+
+// 둥지 능동적 알림(lib/portfolio-alerts.ts)을 받을 텔레그램 chat id 연결 —
+// 발견 방법은 app/api/telegram/webhook/route.ts: 봇한테 아무 메시지나 보내면
+// 답장으로 자기 chat id를 알려준다. 포트폴리오 설정(PortfolioSettings)과는
+// 다른 테이블(User.telegramChatId)이라 저장 버튼도 따로 둔다 — 하나가
+// 실패해도 다른 하나는 그대로 저장되게.
+function TelegramAlertSection() {
+  const [chatId, setChatId] = useState("");
+  const [linked, setLinked] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/account/telegram")
+      .then((r) => r.json())
+      .then((d) => {
+        setLinked(d?.telegramChatId ?? null);
+        setChatId(d?.telegramChatId ?? "");
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const res = await fetch("/api/account/telegram", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data?.error ?? "저장하지 못했어요");
+        return;
+      }
+      setLinked(data.telegramChatId);
+      setSaved(true);
+    } catch {
+      setError("저장하지 못했어요");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: 11.5, color: "var(--faint)", marginBottom: 8, fontWeight: 700 }}>🔔 텔레그램 알림</div>
+      <div style={{ fontSize: 11.5, color: "var(--dim)", lineHeight: 1.6, marginBottom: 8 }}>
+        보유 종목 판정이 나빠지면 골구가 먼저 메시지를 보내요. 받으려면 텔레그램에서 봇에게 아무 메시지나 보내봐 —
+        chat id를 답장으로 알려줘요. 그 번호를 아래에 넣고 저장하면 돼요.
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input
+          value={chatId}
+          onChange={(e) => setChatId(e.target.value)}
+          placeholder={loading ? "불러오는 중..." : "chat id (숫자)"}
+          disabled={loading}
+          style={{ ...fieldStyle, flex: 1 }}
+        />
+        <button
+          onClick={save}
+          disabled={busy || loading}
+          style={{
+            border: "1px solid var(--border)",
+            background: "var(--panel2)",
+            color: "var(--dim)",
+            borderRadius: 8,
+            padding: "0 14px",
+            fontSize: 12.5,
+            cursor: busy ? "default" : "pointer",
+          }}
+        >
+          {busy ? "저장 중..." : "저장"}
+        </button>
+      </div>
+      {error && <div style={{ fontSize: 11, color: "var(--up)", marginTop: 6 }}>{error}</div>}
+      {saved && !error && <div style={{ fontSize: 11, color: "var(--accent)", marginTop: 6 }}>저장했어요.</div>}
+      {!loading && (
+        <div style={{ fontSize: 11, color: "var(--faint)", marginTop: 6 }}>
+          {linked ? `연결됨 (${linked})` : "아직 연결 안 됨 — 비워두면 알림 없이 그대로예요"}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // 상단 요약 바/도넛 차트가 쓰는 값(총 시드·현금·채권·대체자산·목표 비중)을
 // 편집하는 모달. 이 값들은 실시간 시세가 없는 항목(채권/대체자산/현금)이라
@@ -127,6 +217,8 @@ export function SettingsEditor({ settings }: { settings: PortfolioSettingsData }
               ))}
             </div>
           </div>
+
+          <TelegramAlertSection />
 
           {error && <div style={{ fontSize: 11.5, color: "var(--up)" }}>{error}</div>}
 

@@ -512,6 +512,7 @@ model User {
   name      String?
   image     String?
   role      String   @default("user") // "user" | "admin"
+  telegramChatId String? @unique // 골구가 먼저 말 거는 능동적 알림(손절/판정 악화) 수신처. app/api/telegram/webhook이 발견을 돕는다.
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -523,6 +524,22 @@ model User {
   financialGoals    FinancialGoal[]
   financialSnapshots FinancialSnapshot[]
   portfolioAssessments PortfolioAssessment[]
+  portfolioAlertLogs   PortfolioAlertLog[]
+}
+
+// 능동적 알림(lib/portfolio-alerts.ts)이 같은 악화를 하루에 여러 번 보내지 않게
+// 막는 중복 방지 로그 — 종목 하나의 "오늘, 이 상태로 악화됐다"는 한 번만 보낸다.
+// 같은 날 더 나빠지면(예: 축소검토 → 정밀점검) toState가 달라지므로 다시 보낸다.
+model PortfolioAlertLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code      String
+  date      String // YYYY-MM-DD
+  toState   String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, code, date])
 }
 
 // 둥지 "AI 골구 종목 진단"(lib/holding-assessment.ts)의 하루 한 건 판정 기록 —
