@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { marketDataBlock, weeklyTrendBlock } from "@/lib/bro-context";
 import { getTelegramNewsSince } from "@/lib/telegram-news";
 import { sendTelegramMessage } from "@/lib/telegram-send";
+import { saveAssistantBroadcast } from "@/lib/chat-history";
 import { fetchKisLiveSnapshot, type KisRankRow } from "@/lib/kis-ranking";
 import { fetchKisNewsForCodes, type KisNewsItem } from "@/lib/kis-news";
 import { formatChg } from "@/lib/format";
@@ -312,6 +313,13 @@ export async function pushBriefingToTelegram(date: string, slot: BriefingSlot): 
   if (!row) return;
   const text = formatBriefingForTelegram(row);
 
-  const users = await prisma.user.findMany({ where: { telegramChatId: { not: null } }, select: { telegramChatId: true } });
-  await Promise.all(users.map((u) => sendTelegramMessage(u.telegramChatId!, text)));
+  const users = await prisma.user.findMany({ where: { telegramChatId: { not: null } }, select: { id: true, telegramChatId: true } });
+  await Promise.all(
+    users.map(async (u) => {
+      const sent = await sendTelegramMessage(u.telegramChatId!, text);
+      // 채팅 기록에도 남겨야(아래 함수 설명 참고) "이 섹터 더 자세히 말해줘"
+      // 처럼 방금 받은 브리핑에 이어 묻는 질문에 골구가 맥락을 갖고 답한다.
+      if (sent) await saveAssistantBroadcast(u.id, date, text);
+    })
+  );
 }

@@ -15,6 +15,7 @@ import { prisma } from "@/lib/prisma";
 import { getHoldings } from "@/lib/portfolio";
 import { getAssessmentReport, type AssessmentReport } from "@/lib/holding-assessment-store";
 import { sendTelegramMessage } from "@/lib/telegram-send";
+import { saveAssistantBroadcast } from "@/lib/chat-history";
 import { STATE_ICON, STATE_RANK, type AssessmentState } from "@/lib/holding-assessment";
 
 export type AlertRunSummary = { usersChecked: number; messagesSent: number };
@@ -68,8 +69,12 @@ export async function sendWeeklyPortfolioDigest(): Promise<AlertRunSummary> {
       }
       if (report.flags.length > 0) lines.push("포트폴리오 경고:", ...report.flags.map((f) => `- ${f.text}`));
 
-      const sent = await sendTelegramMessage(user.telegramChatId, lines.join("\n"));
-      if (sent) messagesSent++;
+      const text = lines.join("\n");
+      const sent = await sendTelegramMessage(user.telegramChatId, text);
+      if (sent) {
+        messagesSent++;
+        await saveAssistantBroadcast(user.id, report.date, text);
+      }
     } catch (e) {
       console.error("[weekly-digest] failed for user", user.id, e);
     }
@@ -127,9 +132,12 @@ export async function sendPortfolioAlerts(): Promise<AlertRunSummary> {
       const lines = await alertLinesFor(user.id, report);
       if (lines.length === 0) continue;
 
-      const message = `⚠️ 둥지 알림 (${report.date})\n${lines.join("\n")}\n\n자세한 근거는 둥지에서 확인해줘.`;
+      const message = `⚠️ 둥지 알림 (${report.date})\n${lines.join("\n")}\n\n더 자세히 물어봐도 돼, 아니면 둥지에서 확인해줘.`;
       const sent = await sendTelegramMessage(user.telegramChatId, message);
-      if (sent) messagesSent++;
+      if (sent) {
+        messagesSent++;
+        await saveAssistantBroadcast(user.id, report.date, message);
+      }
     } catch (e) {
       console.error("[portfolio-alerts] failed for user", user.id, e);
     }

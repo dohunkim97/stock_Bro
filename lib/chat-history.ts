@@ -72,3 +72,19 @@ export async function saveChatTurn(userId: string | null, date: string, userText
     // swallow
   }
 }
+
+// 골구가 먼저 거는 말(둥지 알림 등, lib/portfolio-alerts.ts)도 이 턴 기록에
+// 남겨야 한다 — 안 남기면 사용자가 텔레그램에서 그 알림에 이어 "자세한
+// 근거도 말해줘"처럼 답했을 때, 그 질문이 getTodayMessagesForChat 맥락에
+// 안 걸려서(무엇에 대한 질문인지 모름) 골구가 엉뚱하게 반응한다(2026-10-15
+// 확인된 버그). 매칭되는 사용자 턴이 없는 assistant 단독 행이라, 그날의
+// 첫 메시지가 이 행이 되면 "그날 메시지"는 assistant로 시작하게 된다 —
+// Claude API는 user로 시작해야 하므로, 호출부(runChatTurn)가 그 경우를
+// 방어적으로 처리한다.
+export async function saveAssistantBroadcast(userId: string, date: string, text: string): Promise<void> {
+  try {
+    await prisma.chatMessage.create({ data: { userId, date, role: "assistant", text } });
+  } catch {
+    // swallow
+  }
+}

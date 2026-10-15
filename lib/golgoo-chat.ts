@@ -583,6 +583,12 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
     );
 
   const anthropicMessages = messages.map((m) => ({ role: m.role, content: m.content }));
+  // Claude API는 메시지 배열이 user 역할로 시작해야 한다 — 골구가 먼저
+  // 말을 거는 날(텔레그램 능동 알림/선제 브리핑, saveAssistantBroadcast로
+  // 저장됨)은 그날의 첫 행이 assistant가 되는데, 그대로 보내면 400 에러가
+  // 난다. 내용은 보존하되(모델이 그 알림을 보고 맥락을 잡게) 앞에 빈
+  // user 턴을 하나 꽂아 순서만 맞춘다.
+  if (anthropicMessages[0]?.role !== "user") anthropicMessages.unshift({ role: "user", content: "(계속)" });
 
   let lastErr: unknown = null;
   for (let i = 0; i < 3; i++) {
@@ -643,7 +649,12 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
         goalResult?.message ??
         thesisResult?.message ??
         principleResult?.message ??
-        (text || "카드에 반영했어.");
+        cardUpdate?.note ??
+        // "카드에 반영했어."는 cardUpdate(=웹의 adjust_strategy)에만 맞는
+        // 말이라, 그 경우가 아닌데 모델이 텍스트도 도구도 없이 끝내면(드물지만
+        // 2026-10-15 텔레그램에서 실제로 발생 — 맥락 없는 질문에 빈 응답)
+        // 채널에 안 맞는 문장 대신 정직하게 다시 물어보는 말로 대체한다.
+        (text || "미안, 지금 질문을 제대로 못 받았어. 다시 한번 말해줄래?");
 
       // 웹은 매 요청마다 자기 쪽 history를 통째로 보내니(한 번의 새 user
       // 턴만 추가된 상태) 저장은 그 새 턴 하나만 — 아래 lastUser.content가
