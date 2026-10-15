@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/daily-briefing?slot=morning",
-      "schedule": "40 0 * * 1-5"
+      "schedule": "40 0 * * 0,1-5"
     },
     {
       "path": "/api/cron/sync-and-briefing?slot=midday",

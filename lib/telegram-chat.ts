@@ -12,12 +12,19 @@ import { runChatTurn, recordExpense } from "@/lib/golgoo-chat";
 import { sendTelegramMessage } from "@/lib/telegram-send";
 import { downloadTelegramFile, transcribeVoice, extractReceiptFromImage } from "@/lib/telegram-media";
 import { getBriefingSlotsForDate, formatBriefingForTelegram } from "@/lib/market-briefing";
+import { getProgress } from "@/lib/learning-journal";
+import { buildDailyMissionMessage } from "@/lib/learning-push";
 
 // 일부러 "리포트 줘"만 단독으론 안 받는다 — "내 포트폴리오 리포트 줘"처럼
 // 개인 자산 쪽을 묻는 말까지 여기로 끌어오면 안 되니(그건 golgoo-chat의
 // wantsPortfolioInfo가 따로 처리), 시황/브리핑/모닝 같은 "시장 전체" 신호가
 // 같이 있을 때만 시장 브리핑으로 받는다.
 const REPORT_RE = /모닝\s*리포트|오늘\s*(브리핑|시황)|브리핑\s*줘|시황\s*(줘|리포트|어때)|장\s*마감\s*리포트/;
+
+// "오늘 미션 다시 보여줘" — 이미 보낸 미션은 그대로 저장돼 있던 값이
+// 아니라 결정적으로 다시 만들 수 있는 값이라(lib/learning-curriculum.ts가
+// day만 보고 같은 내용을 재현), LLM 왕복 없이 바로 재구성해서 보낸다.
+const MISSION_RE = /오늘\s*미션|오늘의\s*미션|미션\s*다시|오늘\s*(학습\s*)?주제\s*(뭐|알려)/;
 
 const strip = (s: string) => s.replace(/\*\*/g, "");
 
@@ -48,6 +55,22 @@ export async function handleTelegramText(userId: string, chatId: string, text: s
     }
     const prefix = briefing.isToday ? "" : "오늘 건 아직이라 최근(전 거래일) 브리핑이야.\n\n";
     await sendTelegramMessage(chatId, prefix + briefing.text);
+    return;
+  }
+
+  if (MISSION_RE.test(text)) {
+    const progress = await getProgress(userId);
+    if (!progress) {
+      await sendTelegramMessage(chatId, '아직 주식 학습 플래닛을 시작 안 했어 — "학습 시작해줘"라고 말해봐!');
+      return;
+    }
+    if (progress.paused) {
+      await sendTelegramMessage(chatId, '지금 학습 플래닛이 멈춰 있어 — "학습 시작해줘"라고 하면 이어서 보낼게.');
+      return;
+    }
+    const day = Math.max(1, progress.currentDay - 1); // 오늘 이미 보낸(또는 보낼) 일차
+    const missionText = await buildDailyMissionMessage(day);
+    await sendTelegramMessage(chatId, missionText);
     return;
   }
 

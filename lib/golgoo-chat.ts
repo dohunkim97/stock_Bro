@@ -27,6 +27,19 @@ import { resolveStock } from "@/lib/market-data";
 import { getAssessmentReport } from "@/lib/holding-assessment-store";
 import { buildHoldingDeepDiveBlock, buildRiskTopBlock, buildScenarioBlock, buildNewsImpactBlock } from "@/lib/golgoo-deep-dive";
 import { cumulativeLearningBlock } from "@/lib/prediction-learning";
+import { fetchKisChart } from "@/lib/kis-chart";
+import { dailyTopicFor } from "@/lib/learning-curriculum";
+import {
+  getProgress,
+  startProgress,
+  pauseProgress,
+  resetProgress,
+  isProgramComplete,
+  advanceAfterPush,
+  upsertJournalEntry,
+  getRecentJournalEntries,
+} from "@/lib/learning-journal";
+import { buildDailyMissionMessage } from "@/lib/learning-push";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -365,6 +378,191 @@ async function setPrinciple(userId: string, input: { principle?: unknown }): Pro
   return { ok: true, message: `✅ 기억해둘게: "${principle}"` };
 }
 
+// 주식 학습 플래닛(lib/learning-curriculum.ts) — 하루치 분석을 끝내고
+// "오늘 ~ 분석했어, 가설은 ~" 식으로 말하면 일지로 기록한다. 일지 자체는
+// 숫자 판정이 아니라 사용자의 생각을 보존하는 기록이라, 모델은 사용자가
+// 말한 내용을 구조화해서 넘기기만 하면 된다(판단은 안 해).
+const RECORD_JOURNAL_TOOL: Anthropic.Tool = {
+  name: "record_learning_journal",
+  description:
+    "사용자가 그날의 투자 공부/분석 내용을 말해주면(예: '오늘 삼성전자 분석했어, 반도체 업황 회복이 근거야') 투자 연구 일지로 기록해. " +
+    "전부 다 들을 때까지 기다리지 말고, 사용자가 말해준 항목만 채워서 호출해 — 나머지는 다음에 더 말하면 그때 또 불러서 보완하면 돼.",
+  input_schema: {
+    type: "object",
+    properties: {
+      marketRegime: { type: "string", description: "오늘 시장 국면 — 상승/하락/횡보/고변동성 중 사용자가 말한 대로" },
+      company: { type: "string", description: "오늘 분석한 기업명" },
+      thesis: { type: "string", description: "투자 가설(왜 오를/내릴 거라고 보는지)" },
+      bullish: { type: "string", description: "상승 근거 — 여러 개면 줄바꿈으로 구분" },
+      bearish: { type: "string", description: "하락 위험 — 여러 개면 줄바꿈으로 구분" },
+      invalidation: { type: "string", description: "이 가설이 틀렸다고 볼 조건" },
+      learnings: { type: "string", description: "오늘 새로 배운 것" },
+    },
+    required: [],
+  },
+};
+
+type RecordJournalResult = { ok: boolean; message: string };
+
+async function recordJournal(
+  userId: string,
+  input: {
+    marketRegime?: unknown;
+    company?: unknown;
+    thesis?: unknown;
+    bullish?: unknown;
+    bearish?: unknown;
+    invalidation?: unknown;
+    learnings?: unknown;
+  }
+): Promise<RecordJournalResult> {
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const company = str(input.company);
+  const resolved = company ? await resolveStock(company) : null;
+
+  const filled = {
+    marketRegime: str(input.marketRegime),
+    company: resolved?.name ?? company,
+    companyCode: resolved?.code ?? null,
+    thesis: str(input.thesis),
+    bullish: str(input.bullish),
+    bearish: str(input.bearish),
+    invalidation: str(input.invalidation),
+    learnings: str(input.learnings),
+  };
+  if (Object.values(filled).every((v) => v === null)) return { ok: false, message: "뭘 기록할지 하나도 못 들었어 — 오늘 분석한 내용을 말해줄래?" };
+
+  await upsertJournalEntry(userId, filled);
+  return { ok: true, message: "✅ 오늘 일지에 기록했어. 일요일에 같이 복습하거나, 나중에 \"내 기록 검토해줘\"라고 하면 지난 가설이랑 실제 결과를 비교해줄게." };
+}
+
+// 플래닛의 "골구를 선생님으로 쓰는 법" 5개 명령 — 사용자가 복사해서 보낸
+// 문구(원문 그대로) 또는 비슷한 말로 요청하면, 해당 역할의 지시문을
+// 시스템 프롬프트에 꽂아준다. 도구가 아니라 지시문인 이유: 여기엔 "숫자를
+// 코드가 계산"할 게 없고(모델이 설명/질문을 생성하는 역할 자체니까),
+// record_learning_journal과 달리 쓰기 동작도 아니다.
+const TEACHER_CONCEPT_RE = /초보자\s*기준으로\s*설명|확인\s*문제\s*5개|개념\s*선생님|오늘\s*(학습\s*)?주제.*설명해/;
+const TEACHER_CONTRARIAN_RE = /반대편에\s*서서|가설이\s*틀릴\s*조건|반박해\s*줘|반론\s*해줘/;
+const TEACHER_DISCLOSURE_RE = /이\s*공시를\s*사실|재무적\s*영향.*경로|공시\s*(해석|분석)해/;
+const TEACHER_EXAM_RE = /순서로\s*질문해|분석\s*시험관|기업\s*질문해/;
+const TEACHER_REVIEW_RE = /과거\s*투자\s*가설과\s*실제\s*결과를\s*비교|반복\s*오류를\s*찾아|내\s*기록\s*검토해|기록\s*검토해\s*줘/;
+
+async function buildTeacherModeBlock(userId: string | null, text: string): Promise<string> {
+  if (TEACHER_CONCEPT_RE.test(text)) {
+    const topic = userId ? await currentTopicLabel(userId) : null;
+    return (
+      "\n\n[선생님 모드 — 개념 설명]\n" +
+      (topic ? `오늘의 학습 주제: ${topic}\n` : "") +
+      "정의, 작동 원리, 실제 사례, 자주 하는 오해, 마지막에 확인 문제 5개(바로 답하지 말고 문제만) 순서로 설명해. 초보자 기준으로, 전문 용어는 풀어서."
+    );
+  }
+  if (TEACHER_CONTRARIAN_RE.test(text)) {
+    return (
+      "\n\n[선생님 모드 — 반대편 분석가]\n" +
+      "사용자의 투자 가설(바로 위 대화나 [내 투자 원칙]/일지에 있으면 그걸로) 반대편에 서서 분석해. 사용자가 놓쳤을 위험, 반대 증거, 이 가설이 틀렸다고 볼 조건을 근거와 함께 제시해 — 무조건 반대하지 말고, 반대 논리가 약하면 약하다고도 말해."
+    );
+  }
+  if (TEACHER_DISCLOSURE_RE.test(text)) {
+    return (
+      "\n\n[선생님 모드 — 공시 해설가]\n" +
+      "사용자가 붙여넣은 공시(또는 방금 말한 내용)를 사실, 재무적 영향, 주가에 영향을 줄 수 있는 경로, 이미 알려진 정보인지, 추가로 확인해야 할 사항 — 이 다섯 항목으로 나눠서 분석해. 원문에 없는 수치는 절대 추정하지 말고 '원문에 없음'이라고 해."
+    );
+  }
+  if (TEACHER_EXAM_RE.test(text)) {
+    return (
+      "\n\n[선생님 모드 — 기업 분석 시험관]\n" +
+      "사용자가 지정한 기업(또는 [지금 대화에서 새로 조회한 종목 데이터]의 기업)을 사업 구조 → 매출 성장 → 수익성 → 현금흐름 → 재무위험 → 경쟁력 → 밸류에이션 순서로 한 번에 하나씩 질문해. 기업을 특정 못했으면 먼저 어떤 기업인지 물어봐. 사용자가 답하면 근거가 부족한 부분을 짚어줘."
+    );
+  }
+  if (TEACHER_REVIEW_RE.test(text) && userId) {
+    return await buildJournalReviewBlock(userId);
+  }
+  return "";
+}
+
+async function currentTopicLabel(userId: string): Promise<string | null> {
+  const progress = await getProgress(userId);
+  if (!progress) return null;
+  const lastSentDay = Math.max(1, progress.currentDay - 1);
+  const { month, topic } = dailyTopicFor(lastSentDay);
+  return `${month.title} — ${topic}`;
+}
+
+// "내 기록 검토해줘" — 지난 일지 속 가설을 실제 주가 움직임과 대조해야
+// "우연히 맞은 판단"과 "근거가 유효했던 판단"을 구분할 수 있다(플래닛
+// 원문 요구사항 그대로). 숫자(그 종목이 실제로 얼마나 움직였는지)는 코드가
+// KIS 차트로 직접 계산해 넣고, 판단(우연인지 실력인지)만 LLM에 맡긴다.
+async function buildJournalReviewBlock(userId: string): Promise<string> {
+  const entries = await getRecentJournalEntries(userId, 8);
+  if (entries.length === 0) {
+    return "\n\n[선생님 모드 — 투자 기록 검토관]\n아직 저장된 일지가 없어 — 아직 비교할 기록이 없다고 사용자에게 알려줘.";
+  }
+
+  const withMoves = await Promise.all(
+    entries.map(async (e) => {
+      if (!e.companyCode) return { e, movePct: null as number | null };
+      const candles = await fetchKisChart(e.companyCode, "D", 60).catch(() => []);
+      const fromIdx = candles.findIndex((c) => c.date >= e.date);
+      if (fromIdx === -1 || candles.length === 0) return { e, movePct: null };
+      const base = candles[fromIdx].close;
+      const latest = candles[candles.length - 1].close;
+      const movePct = base > 0 ? ((latest - base) / base) * 100 : null;
+      return { e, movePct };
+    })
+  );
+
+  const lines = [
+    "[선생님 모드 — 투자 기록 검토관 · 아래 '실제 움직임'은 코드가 KIS 차트로 직접 계산한 값, 그대로 근거로 써]",
+  ];
+  for (const { e, movePct } of withMoves) {
+    const moveLabel = movePct === null ? "실제 움직임 조회 불가" : `실제 움직임 ${movePct >= 0 ? "+" : ""}${movePct.toFixed(1)}%(기록일 종가 대비 현재)`;
+    lines.push(
+      `- ${e.date}(${e.day}일차) ${e.company ?? "기업 미기재"}: 가설="${e.thesis ?? "-"}" / 상승근거="${e.bullish ?? "-"}" / 하락위험="${e.bearish ?? "-"}" / 무효조건="${e.invalidation ?? "-"}" → ${moveLabel}`
+    );
+  }
+  lines.push("이걸로 우연히 맞은 판단과 근거가 유효했던 판단을 구분해주고, 반복되는 오류 패턴이 있으면 짚어줘.");
+  return "\n\n" + lines.join("\n");
+}
+
+// "학습 시작해줘"/"학습 그만할래" — 180일 플래닛을 켜고 끈다. 시작하면
+// 다음날 아침 크론까지 기다리지 않고 그 자리에서 오늘(또는 이어갈 그)
+// 일차 미션을 바로 보여준다(플래닛 원문의 "오늘 바로 시작할 첫 번째
+// 미션" 의도 그대로).
+const LEARNING_CONTROL_TOOL: Anthropic.Tool = {
+  name: "set_learning_plan_state",
+  description:
+    "사용자가 '학습 시작해줘'/'플래닛 시작할래' 같이 180일 주식 학습 플래닛을 시작·재개하고 싶다고 하거나, '학습 그만할래'/'잠깐 쉴래' 같이 멈추고 싶다고 할 때 호출해.",
+  input_schema: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["start", "pause"], description: "start=시작 또는 재개, pause=중지" },
+    },
+    required: ["action"],
+  },
+};
+
+async function setLearningState(userId: string, input: { action?: unknown }): Promise<RecordJournalResult> {
+  if (input.action === "pause") {
+    await pauseProgress(userId);
+    return { ok: true, message: '⏸ 학습 플래닛 멈췄어. 다시 하고 싶을 때 "학습 시작해줘"라고 하면 이어서 보낼게.' };
+  }
+  if (input.action === "start") {
+    const existing = await getProgress(userId);
+    // 180일을 이미 다 채운 사람이 "시작해줘"라고 하면 이어갈 날이 없으니
+    // (currentDay가 180을 넘어 있음) 그냥 재개가 아니라 처음부터 다시
+    // 시작하는 걸로 본다.
+    const progress = existing && isProgramComplete(existing.currentDay) ? await resetProgress(userId) : await startProgress(userId);
+    const today = todayISO();
+    if (progress.lastPushDate === today) {
+      return { ok: true, message: "✅ 오늘 미션은 이미 보냈었어 — 이어서 공부하면 돼. 다 하면 나한테 말해줘, 일지로 기록할게." };
+    }
+    const missionText = await buildDailyMissionMessage(progress.currentDay);
+    await advanceAfterPush(userId, today);
+    return { ok: true, message: `✅ 주식 학습 플래닛 시작했어! 평일 아침마다 다음 미션을 보내줄게.\n\n${missionText}` };
+  }
+  return { ok: false, message: "시작할지 멈출지 다시 말해줄래?" };
+}
+
 // "이번주/이번달/오늘 얼마 썼어" — LLM이 대충 말하지 않게 실제 집계(lib/
 // finance-engine.ts)를 코드로 계산해 시스템 프롬프트에 블록으로 넣어준다
 // (buildPortfolioBlock과 같은 원칙). record_expense 같은 "쓰기" 도구와 달리
@@ -539,6 +737,10 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       ? "\n\n[예측 성과 검증 — 이미 집계된 통계, 표본 작은 조건은 이미 제외됨]\n" + (await cumulativeLearningBlock())
       : "";
 
+  // module ⑪ 주식 학습 플래닛 — 선생님 모드 5종(개념설명/반박/공시해설/
+  // 시험관/기록검토) 중 하나가 감지되면 해당 지시문을 꽂는다.
+  const teacherModeBlock = lastUser ? await buildTeacherModeBlock(userId, lastUser.content) : "";
+
   const client = new Anthropic();
   const baseSystem = await buildSystemPrompt();
   const cardsBlock =
@@ -566,6 +768,7 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
     newsImpactBlock +
     allocationBlock +
     predictionReviewBlock +
+    teacherModeBlock +
     principlesBlock +
     loginNote;
 
@@ -579,7 +782,9 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       RECORD_LIABILITY_TOOL,
       ADD_GOAL_TOOL,
       RECORD_THESIS_TOOL,
-      SET_PRINCIPLE_TOOL
+      SET_PRINCIPLE_TOOL,
+      RECORD_JOURNAL_TOOL,
+      LEARNING_CONTROL_TOOL
     );
 
   const anthropicMessages = messages.map((m) => ({ role: m.role, content: m.content }));
@@ -626,6 +831,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       const addGoalUse = findTool("add_financial_goal");
       const recordThesisUse = findTool("record_investment_thesis");
       const setPrincipleUse = findTool("set_investment_principle");
+      const recordJournalUse = findTool("record_learning_journal");
+      const learningControlUse = findTool("set_learning_plan_state");
 
       const holdingResult =
         recordHoldingUse && userId ? await recordHoldingPurchase(userId, recordHoldingUse.input as Record<string, unknown>) : null;
@@ -640,6 +847,10 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
         recordThesisUse && userId ? await recordThesis(userId, recordThesisUse.input as Record<string, unknown>) : null;
       const principleResult =
         setPrincipleUse && userId ? await setPrinciple(userId, setPrincipleUse.input as Record<string, unknown>) : null;
+      const journalResult =
+        recordJournalUse && userId ? await recordJournal(userId, recordJournalUse.input as Record<string, unknown>) : null;
+      const learningControlResult =
+        learningControlUse && userId ? await setLearningState(userId, learningControlUse.input as Record<string, unknown>) : null;
 
       const replyText =
         holdingResult?.message ??
@@ -649,6 +860,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
         goalResult?.message ??
         thesisResult?.message ??
         principleResult?.message ??
+        journalResult?.message ??
+        learningControlResult?.message ??
         cardUpdate?.note ??
         // "카드에 반영했어."는 cardUpdate(=웹의 adjust_strategy)에만 맞는
         // 말이라, 그 경우가 아닌데 모델이 텍스트도 도구도 없이 끝내면(드물지만

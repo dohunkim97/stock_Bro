@@ -545,6 +545,49 @@ model User {
   portfolioAlertLogs   PortfolioAlertLog[]
   chatMessages         ChatMessage[]
   holdingTheses        HoldingThesis[]
+  learningProgress      LearningProgress?
+  learningJournalEntries LearningJournalEntry[]
+}
+
+// "주식 학습 플래닛"(180일 커리큘럼, lib/learning-curriculum.ts) 진행 상태 —
+// 사용자당 하나. 텔레그램에서 "학습 시작해줘"로 시작하고, 평일 아침 크론
+// (app/api/cron/daily-briefing)이 매일 미션을 보내며 currentDay를 1씩 늘린다.
+// paused면 더 안 보낸다("학습 그만할래"). 진도 자체는 180일을 다 채웠는지
+// 보여주는 숫자일 뿐이라 별도 "완료" 상태는 안 둔다(currentDay > 180이면 끝).
+model LearningProgress {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startDate    String // YYYY-MM-DD, 학습 시작일
+  currentDay   Int      @default(1) // 다음에 보낼 미션이 180일 중 몇 일차인지
+  lastPushDate String? // 마지막으로 평일 미션을 보낸 날짜(크론이 하루 중 여러 번 불려도 중복 발송 방지)
+  streak       Int      @default(0) // 연속으로 일지(record_learning_journal)를 제출한 일수
+  paused       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// 매일 쓰는 "투자 연구 일지"(record_learning_journal 도구로 채팅 중 기록) —
+// 하루 하나. "투자 기록 검토관" 모드가 지난 가설과 실제 결과를 비교할 때
+// 이 테이블을 읽는다.
+model LearningJournalEntry {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date         String // YYYY-MM-DD
+  day          Int // 기록 당시 180일 중 며칠차였는지
+  marketRegime String? // 상승/하락/횡보/고변동성
+  company      String?
+  companyCode  String?
+  thesis       String? // 투자 가설
+  bullish      String? // 상승 근거
+  bearish      String? // 하락 위험
+  invalidation String? // 가설이 틀렸다고 볼 조건
+  learnings    String? // 오늘 새로 배운 것
+  createdAt    DateTime @default(now())
+
+  @@unique([userId, date])
+  @@index([userId])
 }
 
 // "왜 이 종목을 샀는지/계속 들고 가는지"와 "어떤 조건이면 그 논리가 깨졌다고
