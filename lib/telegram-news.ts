@@ -4,18 +4,23 @@ import { extractThemes, saveThemes } from "@/lib/theme-extraction";
 const URL_RE = /https?:\/\/\S+/;
 
 export type TelegramUpdate = {
+  update_id?: number;
   message?: {
     message_id: number;
     chat: { id: number | string };
     text?: string;
     caption?: string;
+    voice?: { file_id: string; duration?: number };
+    photo?: { file_id: string; width: number; height: number }[]; // 작은 것부터 큰 것 순
     forward_from?: { first_name?: string; last_name?: string };
     forward_from_chat?: { title?: string };
     forward_sender_name?: string;
   };
 };
 
-function extractLink(text: string): string | undefined {
+// webhook(app/api/telegram/webhook)이 "기사 링크면 제보, 아니면 대화"로
+// 갈라 처리하는 데 같은 판정을 재사용하려고 export한다.
+export function extractLink(text: string): string | undefined {
   const m = text.match(URL_RE);
   return m ? m[0].replace(/[)\].,!?]+$/, "") : undefined;
 }

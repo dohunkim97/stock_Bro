@@ -1,6 +1,7 @@
 import { getRecentPredictionDays } from "@/lib/prediction-scoring";
 import { getRecentBriefingDays, parseSectorNote, parseCandidates, SLOT_TITLE, type BriefingSlot } from "@/lib/market-briefing";
 import { getRecentChatDays } from "@/lib/chat-history";
+import { auth } from "@/lib/auth";
 import { getPeriodAnalyses, type PeriodAnalysisData } from "@/lib/period-analysis";
 import { formatDateLabel } from "@/lib/dates";
 import { renderBold } from "@/components/ui/rich-text";
@@ -21,12 +22,19 @@ function plainPreview(text: string): string {
 // (ArchiveHubClient). Replaces the three separate, differently-styled
 // archive sections that used to be scattered around /bro.
 export async function ArchiveHub() {
+  // 로그인한 사용자가 여럿일 수 있어(2026-10-14, 친구 온보딩 계기로 둘째
+  // 실사용자 발생) 대화 기록은 반드시 "내 것만" — 비로그인 방문자는 로그인
+  // 없이 쓴 턴(userId null)만 본다. 둥지처럼 로그인 자체를 막진 않는다 —
+  // 이 페이지(/bro)는 원래 로그인 없이도 보이는 페이지라.
+  const session = await auth();
+  const chatUserId = session?.user?.id ?? null;
+
   const [predictions, dailyDays, weeklyAnalyses, monthlyAnalyses, chatDays] = await Promise.all([
     getRecentPredictionDays(14),
     getRecentBriefingDays(14),
     getPeriodAnalyses("week"),
     getPeriodAnalyses("month"),
-    getRecentChatDays(14),
+    getRecentChatDays(chatUserId, 14),
   ]);
 
   // Unlike the old weekly hit/miss scoring, a daily prediction row shows up

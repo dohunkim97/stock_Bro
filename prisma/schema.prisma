@@ -243,14 +243,31 @@ model MoneyFlowTake {
 // calendar date for that archive, the same way MarketBriefing/
 // WeeklyPrediction's own archives already group by day/week — no separate
 // "session" concept, just every message stamped with the day it was sent.
+// userId는 nullable — 로그인 없이도 /bro에서 채팅이 되니, 그 턴은 누구 것도
+// 아닌 채로 남는다(둥지 기록 도구는 로그인했을 때만 켜지니 비로그인 턴에
+// 개인 정보가 섞일 일은 없다). 로그인한 사용자끼리는 서로의 대화를 절대
+// 섞지 않아야 해서(둘째 사용자 온보딩 계기로 발견: 텔레그램 "오늘의 대화"
+// 기억이 userId 없이 날짜만으로 묶여 있었음) 반드시 userId로 가른다.
 model ChatMessage {
   id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   date      String
   role      String
   text      String
   createdAt DateTime @default(now())
 
   @@index([date])
+  @@index([userId, date])
+}
+
+// 텔레그램 webhook 중복 전달(응답이 늦으면 재시도함) 방지 — update_id는 이
+// 봇 전체에서 유일/단조증가라, 이미 처리한 update_id면 그대로 재처리(지출/
+// 매수 기록이 두 번 쌓이는 것 등)를 막는다. updateId만으로 충분해 다른
+// 컬럼은 없다.
+model TelegramProcessedUpdate {
+  updateId  Int      @id
+  createdAt DateTime @default(now())
 }
 
 // Articles forwarded from Telegram into the bot (see app/api/telegram/webhook).
@@ -512,6 +529,8 @@ model User {
   name      String?
   image     String?
   role      String   @default("user") // "user" | "admin"
+  telegramChatId String? @unique // 골구가 먼저 말 거는 능동적 알림(손절/판정 악화) 수신처. app/api/telegram/webhook이 발견을 돕는다.
+  investmentPrinciples String? // 채팅으로 말해준 "나는 이런 원칙으로 투자해" 한 덩어리 텍스트(set_investment_principle 도구) — 쌓지 않고 최신 걸로 교체
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -523,6 +542,43 @@ model User {
   financialGoals    FinancialGoal[]
   financialSnapshots FinancialSnapshot[]
   portfolioAssessments PortfolioAssessment[]
+  portfolioAlertLogs   PortfolioAlertLog[]
+  chatMessages         ChatMessage[]
+  holdingTheses        HoldingThesis[]
+}
+
+// "왜 이 종목을 샀는지/계속 들고 가는지"와 "어떤 조건이면 그 논리가 깨졌다고
+// 볼지" — 채팅으로 말해준 걸 기록해(record_investment_thesis 도구), 보유종목
+// 전담 분석("~보유 이유 아직 유효해?")이 지금 신호와 이 논리를 대조한다.
+// 종목당 하나(계속 갱신) — 논리가 바뀌면 덮어쓰고, 과거 버전은 안 남긴다
+// (Phase 1 범위; 필요해지면 이력 테이블로 분리).
+model HoldingThesis {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code         String
+  name         String
+  reason       String
+  invalidation String? // 이 논리가 무효화되는 조건(예: "영업이익률 10% 밑으로 떨어지면")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, code])
+}
+
+// 능동적 알림(lib/portfolio-alerts.ts)이 같은 악화를 하루에 여러 번 보내지 않게
+// 막는 중복 방지 로그 — 종목 하나의 "오늘, 이 상태로 악화됐다"는 한 번만 보낸다.
+// 같은 날 더 나빠지면(예: 축소검토 → 정밀점검) toState가 달라지므로 다시 보낸다.
+model PortfolioAlertLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code      String
+  date      String // YYYY-MM-DD
+  toState   String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, code, date])
 }
 
 // 둥지 "AI 골구 종목 진단"(lib/holding-assessment.ts)의 하루 한 건 판정 기록 —

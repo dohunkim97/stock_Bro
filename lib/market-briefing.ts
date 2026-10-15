@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/prisma";
 import { marketDataBlock, weeklyTrendBlock } from "@/lib/bro-context";
 import { getTelegramNewsSince } from "@/lib/telegram-news";
+import { sendTelegramMessage } from "@/lib/telegram-send";
 import { fetchKisLiveSnapshot, type KisRankRow } from "@/lib/kis-ranking";
 import { fetchKisNewsForCodes, type KisNewsItem } from "@/lib/kis-news";
 import { formatChg } from "@/lib/format";
@@ -284,4 +285,33 @@ export function parseCandidates(raw: string | null): CandidateItem[] {
     // legacy plain-text row
   }
   return [{ reason: raw }];
+}
+
+// 텔레그램용 평문 포맷 — 두 곳이 같은 포맷을 쓴다: 사용자가 "모닝 리포트 줘"라고
+// 물었을 때(lib/telegram-chat.ts, 저장된 걸 relay)와, 브리핑이 막 생성됐을 때
+// 선제 발송(아래 pushBriefingToTelegram, app/api/cron/daily-briefing에서 호출).
+export function formatBriefingForTelegram(row: { date: string; slot: string; summary: string; sectorNote: string | null; candidates: string | null }): string {
+  const strip = (s: string) => s.replace(/\*\*/g, "");
+  const lines = [`📋 ${SLOT_TITLE[row.slot as BriefingSlot] ?? row.slot} (${row.date})`, "", strip(row.summary)];
+  const sector = parseSectorNote(row.sectorNote);
+  if (sector) lines.push("", `🔥 ${sector.theme ? sector.theme + " — " : ""}${strip(sector.note)}`);
+  const candidates = parseCandidates(row.candidates);
+  if (candidates.length > 0) {
+    lines.push("", "관찰 포인트:");
+    candidates.forEach((c, i) => lines.push(`${i + 1}. ${c.name ? c.name + ": " : ""}${strip(c.reason)}`));
+  }
+  return lines.join("\n");
+}
+
+// 브리핑이 생성되자마자(크론) 텔레그램 연결된 사용자 전원에게 먼저 보낸다 —
+// "물어봐야만 답하는" 골구에서 "먼저 말 거는" 골구로. 실패해도(토큰 없음,
+// 전송 실패 등) 브리핑 생성 자체(이 함수를 부르는 쪽)엔 영향 없게 완전히
+// 분리해서 쓴다 — 호출부가 await하되 reject는 안 하게 설계.
+export async function pushBriefingToTelegram(date: string, slot: BriefingSlot): Promise<void> {
+  const row = await getBriefing(date, slot);
+  if (!row) return;
+  const text = formatBriefingForTelegram(row);
+
+  const users = await prisma.user.findMany({ where: { telegramChatId: { not: null } }, select: { telegramChatId: true } });
+  await Promise.all(users.map((u) => sendTelegramMessage(u.telegramChatId!, text)));
 }

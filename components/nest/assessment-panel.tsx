@@ -169,13 +169,16 @@ export function AssessmentPanel() {
             규칙 기반 초안 · 검증 중
           </span>
         </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          style={{ border: "1px solid var(--border)", background: "var(--panel)", color: "var(--dim)", borderRadius: 7, padding: "4px 10px", fontSize: 11, cursor: loading ? "default" : "pointer" }}
-        >
-          {loading ? "진단 중..." : "다시 진단"}
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {report && <span style={{ fontSize: 10.5, color: "var(--faint)" }}>데이터 기준 {report.asOf.slice(11)}</span>}
+          <button
+            onClick={load}
+            disabled={loading}
+            style={{ border: "1px solid var(--border)", background: "var(--panel)", color: "var(--dim)", borderRadius: 7, padding: "4px 10px", fontSize: 11, cursor: loading ? "default" : "pointer" }}
+          >
+            {loading ? "진단 중..." : "다시 진단"}
+          </button>
+        </div>
       </div>
 
       {/* 1. 한눈에 보는 요약 (AI) */}

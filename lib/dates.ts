@@ -39,6 +39,21 @@ export function kstDateParts(d: Date): { month: number; day: number; hour: numbe
   return { month: get("month"), day: get("day"), hour: get("hour"), minute: get("minute") };
 }
 
+// "데이터 기준 시각" 표시용 — 골구가 "외국인 수급이 안 좋아"라고 말할 때
+// 그 판단이 언제 계산됐는지(장중 수시로 바뀌는 값) 같이 보여주려고 만든다
+// (module ③/④/⑤가 공유). 날짜는 이미 todayISO가 있으니 시:분만 더한다.
+export function nowSeoulTimeLabel(): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Seoul",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const h = parts.find((p) => p.type === "hour")?.value;
+  const m = parts.find((p) => p.type === "minute")?.value;
+  return `${todayISO()} ${h}:${m}`;
+}
+
 export function toYYYYMMDD(iso: string): string {
   return iso.replace(/-/g, "");
 }

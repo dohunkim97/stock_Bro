@@ -9,7 +9,7 @@ import { fetchKisChart } from "@/lib/kis-chart";
 import { fetchInvestorTrend } from "@/lib/kis-investor-trend";
 import { fetchFinancialHistoryByCode } from "@/lib/krx-financials";
 import { getPortfolioSettings, getHoldings } from "@/lib/portfolio";
-import { todayISO } from "@/lib/dates";
+import { todayISO, nowSeoulTimeLabel } from "@/lib/dates";
 import {
   aggregateHoldings,
   assessHolding,
@@ -38,6 +38,7 @@ export type HoldingHistory = {
 
 export type AssessmentReport = {
   date: string;
+  asOf: string; // 이 판정이 실제로 계산된 시각(장중 가격이 계속 바뀌므로 date와 별개) — "데이터 기준 시각" 표시용
   assessments: HoldingAssessment[]; // 우선순위 정렬 완료
   flags: PortfolioFlag[];
   history: Record<string, HoldingHistory>;
@@ -197,7 +198,7 @@ async function build(userId: string): Promise<AssessmentReport> {
         })
       : [];
 
-  return { date, assessments, flags, history, totalValuation };
+  return { date, asOf: nowSeoulTimeLabel(), assessments, flags, history, totalValuation };
 }
 
 // 둥지 페이지가 열릴 때 진단 카드와 AI 어드바이저 카드가 동시에 이 함수를 부르는데,

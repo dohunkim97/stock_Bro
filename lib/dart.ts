@@ -139,6 +139,43 @@ export async function fetchLatestPeriodicReport(corpCode: string, deadlineAt: nu
   }
 }
 
+export type DilutionFiling = { rceptNo: string; reportName: string; reportDate: string };
+
+// CB(전환사채)/BW(신주인수권부사채)/유상증자 — 보유 주식을 희석시킬 수 있는
+// 공시만 제목 키워드로 걸러 가져온다(리스크 감시관/보유종목 분석관용).
+// pblntty 필터 없이 전체 공시를 긁어 제목으로 거르는 이유: 이 공시들은
+// "주요사항보고"(B)·"발행공시"(C) 등 여러 유형에 걸쳐 있어 유형 코드 하나로
+// 못 좁힌다 — fetchLatestPeriodicReport의 "A"(정기공시) 필터와는 다른 이유.
+// ⚠️ 제목 키워드 매칭이라 "초안" — 상환/취소 공시까지 같이 잡힐 수 있어
+// 화면·채팅 모두 "발행 결정 공시가 있었다" 정도로만 쓰고, 실제 영향은
+// 원문을 봐야 확정된다.
+const DILUTION_KEYWORDS = /전환사채|신주인수권부사채|유상증자|제3자배정|주주배정.*증자/;
+
+export async function fetchRecentDilutionFilings(corpCode: string, deadlineAt: number, days = 120): Promise<DilutionFiling[]> {
+  const key = apiKey();
+  if (!key) return [];
+  const end = todayKst();
+  const bgnDate = new Date();
+  bgnDate.setDate(bgnDate.getDate() - days);
+  const bgn = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(bgnDate).replaceAll("-", "");
+
+  try {
+    const params = new URLSearchParams({ crtfc_key: key, corp_code: corpCode, bgn_de: bgn, end_de: end, page_count: "100" });
+    const res = await fetch(`${DART_BASE}/list.json?${params.toString()}`, { signal: AbortSignal.timeout(remainingMs(deadlineAt)) });
+    if (!res.ok) return [];
+    const json = await res.json();
+    if (json.status !== "000" || !Array.isArray(json.list)) return [];
+
+    return (json.list as Array<{ report_nm: string; rcept_no: string; rcept_dt: string }>)
+      .filter((r) => DILUTION_KEYWORDS.test(r.report_nm))
+      .sort((a, b) => (a.rcept_dt < b.rcept_dt ? 1 : -1))
+      .slice(0, 5)
+      .map((r) => ({ rceptNo: r.rcept_no, reportName: r.report_nm.trim(), reportDate: r.rcept_dt }));
+  } catch {
+    return [];
+  }
+}
+
 export function dartDocumentUrl(rceptNo: string): string {
   return `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${rceptNo}`;
 }
