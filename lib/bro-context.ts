@@ -4,7 +4,7 @@ import { applyThemes } from "@/lib/theme-lookup";
 import { rankMostMentioned } from "@/lib/mention-ranking";
 import { formatChg } from "@/lib/format";
 import { currentWeekKey, prevWeekKey, weekInfoFromKey } from "@/lib/week";
-import { formatDateLabel } from "@/lib/dates";
+import { formatDateLabel, kstDateParts } from "@/lib/dates";
 import { getRecentTelegramNews } from "@/lib/telegram-news";
 import { getLatestPrediction, parsePredictionSectors, parsePredictionCandidates } from "@/lib/prediction-scoring";
 import { loadOutcomeRows, outcomeOneLiner } from "@/lib/prediction-learning";
@@ -195,8 +195,8 @@ export async function telegramBlock(): Promise<string> {
 
   const lines = ["[텔레그램으로 전달받은 최근 기사]"];
   for (const it of items) {
-    const d = it.createdAt;
-    const dateLabel = `${d.getMonth() + 1}.${d.getDate()}`;
+    const { month, day } = kstDateParts(it.createdAt);
+    const dateLabel = `${month}.${day}`;
     const firstLine = it.text.split("\n")[0].trim();
     lines.push(`- (${dateLabel}${it.sourceName ? `, ${it.sourceName}` : ""}) ${firstLine}`);
   }

@@ -1,4 +1,5 @@
 import type { NewsItem } from "@/lib/naver-news";
+import { kstDateParts } from "@/lib/dates";
 
 // Shared renderer for real Naver News results — used on the stock detail
 // page, the watchlist news panel, and the mentioned-stock detail preview.
@@ -9,9 +10,11 @@ function formatPubDate(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${m}.${day}`;
+  // This renders during SSR too (no "use client" here), so the server's
+  // UTC clock — not the viewer's KST one — would read a pre-09:00 KST
+  // article as the previous day without the explicit Asia/Seoul lookup.
+  const { month, day } = kstDateParts(d);
+  return `${String(month).padStart(2, "0")}.${String(day).padStart(2, "0")}`;
 }
 
 export function NewsList({ items, emptyLabel }: { items: NewsItem[]; emptyLabel: string }) {

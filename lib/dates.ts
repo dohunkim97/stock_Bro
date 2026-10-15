@@ -19,6 +19,26 @@ export function todayISO(): string {
   return `${y}-${m}-${d}`;
 }
 
+// A real timestamp (e.g. TelegramNews.createdAt)'s calendar date/time *in
+// Asia/Seoul* — calling .getMonth()/.getDate()/.getHours() directly on a
+// Date reads the SERVER's local timezone, which on Vercel is UTC. Since
+// KST is UTC+9, anything timestamped between 00:00–09:00 KST then shows
+// up as the previous day (and the wrong hour) — this is what made Golgoo
+// cite a telegram article under "the wrong date" (lib/bro-context.ts,
+// lib/market-briefing.ts both format TelegramNews.createdAt this way).
+export function kstDateParts(d: Date): { month: number; day: number; hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? "0");
+  return { month: get("month"), day: get("day"), hour: get("hour"), minute: get("minute") };
+}
+
 export function toYYYYMMDD(iso: string): string {
   return iso.replace(/-/g, "");
 }

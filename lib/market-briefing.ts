@@ -5,6 +5,7 @@ import { getTelegramNewsSince } from "@/lib/telegram-news";
 import { fetchKisLiveSnapshot, type KisRankRow } from "@/lib/kis-ranking";
 import { fetchKisNewsForCodes, type KisNewsItem } from "@/lib/kis-news";
 import { formatChg } from "@/lib/format";
+import { kstDateParts } from "@/lib/dates";
 
 export type BriefingSlot = "morning" | "midday" | "close";
 export const BRIEFING_SLOTS: BriefingSlot[] = ["morning", "midday", "close"];
@@ -140,10 +141,8 @@ function formatTelegramBlock(items: Awaited<ReturnType<typeof getTelegramNewsSin
   if (items.length === 0) return "[이 구간에 전달된 텔레그램 기사 없음]";
   const lines = ["[이 브리핑 구간에 전달된 텔레그램 기사]"];
   for (const it of items) {
-    const d = it.createdAt;
-    const label = `${d.getMonth() + 1}.${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(
-      d.getMinutes()
-    ).padStart(2, "0")}`;
+    const { month, day, hour, minute } = kstDateParts(it.createdAt);
+    const label = `${month}.${day} ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
     const firstLine = it.text.split("\n")[0].trim();
     lines.push(`- (${label}${it.sourceName ? `, ${it.sourceName}` : ""}) ${firstLine}`);
   }
