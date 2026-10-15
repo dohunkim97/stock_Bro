@@ -40,6 +40,7 @@ import {
   getRecentJournalEntries,
 } from "@/lib/learning-journal";
 import { buildDailyMissionMessage } from "@/lib/learning-push";
+import { searchEncyclopedia } from "@/lib/naver-encyc";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -524,6 +525,30 @@ async function buildJournalReviewBlock(userId: string): Promise<string> {
   return "\n\n" + lines.join("\n");
 }
 
+// "PER이 뭐야?", "이자보상배율 무슨 뜻이야?" 같은 모르는 용어 질문 — 모델이
+// 혼자 추측해서 설명하는 대신 실제 네이버 지식백과 검색 결과를 먼저 찾아서
+// 근거로 준다(사용자 요청: "모르는 단어 물어보면 네이버에 검색해서 알려줘").
+// 정규식으로 "용어 + 뭐야/무슨 뜻" 패턴을 찾아 그 용어만 떼어낸다 — 완벽하진
+// 않지만(예: "그게 뭐야"처럼 지시대명사면 빈 검색이 되어 결과 없음으로
+// 자연히 빠진다) 이 파일의 다른 블록들과 같은 방식의 휴리스틱이다.
+const TERM_LOOKUP_RE = /^(.{1,20}?)\s*(?:이|가|는|은)?\s*(뭐야|무슨\s*뜻|뜻이\s*뭐|뭔\s*뜻|이란\s*뭐야|란\s*뭐야|뭔지\s*알려줘)/;
+
+function extractTermQuery(text: string): string | null {
+  const m = text.match(TERM_LOOKUP_RE);
+  const term = m?.[1]?.trim();
+  return term && term.length > 0 ? term : null;
+}
+
+async function buildTermLookupBlock(text: string): Promise<string> {
+  const term = extractTermQuery(text);
+  if (!term) return "";
+  const results = await searchEncyclopedia(term, 2);
+  if (results.length === 0) return "";
+  const lines = ["\n\n[네이버 지식백과 검색 결과 — 이 용어를 설명할 때 근거로 써, 원문을 그대로 베끼지 말고 쉽게 풀어서 설명해]"];
+  for (const r of results) lines.push(`- ${r.title}: ${r.description}`);
+  return lines.join("\n");
+}
+
 // "학습 시작해줘"/"학습 그만할래" — 180일 플래닛을 켜고 끈다. 시작하면
 // 다음날 아침 크론까지 기다리지 않고 그 자리에서 오늘(또는 이어갈 그)
 // 일차 미션을 바로 보여준다(플래닛 원문의 "오늘 바로 시작할 첫 번째
@@ -740,6 +765,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   // module ⑪ 주식 학습 플래닛 — 선생님 모드 5종(개념설명/반박/공시해설/
   // 시험관/기록검토) 중 하나가 감지되면 해당 지시문을 꽂는다.
   const teacherModeBlock = lastUser ? await buildTeacherModeBlock(userId, lastUser.content) : "";
+  // "~가 뭐야" 류 용어 질문엔 네이버 지식백과 검색 결과를 근거로 끼워준다.
+  const termLookupBlock = lastUser ? await buildTermLookupBlock(lastUser.content) : "";
 
   const client = new Anthropic();
   const baseSystem = await buildSystemPrompt();
@@ -769,6 +796,7 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
     allocationBlock +
     predictionReviewBlock +
     teacherModeBlock +
+    termLookupBlock +
     principlesBlock +
     loginNote;
 
