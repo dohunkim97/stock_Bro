@@ -157,7 +157,7 @@ async function recordHoldingPurchase(
   const assumedNote = priceIsAssumed ? " (매수가는 현재 시세로 추정했어, 실제 체결가가 다르면 둥지에서 고쳐줘)" : "";
   return {
     ok: true,
-    message: `✅ 둥지에 ${resolved.name} ${roundedQuantity}주, 매수가 ₩${roundedPrice.toLocaleString()} (총 ₩${total.toLocaleString()}) 기록했어.${assumedNote}`,
+    message: `✅ 둥지에 **${resolved.name} ${roundedQuantity}주**, 매수가 **₩${roundedPrice.toLocaleString()}** (총 ₩${total.toLocaleString()}) 기록했어.${assumedNote}`,
     name: resolved.name,
     code: resolved.code,
     quantity: roundedQuantity,
@@ -206,7 +206,7 @@ export async function recordExpense(
 
   await addExpenseRecord(userId, { date: todayISO(), category, amount, memo });
 
-  return { ok: true, message: `✅ 지출 기록했어: ${category} ₩${amount.toLocaleString()}${memo ? ` (${memo})` : ""}` };
+  return { ok: true, message: `✅ 지출 기록했어: ${category} **₩${amount.toLocaleString()}**${memo ? ` (${memo})` : ""}` };
 }
 
 // 일상 수입 보고("월급 300만원 들어왔어", "부업으로 20만원 벌었어")를 들었을 때
@@ -236,7 +236,7 @@ async function recordIncome(userId: string, input: { amount?: unknown; category?
     typeof input.category === "string" && (INCOME_CATEGORIES as readonly string[]).includes(input.category) ? input.category : "기타";
   const memo = typeof input.memo === "string" && input.memo.trim() ? input.memo.trim() : undefined;
   await addIncomeRecord(userId, { date: todayISO(), category, amount, memo });
-  return { ok: true, message: `✅ 수입 기록했어: ${category} ₩${amount.toLocaleString()}${memo ? ` (${memo})` : ""}` };
+  return { ok: true, message: `✅ 수입 기록했어: ${category} **₩${amount.toLocaleString()}**${memo ? ` (${memo})` : ""}` };
 }
 
 // 새 대출/빚이 생겼다는 보고("학자금 대출 500만원 받았어")를 들었을 때 호출 —
@@ -271,7 +271,7 @@ async function recordLiability(
     typeof input.type === "string" && ["신용대출", "전세자금대출", "카드론", "기타"].includes(input.type) ? input.type : "기타";
   const interestRate = typeof input.interestRate === "number" && input.interestRate >= 0 ? input.interestRate : 0;
   await addLiability(userId, { name, type, principal, interestRate });
-  return { ok: true, message: `✅ 부채 기록했어: ${name} ₩${principal.toLocaleString()} (금리 ${interestRate}%)` };
+  return { ok: true, message: `✅ 부채 기록했어: ${name} **₩${principal.toLocaleString()}** (금리 ${interestRate}%)` };
 }
 
 // 새 재무 목표 추가("2030년까지 1억 모으기 목표 추가해줘") — targetDate 없이는
@@ -426,10 +426,10 @@ async function recordJournal(
 
   await upsertJournalEntry(userId, filled);
   const stats = await getJournalStats(userId);
-  const streakNote = stats.streak >= 2 ? ` 연속 ${stats.streak}일째야 🔥` : "";
+  const streakNote = stats.streak >= 2 ? ` 연속 **${stats.streak}일째**야 🔥` : "";
   return {
     ok: true,
-    message: `✅ 오늘 일지에 기록했어. 지금까지 총 ${stats.total}일 기록했어.${streakNote} 나중에 "내 기록 검토해줘"라고 하면 지난 가설이랑 실제 결과를 비교해줄게.`,
+    message: `✅ 오늘 일지에 기록했어. 지금까지 총 **${stats.total}일** 기록했어.${streakNote} 나중에 "내 기록 검토해줘"라고 하면 지난 가설이랑 실제 결과를 비교해줄게.`,
   };
 }
 

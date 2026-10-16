@@ -27,8 +27,6 @@ const REPORT_RE = /모닝\s*리포트|오늘\s*(브리핑|시황)|브리핑\s*�
 const MISSION_RE = /학습\s*자료|공부\s*자료|오늘\s*미션|오늘의\s*미션|미션\s*다시|오늘\s*(학습\s*)?주제\s*(뭐|알려)/;
 const SUNDAY_REVIEW_RE = /주간\s*복습|복습\s*체크리스트|일요일\s*복습/;
 
-const strip = (s: string) => s.replace(/\*\*/g, "");
-
 async function formatBriefing(date: string): Promise<{ text: string; isToday: boolean } | null> {
   let slots = await getBriefingSlotsForDate(date);
   let isToday = true;
@@ -73,7 +71,7 @@ export async function handleTelegramText(userId: string, chatId: string, text: s
   const history = await getTodayMessagesForChat(userId, date, 20);
   const result = await runChatTurn({ userId, messages: [...history, { role: "user", content: text }] });
   const reply = result.error ?? result.replyText;
-  await sendTelegramMessage(chatId, strip(reply));
+  await sendTelegramMessage(chatId, reply);
 }
 
 // 보이스 메모 — Whisper로 텍스트화한 뒤 똑같이 handleTelegramText로 넘긴다

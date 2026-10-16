@@ -51,7 +51,7 @@ export async function sendWeeklyPortfolioDigest(): Promise<AlertRunSummary> {
         const diff = latestSnap.netWorth - pastSnap.netWorth;
         const diffPct = pastSnap.netWorth !== 0 ? (diff / Math.abs(pastSnap.netWorth)) * 100 : null;
         lines.push(
-          `순자산 ${Math.round(latestSnap.netWorth).toLocaleString()}원 (1주일 전 대비 ${diff >= 0 ? "+" : ""}${Math.round(diff).toLocaleString()}원${diffPct !== null ? ` / ${diff >= 0 ? "+" : ""}${diffPct.toFixed(1)}%` : ""})`
+          `순자산 **${Math.round(latestSnap.netWorth).toLocaleString()}원** (1주일 전 대비 **${diff >= 0 ? "+" : ""}${Math.round(diff).toLocaleString()}원**${diffPct !== null ? ` / ${diff >= 0 ? "+" : ""}${diffPct.toFixed(1)}%` : ""})`
         );
       } else {
         lines.push("순자산 변화: 1주일 전 기록이 없어 비교 못 함(둥지를 방문해야 그날 스냅샷이 남아).");
@@ -107,7 +107,7 @@ async function alertLinesFor(userId: string, report: AssessmentReport): Promise<
 
     const fromLabel = change ? `${STATE_ICON[change.fromState as AssessmentState]}${change.fromState}` : "신규 진단";
     const reasonNote = change && change.reasons.length > 0 ? ` (${change.reasons.join(", ")})` : "";
-    lines.push(`${a.name}: ${fromLabel} → ${STATE_ICON[a.state]}${a.state}${reasonNote}`);
+    lines.push(`**${a.name}**: ${fromLabel} → **${STATE_ICON[a.state]}${a.state}**${reasonNote}`);
   }
   return lines;
 }

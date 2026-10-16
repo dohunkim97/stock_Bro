@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CandidateDetail } from "@/lib/candidate-detail";
+import { renderBold } from "@/components/ui/rich-text";
 
 type ChatMessage = { role: "user" | "assistant"; text: string };
 
@@ -95,9 +96,11 @@ export function BroChat({
   function speak(text: string) {
     try {
       window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(
-        text.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "")
-      );
+      // "**강조**" 마커는 화면/텔레그램에선 굵게 보이지만(renderBold,
+      // lib/telegram-send.ts) 음성은 별표를 그대로 읽으면 어색해서 빼고
+      // 안의 글자만 읽는다.
+      const spoken = text.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "");
+      const u = new SpeechSynthesisUtterance(spoken);
       u.lang = "ko-KR";
       u.rate = 1.05;
       window.speechSynthesis.speak(u);
@@ -220,7 +223,7 @@ export function BroChat({
                   border: m.role === "assistant" ? "1px solid var(--border)" : "none",
                 }}
               >
-                {m.text}
+                {renderBold(m.text)}
               </div>
             </div>
           ))}

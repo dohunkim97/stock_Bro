@@ -291,15 +291,17 @@ export function parseCandidates(raw: string | null): CandidateItem[] {
 // 텔레그램용 평문 포맷 — 두 곳이 같은 포맷을 쓴다: 사용자가 "모닝 리포트 줘"라고
 // 물었을 때(lib/telegram-chat.ts, 저장된 걸 relay)와, 브리핑이 막 생성됐을 때
 // 선제 발송(아래 pushBriefingToTelegram, app/api/cron/daily-briefing에서 호출).
+// row.summary 등엔 모델이 이미 "**굵게**" 강조를 넣어 저장돼 있다(프롬프트가
+// 요청함) — 예전엔 여기서 **를 지워버려서 안 보이던 걸, 이제 sendTelegramMessage
+// (lib/telegram-send.ts)가 그대로 굵게 바꿔주므로 지우지 않고 그대로 둔다.
 export function formatBriefingForTelegram(row: { date: string; slot: string; summary: string; sectorNote: string | null; candidates: string | null }): string {
-  const strip = (s: string) => s.replace(/\*\*/g, "");
-  const lines = [`📋 ${SLOT_TITLE[row.slot as BriefingSlot] ?? row.slot} (${row.date})`, "", strip(row.summary)];
+  const lines = [`📋 ${SLOT_TITLE[row.slot as BriefingSlot] ?? row.slot} (${row.date})`, "", row.summary];
   const sector = parseSectorNote(row.sectorNote);
-  if (sector) lines.push("", `🔥 ${sector.theme ? sector.theme + " — " : ""}${strip(sector.note)}`);
+  if (sector) lines.push("", `🔥 ${sector.theme ? sector.theme + " — " : ""}${sector.note}`);
   const candidates = parseCandidates(row.candidates);
   if (candidates.length > 0) {
     lines.push("", "관찰 포인트:");
-    candidates.forEach((c, i) => lines.push(`${i + 1}. ${c.name ? c.name + ": " : ""}${strip(c.reason)}`));
+    candidates.forEach((c, i) => lines.push(`${i + 1}. ${c.name ? c.name + ": " : ""}${c.reason}`));
   }
   return lines.join("\n");
 }
