@@ -3,7 +3,7 @@
 // 도구, 시작/중지 명령)가 공유한다.
 
 import { prisma } from "@/lib/prisma";
-import { todayISO } from "@/lib/dates";
+import { todayISO, prevBusinessDay } from "@/lib/dates";
 import { TOTAL_DAYS } from "@/lib/learning-curriculum";
 
 export type LearningProgressData = {
@@ -42,8 +42,12 @@ export async function resetProgress(userId: string): Promise<LearningProgressDat
   });
 }
 
-// 평일 미션을 보낼 때 1씩 올리고(180일 넘으면 더 안 보냄), 같은 날 두 번
-// 안 보내게 lastPushDate를 같이 기록한다.
+// 학습자료를 내줄 때(사용자가 "학습자료 줘"로 요청할 때만 — 평일 아침에
+// 자동으로 보내던 건 뺐다, 2026-10-16 사용자 피드백: "자동으로 안보내고
+// 내가 말하면 보내줘") 1씩 올리고(180일 넘으면 더 안 올림), 같은 날 다시
+// 요청하면 중복으로 안 올리게 lastPushDate를 같이 기록한다. 이 lastPushDate
+// 는 이제 "마지막으로 학습자료를 받은 날"이라는 뜻이고, 다음 요청 때 그
+// 사이 평일을 건너뛰었는지 계산하는 기준점으로도 쓰인다.
 export async function advanceAfterPush(userId: string, date: string): Promise<void> {
   await prisma.learningProgress.updateMany({
     where: { userId },
@@ -82,9 +86,28 @@ export async function upsertJournalEntry(userId: string, input: JournalEntryInpu
     update: input,
   });
 
+  // streak는 "연속 평일 기록 일수" — 바로 전 평일에도 일지가 있었어야
+  // 이어지고, 하루라도 건너뛰면 1로 리셋한다(예전엔 그냥 매번 +1이라 중간에
+  // 며칠 빠져도 계속 올라가는 버그가 있었다).
   if (!existing && progress && !progress.paused) {
-    await prisma.learningProgress.update({ where: { userId }, data: { streak: { increment: 1 } } });
+    const prevEntry = await prisma.learningJournalEntry.findFirst({
+      where: { userId, date: { lt: date } },
+      orderBy: { date: "desc" },
+    });
+    const continuous = prevEntry?.date === prevBusinessDay(date);
+    await prisma.learningProgress.update({
+      where: { userId },
+      data: { streak: continuous ? { increment: 1 } : { set: 1 } },
+    });
   }
+}
+
+export async function getJournalStats(userId: string): Promise<{ total: number; streak: number }> {
+  const [total, progress] = await Promise.all([
+    prisma.learningJournalEntry.count({ where: { userId } }),
+    getProgress(userId),
+  ]);
+  return { total, streak: progress?.streak ?? 0 };
 }
 
 export type JournalEntryData = {

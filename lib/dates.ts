@@ -104,6 +104,20 @@ export function nextBusinessDay(iso: string): string {
   return toISO(d);
 }
 
+// fromIso와 toIso 사이(둘 다 제외)에 낀 평일(거래일) 수 — "주식 학습
+// 플래닛"이 "지난 N일 건너뛰었네" 할 때 쓴다(lib/learning-push.ts). 둘이
+// 같거나 fromIso가 더 미래면 0.
+export function businessDaysBetweenExclusive(fromIso: string, toIso: string): number {
+  let count = 0;
+  let cursor = fromIso;
+  while (true) {
+    cursor = nextBusinessDay(cursor);
+    if (cursor >= toIso) break;
+    count++;
+  }
+  return count;
+}
+
 // The last `count` business days up to and including `endIso`, oldest
 // first — e.g. for a rolling "최근 N거래일" table where the column set
 // shouldn't be pinned to calendar-week boundaries the way "8월 3주" is.

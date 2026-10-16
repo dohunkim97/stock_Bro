@@ -1,21 +1,18 @@
-// "주식 학습 플래닛" 능동 발송 — 평일 아침 그날의 미션(app/api/cron/daily-
-// briefing?slot=morning에 얹는다, lib/portfolio-alerts.ts가 둥지 알림을
-// 얹는 것과 같은 방식: Hobby 12개 크론 한도라 새 크론을 못 만든다)과 매주
-// 일요일 복습 체크리스트(같은 크론의 날짜가 일요일로 바뀌었을 때) 두 가지.
+// "주식 학습 플래닛" 자료 제공 — 처음엔 평일 아침 크론이 자동으로 밀어주는
+// 방식이었는데, 사용자 피드백(2026-10-16: "자동으로 안보내고 내가 말하면
+// 보내줘, 일하느라 까먹을 수도 있으니깐")으로 요청 기반(pull)으로 바꿨다.
+// "학습자료 줘"라고 말했을 때만 그 자리에서 다음 미션을 내주고, 그 사이
+// 평일을 건너뛰었으면 몇 일 건너뛰었는지도 같이 알려준다. 일지 기록은
+// 여전히 lib/learning-journal.ts의 streak(연속 평일 기록 일수)로 추적한다.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { prisma } from "@/lib/prisma";
-import { sendTelegramMessage } from "@/lib/telegram-send";
-import { saveAssistantBroadcast } from "@/lib/chat-history";
-import { todayISO } from "@/lib/dates";
+import { todayISO, businessDaysBetweenExclusive } from "@/lib/dates";
 import { dailyTopicFor, DAILY_ROUTINE_STEPS, TOTAL_DAYS } from "@/lib/learning-curriculum";
-import { advanceAfterPush, isProgramComplete } from "@/lib/learning-journal";
-
-export type LearningPushSummary = { usersChecked: number; messagesSent: number };
+import { getProgress, startProgress, resetProgress, advanceAfterPush, isProgramComplete } from "@/lib/learning-journal";
 
 // Day 1~7처럼 고정 질문이 없는 날은 그 주제에 맞는 "오늘의 질문" 하나를
-// LLM이 만든다 — 같은 크론 실행 안에서 day가 같으면(시작일이 같은 사용자가
-// 여럿이면) 한 번만 호출하고 재사용한다.
+// LLM이 만든다. 같은 서버 인스턴스에서 반복 요청되면 재사용(요청마다 매번
+// 다른 질문이 나오면 "오늘 미션 다시 보여줘" 했을 때 내용이 바뀌어 보임).
 const questionCache = new Map<string, string>();
 
 async function generateQuestion(topic: string, monthTitle: string): Promise<string> {
@@ -44,14 +41,11 @@ async function generateQuestion(topic: string, monthTitle: string): Promise<stri
   }
 }
 
-// export됨 — lib/golgoo-chat.ts가 "학습 시작해줘"를 받았을 때 다음 날 아침
-// 크론까지 안 기다리고 그 자리에서 1일차(또는 이어서 할 일차) 미션을 바로
-// 보여주려고 재사용한다.
 export async function buildDailyMissionMessage(day: number): Promise<string> {
   const { month, topic, question: fixedQuestion, isWeeklyReview } = dailyTopicFor(day);
   const question = fixedQuestion ?? (await generateQuestion(topic, month.title));
 
-  const header = day === 1 ? "📚 주식 학습 플래닛 — 1일차 시작!" : `📚 주식 학습 플래닛 — ${day}/${TOTAL_DAYS}일차`;
+  const header = day === 1 ? "📚 주식 학습 플래닛 — 1일차" : `📚 주식 학습 플래닛 — ${day}/${TOTAL_DAYS}일차`;
   const lines = [header, `${month.month}개월 차 · ${month.title}`, `오늘 주제: ${topic}`, "", `오늘의 질문: ${question}`];
 
   if (isWeeklyReview) {
@@ -64,68 +58,54 @@ export async function buildDailyMissionMessage(day: number): Promise<string> {
   if (day === 1) {
     lines.push(
       "",
-      '처음이니까 이것도 알아둬: "오늘 개념 설명해줘"(선생님 모드), "반박해줘"(반대편 분석가), "이 공시 해석해줘", "~기업 질문해줘"(분석 시험관), "내 기록 검토해줘"(지난 가설 vs 실제 결과 비교) — 다 돼. "학습 그만할래"라고 하면 멈출게.'
+      '이것도 알아둬: "오늘 개념 설명해줘"(선생님 모드), "반박해줘"(반대편 분석가), "이 공시 해석해줘", "~기업 질문해줘"(분석 시험관), "내 기록 검토해줘"(지난 가설 vs 실제 결과 비교) — 다 돼. 다음 자료는 자동으로 안 오고 "학습자료 줘"라고 말할 때만 줄게. "학습 그만할래"라고 하면 멈출게.'
     );
   }
 
   return lines.join("\n");
 }
 
-// 평일 아침 — 진행 중(paused=false)인 사용자 전원에게 오늘 미션을 보내고
-// currentDay를 1 올린다. lastPushDate가 오늘이면 건너뛴다(같은 슬롯이
-// 재시도 등으로 두 번 불려도 중복 발송 안 되게).
-export async function sendDailyMissions(): Promise<LearningPushSummary> {
-  const date = todayISO();
-  // lastPushDate가 null인(막 시작한) 사용자도 반드시 걸려야 하는데, SQL의
-  // "column != value"는 NULL 행을 자동으로 빼지 않는다고 보장할 수 없어
-  // OR로 null 케이스를 명시한다.
-  const rows = await prisma.learningProgress.findMany({
-    where: { paused: false, OR: [{ lastPushDate: null }, { lastPushDate: { not: date } }] },
-    include: { user: { select: { telegramChatId: true } } },
-  });
+const COMPLETE_TEXT =
+  '🎉 180일 주식 학습 플래닛을 완주했어! 여기까지 매일 기록한 투자 연구 일지가 네 가장 큰 자산이야 — "내 기록 검토해줘"라고 하면 전체를 같이 돌아볼 수 있어. 다시 처음부터 하고 싶으면 "학습 다시 시작해줘"라고 해줘.';
 
-  let usersChecked = 0;
-  let messagesSent = 0;
+// "학습자료 줘" — 핵심 진입점. 아직 시작 안 했으면 그 자리에서 1일차부터
+// 시작하고, 멈춰 있었으면 이어서 재개하고, 이미 진행 중이면 다음 일차를
+// 내준다. 오늘 이미 받았으면(중복 요청) 같은 내용을 다시 보여주고 진도는
+// 더 안 나간다. 마지막 요청 이후 평일을 건너뛰었으면 그 사실도 먼저 알려준다.
+export async function pullTodayMaterial(userId: string): Promise<string> {
+  const today = todayISO();
+  let progress = await getProgress(userId);
+  const wasPaused = progress?.paused ?? false;
 
-  for (const row of rows) {
-    if (!row.user.telegramChatId) continue;
-    usersChecked++;
-
-    try {
-      // 180일을 다 채운 날 딱 한 번만 완주 축하를 보내고, 그 이후엔
-      // lastPushDate만 오늘로 갱신해서(currentDay는 더 안 올림) 매 평일
-      // 똑같은 메시지가 반복 발송되지 않게 한다.
-      if (isProgramComplete(row.currentDay)) {
-        if (row.currentDay === TOTAL_DAYS + 1) {
-          const text = `🎉 180일 주식 학습 플래닛을 완주했어! 여기까지 매일 기록한 투자 연구 일지가 네 가장 큰 자산이야 — "내 기록 검토해줘"라고 하면 전체를 같이 돌아볼 수 있어. 다시 처음부터 하고 싶으면 "학습 다시 시작해줘"라고 해줘.`;
-          const sent = await sendTelegramMessage(row.user.telegramChatId, text);
-          if (sent) {
-            messagesSent++;
-            await saveAssistantBroadcast(row.userId, date, text);
-          }
-        }
-        await prisma.learningProgress.update({ where: { userId: row.userId }, data: { lastPushDate: date } });
-        continue;
-      }
-
-      const text = await buildDailyMissionMessage(row.currentDay);
-      const sent = await sendTelegramMessage(row.user.telegramChatId, text);
-      if (sent) {
-        messagesSent++;
-        await saveAssistantBroadcast(row.userId, date, text);
-        await advanceAfterPush(row.userId, date);
-      }
-    } catch (e) {
-      console.error("[learning-push] daily mission failed for user", row.userId, e);
-    }
+  if (!progress || isProgramComplete(progress.currentDay)) {
+    progress = progress && isProgramComplete(progress.currentDay) ? await resetProgress(userId) : await startProgress(userId);
+  } else if (progress.paused) {
+    progress = await startProgress(userId); // 멈춰 있었으면 요청한 김에 재개
   }
 
-  return { usersChecked, messagesSent };
+  if (isProgramComplete(progress.currentDay)) return COMPLETE_TEXT;
+
+  const resumeNote = wasPaused ? "⏸ 멈춰 있던 거 다시 시작할게.\n\n" : "";
+
+  if (progress.lastPushDate === today) {
+    // 오늘 이미 받은 자료를 또 요청 — 같은 날짜 안에서는 진도를 더
+    // 안 올리고 방금 준 그 미션을 그대로 다시 보여준다.
+    const day = Math.max(1, progress.currentDay - 1);
+    return resumeNote + (await buildDailyMissionMessage(day));
+  }
+
+  const skipped = progress.lastPushDate ? businessDaysBetweenExclusive(progress.lastPushDate, today) : 0;
+  const missionText = await buildDailyMissionMessage(progress.currentDay);
+  await advanceAfterPush(userId, today);
+
+  const skipNote = skipped > 0 ? `지난 ${skipped}일(평일 기준) 건너뛰었네 — 괜찮아, 이어서 할게.\n\n` : "";
+  return resumeNote + skipNote + missionText;
 }
 
-// 매주 일요일 — 플래닛 원문 그대로의 자기 점검 체크리스트. 코드/LLM 판단이
-// 끼어들 게 없는 고정 문구라 매번 똑같이 보낸다.
-const SUNDAY_REVIEW_TEXT = [
+// 플래닛 원문 그대로의 일요일 자기 점검 체크리스트 — "주간 복습 보여줘"
+// 같은 요청에 그대로 relay한다(lib/telegram-chat.ts). 코드/LLM 판단이
+// 끼어들 게 없는 고정 문구라 매번 똑같다.
+export const SUNDAY_REVIEW_TEXT = [
   "🗓 이번 주 복습 체크리스트",
   "",
   "새 정보를 더 읽지 말고, 이번 주 배운 걸 자기 말로 설명할 수 있는지 점검해봐.",
@@ -140,30 +120,3 @@ const SUNDAY_REVIEW_TEXT = [
   "",
   '"내 기록 검토해줘"라고 하면 이번 주 일지를 같이 돌아봐줄게.',
 ].join("\n");
-
-export async function sendSundayReviews(): Promise<LearningPushSummary> {
-  const date = todayISO();
-  const rows = await prisma.learningProgress.findMany({
-    where: { paused: false },
-    include: { user: { select: { telegramChatId: true } } },
-  });
-
-  let usersChecked = 0;
-  let messagesSent = 0;
-
-  for (const row of rows) {
-    if (!row.user.telegramChatId) continue;
-    usersChecked++;
-    try {
-      const sent = await sendTelegramMessage(row.user.telegramChatId, SUNDAY_REVIEW_TEXT);
-      if (sent) {
-        messagesSent++;
-        await saveAssistantBroadcast(row.userId, date, SUNDAY_REVIEW_TEXT);
-      }
-    } catch (e) {
-      console.error("[learning-push] sunday review failed for user", row.userId, e);
-    }
-  }
-
-  return { usersChecked, messagesSent };
-}

@@ -29,17 +29,8 @@ import { buildHoldingDeepDiveBlock, buildRiskTopBlock, buildScenarioBlock, build
 import { cumulativeLearningBlock } from "@/lib/prediction-learning";
 import { fetchKisChart } from "@/lib/kis-chart";
 import { dailyTopicFor } from "@/lib/learning-curriculum";
-import {
-  getProgress,
-  startProgress,
-  pauseProgress,
-  resetProgress,
-  isProgramComplete,
-  advanceAfterPush,
-  upsertJournalEntry,
-  getRecentJournalEntries,
-} from "@/lib/learning-journal";
-import { buildDailyMissionMessage } from "@/lib/learning-push";
+import { getProgress, pauseProgress, upsertJournalEntry, getRecentJournalEntries, getJournalStats } from "@/lib/learning-journal";
+import { pullTodayMaterial } from "@/lib/learning-push";
 import { searchEncyclopedia } from "@/lib/naver-encyc";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
@@ -434,7 +425,12 @@ async function recordJournal(
   if (Object.values(filled).every((v) => v === null)) return { ok: false, message: "뭘 기록할지 하나도 못 들었어 — 오늘 분석한 내용을 말해줄래?" };
 
   await upsertJournalEntry(userId, filled);
-  return { ok: true, message: "✅ 오늘 일지에 기록했어. 일요일에 같이 복습하거나, 나중에 \"내 기록 검토해줘\"라고 하면 지난 가설이랑 실제 결과를 비교해줄게." };
+  const stats = await getJournalStats(userId);
+  const streakNote = stats.streak >= 2 ? ` 연속 ${stats.streak}일째야 🔥` : "";
+  return {
+    ok: true,
+    message: `✅ 오늘 일지에 기록했어. 지금까지 총 ${stats.total}일 기록했어.${streakNote} 나중에 "내 기록 검토해줘"라고 하면 지난 가설이랑 실제 결과를 비교해줄게.`,
+  };
 }
 
 // 플래닛의 "골구를 선생님으로 쓰는 법" 5개 명령 — 사용자가 복사해서 보낸
@@ -549,18 +545,19 @@ async function buildTermLookupBlock(text: string): Promise<string> {
   return lines.join("\n");
 }
 
-// "학습 시작해줘"/"학습 그만할래" — 180일 플래닛을 켜고 끈다. 시작하면
-// 다음날 아침 크론까지 기다리지 않고 그 자리에서 오늘(또는 이어갈 그)
-// 일차 미션을 바로 보여준다(플래닛 원문의 "오늘 바로 시작할 첫 번째
-// 미션" 의도 그대로).
+// "학습 시작해줘"/"학습자료 줘"/"학습 그만할래" — 180일 플래닛을 켜고 끄고,
+// 자료를 내준다. 자동으로 밀어주는 평일 아침 발송은 없다(2026-10-16 사용자
+// 피드백: "자동으로 안보내고 내가 말하면 보내줘") — start와 material 둘 다
+// 결국 pullTodayMaterial로 수렴한다(시작하자마자 1일차를 바로 보여주는 게
+// 자연스러워서), 자연어 의도 구분용으로 액션만 나눠뒀다.
 const LEARNING_CONTROL_TOOL: Anthropic.Tool = {
   name: "set_learning_plan_state",
   description:
-    "사용자가 '학습 시작해줘'/'플래닛 시작할래' 같이 180일 주식 학습 플래닛을 시작·재개하고 싶다고 하거나, '학습 그만할래'/'잠깐 쉴래' 같이 멈추고 싶다고 할 때 호출해.",
+    "사용자가 '학습 시작해줘'/'플래닛 시작할래'처럼 180일 주식 학습 플래닛을 시작하고 싶다고 하면 start, '학습자료 줘'/'오늘 미션 줘'처럼 (이미 시작한 상태에서) 자료를 요청하면 material, '학습 그만할래'/'잠깐 쉴래'처럼 멈추고 싶다고 하면 pause를 호출해. 자료는 자동으로 안 오고 이 도구를 불러야만 나간다는 걸 기억해.",
   input_schema: {
     type: "object",
     properties: {
-      action: { type: "string", enum: ["start", "pause"], description: "start=시작 또는 재개, pause=중지" },
+      action: { type: "string", enum: ["start", "material", "pause"], description: "start=최초 시작, material=다음 자료 요청, pause=중지" },
     },
     required: ["action"],
   },
@@ -569,23 +566,14 @@ const LEARNING_CONTROL_TOOL: Anthropic.Tool = {
 async function setLearningState(userId: string, input: { action?: unknown }): Promise<RecordJournalResult> {
   if (input.action === "pause") {
     await pauseProgress(userId);
-    return { ok: true, message: '⏸ 학습 플래닛 멈췄어. 다시 하고 싶을 때 "학습 시작해줘"라고 하면 이어서 보낼게.' };
+    return { ok: true, message: '⏸ 학습 플래닛 멈췄어. 다시 하고 싶을 때 "학습자료 줘"라고 하면 이어서 줄게.' };
   }
-  if (input.action === "start") {
-    const existing = await getProgress(userId);
-    // 180일을 이미 다 채운 사람이 "시작해줘"라고 하면 이어갈 날이 없으니
-    // (currentDay가 180을 넘어 있음) 그냥 재개가 아니라 처음부터 다시
-    // 시작하는 걸로 본다.
-    const progress = existing && isProgramComplete(existing.currentDay) ? await resetProgress(userId) : await startProgress(userId);
-    const today = todayISO();
-    if (progress.lastPushDate === today) {
-      return { ok: true, message: "✅ 오늘 미션은 이미 보냈었어 — 이어서 공부하면 돼. 다 하면 나한테 말해줘, 일지로 기록할게." };
-    }
-    const missionText = await buildDailyMissionMessage(progress.currentDay);
-    await advanceAfterPush(userId, today);
-    return { ok: true, message: `✅ 주식 학습 플래닛 시작했어! 평일 아침마다 다음 미션을 보내줄게.\n\n${missionText}` };
+  if (input.action === "start" || input.action === "material") {
+    const text = await pullTodayMaterial(userId);
+    const prefix = input.action === "start" ? "✅ 주식 학습 플래닛 시작했어!\n\n" : "";
+    return { ok: true, message: prefix + text };
   }
-  return { ok: false, message: "시작할지 멈출지 다시 말해줄래?" };
+  return { ok: false, message: "시작할지, 자료를 받을지, 멈출지 다시 말해줄래?" };
 }
 
 // "이번주/이번달/오늘 얼마 썼어" — LLM이 대충 말하지 않게 실제 집계(lib/
