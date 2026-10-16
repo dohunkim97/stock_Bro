@@ -148,8 +148,10 @@ export function dailyTopicFor(day: number): DailyTopic {
   return { day, month, topic: isWeeklyReview ? `주간 복습 — ${topic}` : topic, question: null, isWeeklyReview };
 }
 
-// 평일 아침 미션 메시지의 고정 틀 — 매일 똑같이 반복되는 6단계 루틴(원문
-// 그대로). 주제/질문만 날마다 바뀌고 이 구조는 180일 내내 유지한다.
+// 원문 플랜의 6단계 "스스로 조사" 루틴 — 2026-10-16부터 기본 학습자료
+// 발송에는 안 쓴다(사용자가 숙제형보다 강의형+질문 흐름을 원해서,
+// lib/learning-push.ts의 buildDailyMissionMessage 참고). 데이터는 남겨둔다 —
+// 나중에 "오늘 실습 체크리스트 줘" 같은 별도 요청을 만들면 다시 쓸 수 있다.
 export const DAILY_ROUTINE_STEPS = [
   "① 시장 온도 측정 — 코스피/코스닥/미국지수, 환율·금리·유가, 외국인·기관 동향, 오늘 시장을 움직인 핵심 원인 1개",
   "② 뉴스·공시 해부 — 관심종목 뉴스 3개, DART 공시 1개, 사실과 해석 구분",
