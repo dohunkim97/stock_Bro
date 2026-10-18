@@ -74,7 +74,8 @@ const RECORD_HOLDING_TOOL: Anthropic.Tool = {
     "사용자가 실제로 특정 '주식 종목'을 매수했다고 말했을 때만 호출해(예: 'LG에너지솔루션 100만원 샀어', '삼성전자 10주 85000원에 샀어'). " +
     "일상적인 지출(식비·쇼핑 등)은 이 도구가 아니라 record_expense를 써. 단순히 종목에 대해 묻거나 의견을 구하는 것뿐이면 호출하지 마. " +
     "quantity(수량)·pricePerShare(주당 매수가)·totalAmount(총 매수금액) 중 최소 하나는 사용자가 말해야 호출할 수 있어 — " +
-    "아무 숫자도 없으면 호출하지 말고 먼저 얼마에 몇 주 샀는지 되물어봐.",
+    "아무 숫자도 없으면 호출하지 말고 먼저 얼마에 몇 주 샀는지 되물어봐. " +
+    "한 메시지에 여러 종목을 샀다고 하면(예: 'A전자 10주, B에너지 5주 샀어') 이 도구를 종목 수만큼 여러 번 호출해 — 하나만 부르고 넘어가지 마.",
   input_schema: {
     type: "object",
     properties: {
@@ -172,7 +173,8 @@ const RECORD_EXPENSE_TOOL: Anthropic.Tool = {
   name: "record_expense",
   description:
     "사용자가 실제로 돈을 썼다고 말했을 때만 호출해(예: '커피 5천원 썼어', '점심 만원 결제했어', '옷 사는데 8만원 썼어'). " +
-    "'주식 샀어'처럼 종목 매수면 이 도구 대신 record_holding_purchase를 써. amount(금액)는 필수고, 못 들었으면 호출하지 말고 얼마 썼는지 되물어봐.",
+    "'주식 샀어'처럼 종목 매수면 이 도구 대신 record_holding_purchase를 써. amount(금액)는 필수고, 못 들었으면 호출하지 말고 얼마 썼는지 되물어봐. " +
+    "한 메시지에 여러 지출을 한 번에 말하면(예: '과자 5만원, 음료 2만원 썼어') 이 도구를 지출 건수만큼 각각 따로 호출해 — 첫 건만 부르고 끝내지 마.",
   input_schema: {
     type: "object",
     properties: {
@@ -215,7 +217,8 @@ const RECORD_INCOME_TOOL: Anthropic.Tool = {
   name: "record_income",
   description:
     "사용자가 실제로 돈이 들어왔다고 말했을 때만 호출해(예: '월급 300만원 들어왔어', '부업으로 20만원 벌었어', '보너스 50만원 받았어'). " +
-    "돈을 쓴 거면(지출) 이 도구 대신 record_expense를 써. amount(금액)는 필수고, 못 들었으면 호출하지 말고 되물어봐.",
+    "돈을 쓴 거면(지출) 이 도구 대신 record_expense를 써. amount(금액)는 필수고, 못 들었으면 호출하지 말고 되물어봐. " +
+    "한 메시지에 여러 건을 말하면 건수만큼 각각 호출해.",
   input_schema: {
     type: "object",
     properties: {
@@ -245,7 +248,8 @@ const RECORD_LIABILITY_TOOL: Anthropic.Tool = {
   name: "record_liability",
   description:
     "사용자가 새로운 대출/빚이 생겼다고 말했을 때만 호출해(예: '학자금 대출 500만원 받았어', '카드론 300만원 있어'). " +
-    "기존 빚의 상환이나 금액 수정 요청이면 이 도구를 쓰지 말고 둥지(수입·지출·부채 탭)에서 직접 고치라고 안내해. principal(원금)은 필수.",
+    "기존 빚의 상환이나 금액 수정 요청이면 이 도구를 쓰지 말고 둥지(수입·지출·부채 탭)에서 직접 고치라고 안내해. principal(원금)은 필수. " +
+    "한 메시지에 여러 건을 말하면 건수만큼 각각 호출해.",
   input_schema: {
     type: "object",
     properties: {
@@ -771,6 +775,12 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   const loginNote = userId
     ? ""
     : "\n\n[참고] 이 사용자는 로그인하지 않았어 — '얼마 샀어'/'~썼어'처럼 기록을 요청하면 기록할 수 없고, 구글로 로그인하면 둥지에 자동으로 기록된다고 안내해줘.";
+  // cards는 웹(golgoo-workspace)만 보내는 값이라(카드가 0개여도 빈 배열로는
+  // 보냄, 텔레그램은 아예 이 필드를 안 보냄) 그 존재 여부로 채널을 구분할
+  // 수 있다 — 종목 데이터 답변을 "카드도 같이 보이니 짧게" 할지 "이 답이
+  // 전부니 충분히" 할지(위 [지금 대화에서 새로 조회한 종목 데이터] 관련
+  // 지침 참고) 모델이 판단하게 알려준다.
+  const channelNote = cards !== undefined ? "" : "\n\n[참고] 지금은 텔레그램 대화야 — 화면에 뜨는 카드가 없어.";
   const system =
     baseSystem +
     cardsBlock +
@@ -786,7 +796,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
     teacherModeBlock +
     termLookupBlock +
     principlesBlock +
-    loginNote;
+    loginNote +
+    channelNote;
 
   const tools: Anthropic.Tool[] = [];
   if (cards) tools.push(ADJUST_TOOL); // 화면 카드 개념이 있는 채널(웹)에서만
@@ -836,48 +847,39 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
 
       // record_* 도구는 실제 DB 쓰기라서, 결과를 모른 채 같은 턴에 생성된
       // 모델의 말보다 실행 결과 메시지를 우선한다(성공/실패는 실행 후에야 안다).
-      // 한 턴에 하나만 부를 걸 기대하지만(도구 설명이 서로 다른 의도), 혹시
-      // 여럿이 겹치면 이 순서(매수>지출>수입>부채>목표)로 하나만 반영한다.
-      const findTool = (name: string) =>
-        response.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === name);
-      const recordHoldingUse = findTool("record_holding_purchase");
-      const recordExpenseUse = findTool("record_expense");
-      const recordIncomeUse = findTool("record_income");
-      const recordLiabilityUse = findTool("record_liability");
-      const addGoalUse = findTool("add_financial_goal");
-      const recordThesisUse = findTool("record_investment_thesis");
-      const setPrincipleUse = findTool("set_investment_principle");
-      const recordJournalUse = findTool("record_learning_journal");
-      const learningControlUse = findTool("set_learning_plan_state");
+      // 사용자가 "과자 5만원, 음료 2만원"처럼 한 메시지에 여러 건을 보고하면
+      // 모델이 같은 이름의 도구를 여러 번 호출할 수 있다 — findTool이
+      // .find()로 첫 번째 것만 집던 버그(2026-10-19 사용자 확인: 두 번째
+      // 항목이 저장 안 됨) 때문에 findAllTools로 바꿔서 전부 실행하고
+      // 메시지도 전부 합친다. 도구 종류가 섞여 부르면(흔치 않지만) 이
+      // 순서(매수>지출>수입>부채>목표>…)로 먼저 나온 종류의 결과를 쓴다.
+      const findAllTools = (name: string) =>
+        response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === name);
+      const runAll = <R,>(uses: Anthropic.ToolUseBlock[], fn: (uid: string, input: Record<string, unknown>) => Promise<R>): Promise<R[]> =>
+        userId ? Promise.all(uses.map((u) => fn(userId, u.input as Record<string, unknown>))) : Promise.resolve([]);
 
-      const holdingResult =
-        recordHoldingUse && userId ? await recordHoldingPurchase(userId, recordHoldingUse.input as Record<string, unknown>) : null;
-      const expenseResult =
-        recordExpenseUse && userId ? await recordExpense(userId, recordExpenseUse.input as Record<string, unknown>) : null;
-      const incomeResult =
-        recordIncomeUse && userId ? await recordIncome(userId, recordIncomeUse.input as Record<string, unknown>) : null;
-      const liabilityResult =
-        recordLiabilityUse && userId ? await recordLiability(userId, recordLiabilityUse.input as Record<string, unknown>) : null;
-      const goalResult = addGoalUse && userId ? await addGoalFromChat(userId, addGoalUse.input as Record<string, unknown>) : null;
-      const thesisResult =
-        recordThesisUse && userId ? await recordThesis(userId, recordThesisUse.input as Record<string, unknown>) : null;
-      const principleResult =
-        setPrincipleUse && userId ? await setPrinciple(userId, setPrincipleUse.input as Record<string, unknown>) : null;
-      const journalResult =
-        recordJournalUse && userId ? await recordJournal(userId, recordJournalUse.input as Record<string, unknown>) : null;
-      const learningControlResult =
-        learningControlUse && userId ? await setLearningState(userId, learningControlUse.input as Record<string, unknown>) : null;
+      const holdingResults = await runAll(findAllTools("record_holding_purchase"), recordHoldingPurchase);
+      const expenseResults = await runAll(findAllTools("record_expense"), recordExpense);
+      const incomeResults = await runAll(findAllTools("record_income"), recordIncome);
+      const liabilityResults = await runAll(findAllTools("record_liability"), recordLiability);
+      const goalResults = await runAll(findAllTools("add_financial_goal"), addGoalFromChat);
+      const thesisResults = await runAll(findAllTools("record_investment_thesis"), recordThesis);
+      const principleResults = await runAll(findAllTools("set_investment_principle"), setPrinciple);
+      const journalResults = await runAll(findAllTools("record_learning_journal"), recordJournal);
+      const learningControlResults = await runAll(findAllTools("set_learning_plan_state"), setLearningState);
+
+      const joinMsgs = (results: { message: string }[]): string | null => (results.length > 0 ? results.map((r) => r.message).join("\n") : null);
 
       const replyText =
-        holdingResult?.message ??
-        expenseResult?.message ??
-        incomeResult?.message ??
-        liabilityResult?.message ??
-        goalResult?.message ??
-        thesisResult?.message ??
-        principleResult?.message ??
-        journalResult?.message ??
-        learningControlResult?.message ??
+        joinMsgs(holdingResults) ??
+        joinMsgs(expenseResults) ??
+        joinMsgs(incomeResults) ??
+        joinMsgs(liabilityResults) ??
+        joinMsgs(goalResults) ??
+        joinMsgs(thesisResults) ??
+        joinMsgs(principleResults) ??
+        joinMsgs(journalResults) ??
+        joinMsgs(learningControlResults) ??
         cardUpdate?.note ??
         // "카드에 반영했어."는 cardUpdate(=웹의 adjust_strategy)에만 맞는
         // 말이라, 그 경우가 아닌데 모델이 텍스트도 도구도 없이 끝내면(드물지만
@@ -891,14 +893,15 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       // 두 채널이 같은 "오늘의 대화"에 자연히 합쳐진다.
       if (lastUser) await saveChatTurn(userId, todayISO(), lastUser.content, replyText);
 
+      const firstHolding = holdingResults.find((r) => r.ok);
       return {
         replyText,
         reports: reports.length > 0 ? reports : undefined,
         cardUpdate,
-        holdingAdded: holdingResult?.ok
-          ? { name: holdingResult.name!, code: holdingResult.code!, quantity: holdingResult.quantity!, buyPrice: holdingResult.buyPrice! }
+        holdingAdded: firstHolding
+          ? { name: firstHolding.name!, code: firstHolding.code!, quantity: firstHolding.quantity!, buyPrice: firstHolding.buyPrice! }
           : undefined,
-        expenseAdded: expenseResult?.ok ? true : undefined,
+        expenseAdded: expenseResults.some((r) => r.ok) ? true : undefined,
       };
     } catch (e) {
       lastErr = e;

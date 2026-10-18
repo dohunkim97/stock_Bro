@@ -16,11 +16,16 @@ const MAX_MENTIONS = 5;
 // 콤마든 공백이든 상관없이, 그 이름이 문자 그대로 포함돼 있는지만 본다.
 // 1글자 이름은 오탐이 너무 많아 제외하고, "삼성"이 "삼성전자" 매칭에 얹혀
 // 중복으로 안 잡히도록 더 긴 이름에 포함되는 짧은 매칭은 버린다.
+// 대소문자는 구분하지 않는다 — "LG에너지솔루션"을 "lg에너지솔루션"으로 쳐도
+// 찾아야 한다(2026-10-19 사용자 확인: 소문자로 치니까 분석이 아예 안 됐음 —
+// 알파벳이 섞인 종목명이 많아서 .includes()가 대소문자를 그대로 구분하던 게
+// 원인이었다).
 export async function findMentionedStocks(text: string): Promise<{ name: string; code: string }[]> {
   const all = await prisma.stockMaster.findMany({ select: { name: true, code: true } });
-  const found = all.filter((s) => s.name.length >= 2 && text.includes(s.name));
+  const lowerText = text.toLowerCase();
+  const found = all.filter((s) => s.name.length >= 2 && lowerText.includes(s.name.toLowerCase()));
   const deduped = found.filter(
-    (f) => !found.some((other) => other !== f && other.name.length > f.name.length && other.name.includes(f.name))
+    (f) => !found.some((other) => other !== f && other.name.length > f.name.length && other.name.toLowerCase().includes(f.name.toLowerCase()))
   );
   return deduped.slice(0, MAX_MENTIONS);
 }
@@ -41,7 +46,7 @@ export function stockContextBlock(reports: CandidateDetail[]): string {
   const lines = ["[지금 대화에서 새로 조회한 종목 데이터 — 전부 실데이터, 반드시 이 근거로 답해]"];
   for (const d of reports) {
     lines.push(
-      `- ${d.name}(${d.code ?? "코드미상"}): 시황=${d.marketContext} / 거래량=${d.volumeNote} / 차트=${d.chartNote} / 재료=${d.aiReasoning} / 수급=${d.supplyDemand} / 재무=${d.financialSummary} / 매수기준가=${d.strategy.entryPrice ?? "-"} 지지선=${d.strategy.support ?? "-"} 저항선=${d.strategy.resistance ?? "-"} 목표가=${d.strategy.targetPrice ?? "-"} 손절가=${d.strategy.stopLossPrice ?? "-"}`
+      `- ${d.name}(${d.code ?? "코드미상"}): 현재가(=매수기준가)=${d.strategy.entryPrice ?? "-"} / 시황=${d.marketContext} / 거래량=${d.volumeNote} / 차트=${d.chartNote} / 재료=${d.aiReasoning} / 수급=${d.supplyDemand} / 재무=${d.financialSummary} / 지지선=${d.strategy.support ?? "-"} 저항선=${d.strategy.resistance ?? "-"} 목표가=${d.strategy.targetPrice ?? "-"} 손절가=${d.strategy.stopLossPrice ?? "-"}`
     );
   }
   return lines.join("\n");
