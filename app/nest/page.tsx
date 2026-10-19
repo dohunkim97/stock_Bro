@@ -22,6 +22,8 @@ import { NestLoginGate } from "@/components/nest/login-gate";
 import { NetWorthPanel } from "@/components/nest/net-worth-panel";
 import { GoalsPanel } from "@/components/nest/goals-panel";
 import { CashFlowPanel } from "@/components/nest/cashflow-panel";
+import { TradeJournalPanel } from "@/components/nest/trade-journal-panel";
+import { getTradeJournal, getRealizedSummary } from "@/lib/trade-journal";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +39,7 @@ export default async function NestPage() {
   if (!session?.user?.id) return <NestLoginGate />;
 
   const userId = session.user.id;
-  const [settings, holdings, stocks, goals, income, expense, upcoming, liabilities] = await Promise.all([
+  const [settings, holdings, stocks, goals, income, expense, upcoming, liabilities, tradeJournal, realizedSummary] = await Promise.all([
     getPortfolioSettings(userId),
     getHoldingsWithLiveData(userId),
     prisma.stockMaster.findMany({ orderBy: { name: "asc" }, select: { code: true, name: true, market: true } }),
@@ -46,6 +48,8 @@ export default async function NestPage() {
     getExpenseRecords(userId),
     getUpcomingInstallments(userId),
     getLiabilities(userId),
+    getTradeJournal(userId),
+    getRealizedSummary(userId),
   ]);
 
   const overview = computeOverview(settings, holdings);
@@ -96,6 +100,11 @@ export default async function NestPage() {
       <div style={{ display: "grid", gridTemplateColumns: "7fr 5fr", gap: 20, alignItems: "start", marginTop: 20 }}>
         <CashFlowPanel income={income} expense={expense} upcoming={upcoming} liabilities={liabilities} />
         <GoalsPanel goals={goals} netWorth={netWorthNow.netWorth} />
+      </div>
+
+      {/* 매매일지 — 채팅으로 보고한 매수/매도 사건과 실현손익(lib/trade-journal.ts) */}
+      <div style={{ marginTop: 20 }}>
+        <TradeJournalPanel rows={tradeJournal} summary={realizedSummary} />
       </div>
     </main>
   );

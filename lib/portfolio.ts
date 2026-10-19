@@ -88,6 +88,41 @@ export async function removeHolding(userId: string, id: string) {
   return result;
 }
 
+export type SellResult = {
+  avgBuyPrice: number; // 매도 직전 평단가(=실현손익 계산 기준)
+  soldQty: number; // 실제로 판 수량(보유 수량을 넘겨 부르면 보유분만큼으로 캡)
+  firstBuyDate: string | null; // 보유 중이던 매수 건들 중 가장 이른 매수일(보유기간 계산용)
+  fullyClosed: boolean; // 전량 매도였는지
+};
+
+// 매도 — 이 종목을 여러 번 나눠 샀어도(평단가 기준 관리) 모든 매수 건에서
+// "같은 비율만큼" 수량을 깎는다. 예: 10주@100원 + 10주@200원(평단 150원)에서
+// 10주를 팔면 두 건 다 절반(5주)씩 줄어 남은 10주의 평단이 그대로 150원을
+// 유지한다 — 한쪽 건만 통째로 지우면(선입선출) 남은 수량의 평단가가 달라져
+// 이미 기록된 실현손익 계산 기준과 어긋나게 된다.
+export async function sellHolding(userId: string, code: string, sellQuantity: number): Promise<SellResult | null> {
+  const rows = await prisma.portfolioHolding.findMany({ where: { userId, code } });
+  if (rows.length === 0) return null;
+  const totalQty = rows.reduce((s, r) => s + r.quantity, 0);
+  if (totalQty <= 0) return null;
+
+  const avgBuyPrice = rows.reduce((s, r) => s + r.buyPrice * r.quantity, 0) / totalQty;
+  const soldQty = Math.min(sellQuantity, totalQty);
+  const fraction = soldQty / totalQty;
+  const firstBuyDate = rows.map((r) => r.buyDate).filter((d): d is string => !!d).sort()[0] ?? null;
+
+  await Promise.all(
+    rows.map((r) => {
+      const remaining = r.quantity * (1 - fraction);
+      return remaining < 0.0001
+        ? prisma.portfolioHolding.delete({ where: { id: r.id } })
+        : prisma.portfolioHolding.update({ where: { id: r.id }, data: { quantity: remaining } });
+    })
+  );
+
+  return { avgBuyPrice, soldQty, firstBuyDate, fullyClosed: soldQty >= totalQty - 0.0001 };
+}
+
 function sma(closes: number[], period: number): number | null {
   if (closes.length < period) return null;
   const slice = closes.slice(closes.length - period);

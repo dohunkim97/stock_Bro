@@ -15,6 +15,7 @@ import { fetchKisQuote } from "@/lib/kis-quote";
 import {
   addHolding,
   computeOverview,
+  getHoldings,
   getHoldingsWithLiveData,
   getPortfolioSettings,
   resolveHoldingCode,
@@ -39,6 +40,7 @@ import {
 } from "@/lib/learning-journal";
 import { pullTodayMaterial } from "@/lib/learning-push";
 import { searchEncyclopedia } from "@/lib/naver-encyc";
+import { recordBuyJournal, recordSaleJournal } from "@/lib/trade-journal";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -160,6 +162,10 @@ async function recordHoldingPurchase(
     quantity: roundedQuantity,
     buyDate: todayISO(),
   });
+  // 매매일지에도 "산 사건" 자체를 남겨서(lib/trade-journal.ts) 나중에 매도와
+  // 묶여 매매 리포트로 보인다 — 실패해도(드물게) 둥지 기록 자체는 이미
+  // 끝났으니 사용자에게 보여줄 메시지에는 영향 없게 조용히 넘어간다.
+  await recordBuyJournal(userId, { code: resolved.code, name: resolved.name, quantity: roundedQuantity, price: roundedPrice, date: todayISO() }).catch(() => {});
 
   const total = roundedQuantity * roundedPrice;
   const assumedNote = priceIsAssumed ? " (매수가는 현재 시세로 추정했어, 실제 체결가가 다르면 둥지에서 고쳐줘)" : "";
@@ -173,13 +179,115 @@ async function recordHoldingPurchase(
   };
 }
 
+// "LG에너지솔루션 처분했어", "삼성전자 10주 85000원에 팔았어" 같은 실제 매도
+// 보고 — record_holding_purchase의 반대쪽. 평단가 대비 실현손익을 코드가
+// 계산해서 매매일지(lib/trade-journal.ts)에 남기고, 둥지 보유 수량도 그만큼
+// 줄인다(전량이면 그 종목 행 자체가 없어짐).
+const RECORD_SALE_TOOL: Anthropic.Tool = {
+  name: "record_holding_sale",
+  description:
+    "사용자가 실제로 보유 종목을 매도/처분/정리했다고 말했을 때만 호출해(예: 'LG에너지솔루션 처분했어', '삼성전자 10주 85000원에 팔았어', " +
+    "'카카오 전량 매도했어'). 종목 매수 보고면 이 도구 대신 record_holding_purchase를 써. " +
+    "quantity(수량)·pricePerShare(매도단가)·totalAmount(총 매도금액) 중 최소 하나가 있거나, '전량'/'다'처럼 전부 팔았다는 뜻이면 allQuantity를 true로 — " +
+    "아무 정보도 없으면 호출하지 말고 얼마에 몇 주 팔았는지 되물어봐. " +
+    "한 메시지에 여러 종목을 팔았다고 하면 종목 수만큼 각각 호출해.",
+  input_schema: {
+    type: "object",
+    properties: {
+      stockName: { type: "string", description: "매도한 종목의 정확한 한글 종목명" },
+      quantity: { type: "number", description: "매도 수량(주). 모르면 생략." },
+      pricePerShare: { type: "number", description: "주당 매도가(원). 모르면 생략." },
+      totalAmount: { type: "number", description: "총 매도금액(원). 수량·단가 없이 총액만 말했을 때 사용. 모르면 생략." },
+      allQuantity: { type: "boolean", description: "'전량'/'다'/'전부' 매도했다는 뜻이면 true." },
+    },
+    required: ["stockName"],
+  },
+};
+
+type RecordSaleResult = { ok: boolean; message: string };
+
+async function recordHoldingSale(
+  userId: string,
+  input: { stockName?: unknown; quantity?: unknown; pricePerShare?: unknown; totalAmount?: unknown; allQuantity?: unknown }
+): Promise<RecordSaleResult> {
+  const stockName = typeof input.stockName === "string" ? input.stockName.trim() : "";
+  if (!stockName) return { ok: false, message: "어떤 종목인지 못 들었어. 종목명을 다시 말해줄래?" };
+
+  const quantity = typeof input.quantity === "number" && input.quantity > 0 ? input.quantity : null;
+  const pricePerShare = typeof input.pricePerShare === "number" && input.pricePerShare > 0 ? input.pricePerShare : null;
+  const totalAmount = typeof input.totalAmount === "number" && input.totalAmount > 0 ? input.totalAmount : null;
+  const allQuantity = input.allQuantity === true;
+
+  if (!allQuantity && quantity === null && pricePerShare === null && totalAmount === null) {
+    return { ok: false, message: `${stockName} 몇 주를, 또는 얼마에 팔았는지 말해줄래?` };
+  }
+
+  const resolved = await resolveHoldingCode(stockName);
+  if (!resolved) return { ok: false, message: `"${stockName}" 종목을 찾지 못했어. 종목명을 다시 확인해줄래?` };
+
+  const holdingRows = await getHoldings(userId);
+  const held = holdingRows.filter((h) => h.code === resolved.code);
+  const heldQty = held.reduce((s, h) => s + h.quantity, 0);
+  if (heldQty <= 0) return { ok: false, message: `둥지에 ${resolved.name} 보유 기록이 없어 — 매수부터 기록해야 매도 처리가 돼.` };
+
+  let finalQuantity = allQuantity ? heldQty : quantity;
+  let finalPrice = pricePerShare;
+  let priceIsAssumed = false;
+
+  if (finalQuantity !== null && finalPrice === null && totalAmount !== null && !allQuantity) {
+    finalPrice = totalAmount / finalQuantity!;
+  } else if (finalQuantity === null && finalPrice !== null && totalAmount !== null) {
+    finalQuantity = totalAmount / finalPrice;
+  } else if (finalQuantity === null && finalPrice === null && totalAmount !== null) {
+    const quote = await fetchKisQuote(resolved.code).catch(() => null);
+    if (!quote) return { ok: false, message: `${resolved.name} 현재가를 못 가져와서 수량을 못 정했어. 몇 주 팔았는지 알려줄래?` };
+    finalPrice = quote.price;
+    finalQuantity = totalAmount / finalPrice;
+    priceIsAssumed = true;
+  } else if (finalQuantity !== null && finalPrice === null) {
+    const quote = await fetchKisQuote(resolved.code).catch(() => null);
+    if (!quote) return { ok: false, message: `${resolved.name} 매도가를 몰라서 기록 못 했어. 얼마에 팔았는지 알려줄래?` };
+    finalPrice = quote.price;
+    priceIsAssumed = true;
+  }
+
+  if (finalQuantity === null || finalPrice === null || finalQuantity <= 0 || finalPrice <= 0) {
+    return { ok: false, message: `${resolved.name} 수량과 매도가를 정하지 못해서 기록 못 했어.` };
+  }
+
+  const roundedQuantity = Math.min(Math.round(finalQuantity), Math.round(heldQty));
+  const roundedPrice = Math.round(finalPrice);
+
+  const result = await recordSaleJournal(userId, {
+    code: resolved.code,
+    name: resolved.name,
+    quantity: roundedQuantity,
+    price: roundedPrice,
+    date: todayISO(),
+  });
+  if (!result) return { ok: false, message: `둥지에 ${resolved.name} 보유 기록이 없어 — 매수부터 기록해야 매도 처리가 돼.` };
+
+  const pnlLabel = result.realizedPnl >= 0 ? "익절" : "손절";
+  const pnlPctText = result.realizedPnlPct !== null ? ` (${result.realizedPnlPct >= 0 ? "+" : ""}${result.realizedPnlPct.toFixed(1)}%)` : "";
+  const assumedNote = priceIsAssumed ? " (매도가는 현재 시세로 추정했어, 실제 체결가가 다르면 알려줘)" : "";
+  const remainNote = result.fullyClosed ? " 전량 매도 완료." : ` 남은 수량은 둥지에서 확인해줘.`;
+
+  return {
+    ok: true,
+    message:
+      `✅ **${resolved.name} ${result.soldQty}주**, 매도가 **₩${roundedPrice.toLocaleString()}**에 매매일지 기록했어.\n` +
+      `매입 평단가 ₩${Math.round(result.avgBuyPrice).toLocaleString()} 대비 **${pnlLabel} ₩${Math.round(Math.abs(result.realizedPnl)).toLocaleString()}**${pnlPctText} 실현.${remainNote}${assumedNote}`,
+  };
+}
+
 // 일상 지출 보고("커피 5천원 썼어", "점심 만원 결제했어")를 들었을 때 호출하는
 // 도구 — 둥지 수입·지출·부채(lib/finance-engine.ts)에 지출 한 건을 기록한다.
 // record_holding_purchase와 같은 원칙: 모델은 추출만, 숫자 기록은 서버가.
 const RECORD_EXPENSE_TOOL: Anthropic.Tool = {
   name: "record_expense",
   description:
-    "사용자가 실제로 돈을 썼다고 말했을 때만 호출해(예: '커피 5천원 썼어', '점심 만원 결제했어', '옷 사는데 8만원 썼어'). " +
+    "사용자가 실제로 돈을 썼다고 말했을 때만 호출해(예: '커피 5천원 썼어', '점심 만원 결제했어', '옷 사는데 8만원 썼어', '인형뽑기 5천원 지출했어'). " +
+    "생소한 상호명/활동명이어도(바로 위에 [네이버 검색 참고]가 있으면 그걸로 뭔지 판단해) 지출 맥락이면 주저하지 말고 호출해 — 정확한 카테고리를 모르면 가장 비슷한 걸 고르거나 '기타'로 둬, 모른다고 호출을 건너뛰지 마. " +
     "'주식 샀어'처럼 종목 매수면 이 도구 대신 record_holding_purchase를 써. amount(금액)는 필수고, 못 들었으면 호출하지 말고 얼마 썼는지 되물어봐. " +
     "한 메시지에 여러 지출을 한 번에 말하면(예: '과자 5만원, 음료 2만원 썼어') 이 도구를 지출 건수만큼 각각 따로 호출해 — 첫 건만 부르고 끝내지 마.",
   input_schema: {
@@ -224,6 +332,7 @@ const RECORD_INCOME_TOOL: Anthropic.Tool = {
   name: "record_income",
   description:
     "사용자가 실제로 돈이 들어왔다고 말했을 때만 호출해(예: '월급 300만원 들어왔어', '부업으로 20만원 벌었어', '보너스 50만원 받았어'). " +
+    "생소한 출처명이어도(바로 위에 [네이버 검색 참고]가 있으면 참고해) 수입 맥락이면 주저하지 말고 호출해 — 카테고리가 애매하면 '기타'로 둬. " +
     "돈을 쓴 거면(지출) 이 도구 대신 record_expense를 써. amount(금액)는 필수고, 못 들었으면 호출하지 말고 되물어봐. " +
     "한 메시지에 여러 건을 말하면 건수만큼 각각 호출해.",
   input_schema: {
@@ -579,6 +688,35 @@ async function buildTermLookupBlock(text: string): Promise<string> {
   return lines.join("\n");
 }
 
+// "인형뽑기 5천원 지출했어"처럼 지출/수입 보고문에 나온 대상이 생소한
+// 상호명·신조어·활동명이어도 record_expense/record_income 호출을 주저하지
+// 않게, 동사 앞 대상을 뽑아 미리 네이버에서 찾아 넣어준다(사용자 요청:
+// "모르는 단어면 네이버에 알아서 찾아서 지출이든 소득이든 기록하게 해줘").
+// "~이 뭐야?" 질문용 TERM_LOOKUP_RE와 달리 이건 "~했어" 보고문에서 쓴다 —
+// 둘이 서로 다른 메시지 모양을 보는 거라 겹쳐도 문제없다.
+const SPEND_VERB_RE = /(썼어|썼|지출했|지출|결제했|결제|구매했|구매|샀어|샀|벌었어|벌었|받았어|받았|들어왔어|들어왔)/;
+
+function extractSpendSubject(text: string): string | null {
+  const m = text.match(SPEND_VERB_RE);
+  if (!m || m.index === undefined) return null;
+  let subject = text.slice(0, m.index);
+  subject = subject.replace(/^(오늘|어제|아까|방금|그제)\s*/, "");
+  subject = subject.replace(/[\d,]+\s*(원|만원|천원|억원)?/g, "");
+  subject = subject.replace(/(에서|으로|을|를|이|가|은|는)\s*$/, "").trim();
+  if (subject.length < 2 || /^[\d\s,.]+$/.test(subject)) return null;
+  return subject.slice(-15);
+}
+
+async function buildSpendLookupBlock(text: string): Promise<string> {
+  const subject = extractSpendSubject(text);
+  if (!subject) return "";
+  const results = await searchEncyclopedia(subject, 2);
+  if (results.length === 0) return "";
+  const lines = [`\n\n[네이버 검색 참고 — "${subject}"가 뭔지 애매하면 이걸로 지출/수입 여부와 카테고리를 판단해, 모른다고 기록을 건너뛰지 마]`];
+  for (const r of results) lines.push(`- ${r.title}: ${r.description}`);
+  return lines.join("\n");
+}
+
 // "학습 시작해줘"/"학습자료 줘"/"학습 그만할래" — 180일 플래닛을 켜고 끄고,
 // 자료를 내준다. 자동으로 밀어주는 평일 아침 발송은 없다(2026-10-16 사용자
 // 피드백: "자동으로 안보내고 내가 말하면 보내줘") — start와 material 둘 다
@@ -803,6 +941,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   const teacherModeBlock = lastUser ? await buildTeacherModeBlock(userId, lastUser.content) : "";
   // "~가 뭐야" 류 용어 질문엔 네이버 지식백과 검색 결과를 근거로 끼워준다.
   const termLookupBlock = lastUser ? await buildTermLookupBlock(lastUser.content) : "";
+  // "인형뽑기 5천원 썼어" 같은 지출/수입 보고에서 대상이 생소하면 미리 찾아준다.
+  const spendLookupBlock = lastUser ? await buildSpendLookupBlock(lastUser.content) : "";
 
   const client = new Anthropic();
   const baseSystem = await buildSystemPrompt();
@@ -839,6 +979,7 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
     predictionReviewBlock +
     teacherModeBlock +
     termLookupBlock +
+    spendLookupBlock +
     principlesBlock +
     loginNote +
     channelNote;
@@ -848,6 +989,7 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   if (userId)
     tools.push(
       RECORD_HOLDING_TOOL,
+      RECORD_SALE_TOOL,
       RECORD_EXPENSE_TOOL,
       RECORD_INCOME_TOOL,
       RECORD_LIABILITY_TOOL,
@@ -903,6 +1045,7 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
         userId ? Promise.all(uses.map((u) => fn(userId, u.input as Record<string, unknown>))) : Promise.resolve([]);
 
       const holdingResults = await runAll(findAllTools("record_holding_purchase"), recordHoldingPurchase);
+      const saleResults = await runAll(findAllTools("record_holding_sale"), recordHoldingSale);
       const expenseResults = await runAll(findAllTools("record_expense"), recordExpense);
       const incomeResults = await runAll(findAllTools("record_income"), recordIncome);
       const liabilityResults = await runAll(findAllTools("record_liability"), recordLiability);
@@ -916,6 +1059,7 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
 
       const replyText =
         joinMsgs(holdingResults) ??
+        joinMsgs(saleResults) ??
         joinMsgs(expenseResults) ??
         joinMsgs(incomeResults) ??
         joinMsgs(liabilityResults) ??
