@@ -88,6 +88,14 @@ export async function removeHolding(userId: string, id: string) {
   return result;
 }
 
+// 실제 매도가 아니라 "잘못 기록했어" 같은 입력 실수 정정용 — 이 종목의 보유
+// 기록 전부를 평단가 계산 없이 그냥 지운다(매매일지에도 안 남음, sellHolding과
+// 다른 용도). 삭제한 건수를 돌려줘 호출부가 "몇 건 지웠다"고 말할 수 있게 한다.
+export async function removeHoldingsByCode(userId: string, code: string): Promise<number> {
+  const result = await prisma.portfolioHolding.deleteMany({ where: { userId, code } });
+  return result.count;
+}
+
 export type SellResult = {
   avgBuyPrice: number; // 매도 직전 평단가(=실현손익 계산 기준)
   soldQty: number; // 실제로 판 수량(보유 수량을 넘겨 부르면 보유분만큼으로 캡)
