@@ -1,12 +1,17 @@
-// "주식 학습 플래닛" 180일 커리큘럼 — 사용자가 직접 설계해서 보내준 플랜을
-// 그대로 코드로 옮겼다. 1주 차(Day 1~7)는 사용자 원문에 날짜별 주제·질문이
-// 정확히 적혀 있어서 그대로 하드코딩했고, 그 뒤(Day 8~180)는 원문이 "이번
-// 달의 주제 목록"만 주고 날짜별로 쪼개진 내용까진 안 줬다 — 없는 걸 있는
-// 척 지어내지 않고, 그 달의 주제 목록을 평일마다 순서대로 돌리는 방식으로
-// 코드가 결정적으로(매번 같게) 배정한다. 그날의 구체적인 "오늘의 질문"은
-// 주제가 정해진 뒤 LLM이 그 주제에 맞게 만든다(lib/learning-push.ts).
-// 7일마다(Day 7, 14, 21 ...) 그 주 동안 배운 걸 복습하는 날로 둔다 — 이것도
-// 원문 Day 7("주간 복습")의 패턴을 그대로 180일 전체에 반복 적용한 것.
+// "주식 학습 플래닛" 180일 커리큘럼.
+// Day 1~30(1개월 차)은 날짜별로 다 다른 구체적 주제가 있다 — 사용자가
+// 공유한 상세 기획서("첫 30일은 날짜별로 구체적인 학습 주제를 제공한다")
+// 요구사항에 맞춰 2026-10-19에 채웠다. Day 1~7은 사용자 원문에 그대로
+// 있던 날짜별 주제·질문이고, Day 8~30은 원문엔 없던 부분이라 그 달의
+// 주제 목록(MONTH_PLANS[0].topics — 이것도 사용자가 준 원문 그대로) 5개를
+// 깊이 있게 풀어서 내(Claude)가 짠 세부 커리큘럼이다 — 없는 내용을 있는
+// 척 베낀 게 아니라, 이미 승인된 주제 범위를 날짜별로 쪼갠 설계라는 뜻.
+// Day 31~180(2~6개월 차)은 아직 이렇게 날짜별로 다 못 채웠다 — 그 달의
+// 주제 목록을 평일마다 순서대로 도는 방식으로 코드가 결정적으로 배정하고,
+// 그날의 구체적인 "오늘의 질문"은 LLM이 그 주제에 맞게 만든다
+// (lib/learning-push.ts). 1개월 차가 끝나고 피드백을 보면서 2~6개월 차도
+// 같은 방식으로 채울 수 있다.
+// 7일마다(Day 7, 14, 21 ...) 그 주 동안 배운 걸 복습하는 날로 둔다.
 
 export const TOTAL_DAYS = 180;
 
@@ -107,8 +112,11 @@ export const MONTH_PLANS: MonthPlan[] = [
   },
 ];
 
-// Day 1~7 — 사용자 원문에 날짜별로 정확히 적힌 내용 그대로.
-const WEEK1_FIXED: { day: number; topic: string; question: string }[] = [
+// Day 1~30(1개월 차) — 날짜마다 다른 구체적 주제. Day 1~7은 사용자 원문
+// 그대로, Day 8~30은 그 달 주제 5개(주식/시총, 매출/이익/EPS/ROE, 3대
+// 재무제표, 밸류에이션 지표, DART)를 주차별로 깊이 있게 풀어낸 것 —
+// 위 파일 상단 주석 참고.
+const MONTH1_FIXED: { day: number; topic: string; question: string }[] = [
   { day: 1, topic: "주식시장 구조", question: "주가가 같아도 시가총액이 다른 이유는?" },
   { day: 2, topic: "주가와 수익률", question: "-50% 손실 후 원금 회복에 몇 % 상승이 필요한가?" },
   { day: 3, topic: "매출과 이익", question: "매출이 증가해도 영업이익이 감소하는 이유는?" },
@@ -116,6 +124,29 @@ const WEEK1_FIXED: { day: number; topic: string; question: string }[] = [
   { day: 5, topic: "현금흐름표", question: "흑자 기업이 현금 부족에 빠질 수 있는 이유는?" },
   { day: 6, topic: "재무비율", question: "이익률이 높은 기업이 반드시 좋은 투자 대상일까?" },
   { day: 7, topic: "주간 복습", question: "이번 주 가장 이해가 부족한 개념은?" },
+  { day: 8, topic: "시가총액과 유통주식수", question: "전체 발행주식수와 유통주식수가 다른 이유는?" },
+  { day: 9, topic: "거래대금과 거래량의 차이", question: "거래량은 적은데 거래대금이 큰 종목은 어떤 특징을 가질까?" },
+  { day: 10, topic: "영업이익률과 순이익률", question: "영업이익률은 높은데 순이익률이 낮은 기업은 어떤 상황일 수 있을까?" },
+  { day: 11, topic: "EPS와 BPS", question: "EPS가 늘었는데 주가가 안 오르는 경우는 왜 생길까?" },
+  { day: 12, topic: "ROE와 ROA", question: "부채를 늘려서 ROE가 높아진 기업을 어떻게 알아챌 수 있을까?" },
+  { day: 13, topic: "배당수익률과 배당성향", question: "배당성향이 100%를 넘는 기업은 왜 위험할 수 있을까?" },
+  { day: 14, topic: "주간 복습", question: "이번 주 배운 지표 중 가장 헷갈리는 걸 하나 설명해봐." },
+  { day: 15, topic: "손익계산서 구조 읽기", question: "매출총이익과 영업이익 사이에 어떤 비용들이 빠질까?" },
+  { day: 16, topic: "재무상태표의 유동·비유동 구분", question: "유동자산이 많은 기업이 반드시 안전한 걸까?" },
+  { day: 17, topic: "부채비율과 유동비율", question: "부채비율이 낮다고 무조건 좋은 기업일까?" },
+  { day: 18, topic: "현금흐름표의 3분류(영업·투자·재무)", question: "영업활동 현금흐름은 마이너스인데 순이익은 플러스인 경우는 왜 생길까?" },
+  { day: 19, topic: "잉여현금흐름(FCF)", question: "순이익은 늘었는데 FCF가 줄어드는 기업은 뭘 의심해봐야 할까?" },
+  { day: 20, topic: "재고자산과 매출채권 회전율", question: "매출채권이 계속 늘어나는 기업에서 조심해야 할 점은?" },
+  { day: 21, topic: "주간 복습", question: "이번 주 배운 재무제표 항목 중 실전에서 제일 먼저 확인할 건 뭐라고 생각해?" },
+  { day: 22, topic: "PER의 의미와 한계", question: "적자 기업은 왜 PER로 평가할 수 없을까?" },
+  { day: 23, topic: "PBR과 자기자본", question: "PBR이 1보다 낮은 기업이 항상 저평가인 걸까?" },
+  { day: 24, topic: "PSR과 적자 성장기업의 밸류에이션", question: "이익이 없는 성장기업을 평가할 때 PSR을 쓰는 이유는?" },
+  { day: 25, topic: "동종업계 비교(Peer 비교)", question: "같은 업종인데 PER이 크게 다른 두 기업을 보면 뭘 먼저 의심해야 할까?" },
+  { day: 26, topic: "DART 공시 시스템 개요", question: "뉴스 기사와 DART 원문 중 왜 원문을 먼저 봐야 할까?" },
+  { day: 27, topic: "사업보고서 읽는 순서", question: "사업보고서에서 가장 먼저 확인해야 할 섹션은 뭐라고 생각해?" },
+  { day: 28, topic: "주간 복습", question: "이번 주 배운 밸류에이션 지표 하나를 실제 관심 종목에 적용해봤어?" },
+  { day: 29, topic: "분기보고서와 사업보고서의 차이", question: "분기보고서만 보고 연간 실적을 판단하면 왜 위험할까?" },
+  { day: 30, topic: "1개월 차 총정리", question: "한 달 동안 배운 것 중 네 투자 판단을 가장 많이 바꾼 개념은 뭐야?" },
 ];
 
 export function monthForDay(day: number): MonthPlan {
@@ -127,25 +158,27 @@ export type DailyTopic = {
   day: number;
   month: MonthPlan;
   topic: string;
-  question: string | null; // Day 1~7만 고정 질문이 있음 — 나머진 null(호출부가 LLM으로 생성)
-  isWeeklyReview: boolean; // 7일마다(원문 Day 7의 패턴을 180일 전체에 반복)
+  question: string | null; // Day 1~30만 고정 질문이 있음 — 나머진 null(호출부가 LLM으로 생성)
+  isWeeklyReview: boolean; // 7일마다
+  isMonthEnd: boolean; // 그 달의 마지막 날 — 월말 결과물(milestone) 안내용
 };
 
 // 그날의 주제를 결정적으로 정한다 — 같은 day를 넣으면 항상 같은 결과(LLM 없이
-// 코드만으로). Day 1~7은 고정 내용 그대로, 그 뒤는 그 달의 topics를 평일
+// 코드만으로). Day 1~30은 고정 내용 그대로, 그 뒤는 그 달의 topics를 평일
 // 진행 순서(0,1,2...)로 순환 배정한다.
 export function dailyTopicFor(day: number): DailyTopic {
   const month = monthForDay(day);
   const isWeeklyReview = day % 7 === 0;
+  const isMonthEnd = day === month.dayRange[1];
 
-  if (day <= 7) {
-    const fixed = WEEK1_FIXED[day - 1];
-    return { day, month, topic: fixed.topic, question: fixed.question, isWeeklyReview };
+  if (day <= 30) {
+    const fixed = MONTH1_FIXED[day - 1];
+    return { day, month, topic: fixed.topic, question: fixed.question, isWeeklyReview, isMonthEnd };
   }
 
   const dayWithinMonth = day - month.dayRange[0]; // 0-based
   const topic = month.topics[dayWithinMonth % month.topics.length];
-  return { day, month, topic: isWeeklyReview ? `주간 복습 — ${topic}` : topic, question: null, isWeeklyReview };
+  return { day, month, topic: isWeeklyReview ? `주간 복습 — ${topic}` : topic, question: null, isWeeklyReview, isMonthEnd };
 }
 
 // 원문 플랜의 6단계 "스스로 조사" 루틴 — 2026-10-16부터 기본 학습자료

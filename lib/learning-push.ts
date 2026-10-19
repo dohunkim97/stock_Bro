@@ -1,24 +1,24 @@
 // "주식 학습 플래닛" 자료 제공.
-// 2026-10-16 사용자 피드백 2건을 반영한 현재 형태:
-//  1) "자동으로 안보내고 내가 말하면 보내줘" → 평일 아침 자동 발송을 없애고
-//     요청 기반(pull)으로 전환(pullTodayMaterial).
-//  2) "강의형으로 하고 골구 판단으로 정리, 그리고 내가 보고 궁금한 거
-//     질문하는 식으로" → 처음엔 "오늘의 질문 + 혼자 조사해서 답해와" 숙제
-//     형이었는데, 그 대신 그날 주제를 골구가 먼저 강의처럼 설명하고 요약
-//     판단까지 준 다음, 사용자가 읽고 이상하거나 궁금한 걸 되묻는 흐름으로
-//     바꿨다(buildDailyMissionMessage가 매번 LLM 강의를 생성).
+// 반영된 사용자 피드백:
+//  1) (10-16) "자동으로 안보내고 내가 말하면 보내줘" → 평일 아침 자동 발송을
+//     없애고 요청 기반(pull)으로 전환(pullTodayMaterial).
+//  2) (10-16) "강의형으로 하고 골구 판단으로 정리, 그리고 내가 보고 궁금한
+//     거 질문하는 식으로" → "오늘의 질문 + 혼자 조사해서 답해와" 숙제형
+//     대신, 그날 주제를 골구가 먼저 강의처럼 설명하고 판단까지 준 다음
+//     사용자가 되묻는 흐름으로(buildDailyMissionMessage가 LLM 강의 생성).
+//  3) (10-19) "주식 기초 설명만 하고 기업분석은 안 시킨다" → 매일 끝에
+//     "오늘 실천"(관심 기업 직접 분석)을 다시 권유하도록 복원.
+//  4) (10-19) 상세 기획서의 "학습 완료 버튼을 눌렀을 때만 완료 처리한다" →
+//     자료를 보여주는 것(markMaterialShown)과 진도를 올리는 것
+//     (completeCurrentDay, "학습 완료"라고 말해야 호출됨)을 분리.
 // DAILY_ROUTINE_STEPS(원문의 6단계 "스스로 조사" 루틴 전체)는 기본 발송에
-// 안 들어간다 — 완전히 안 쓰는 건 아니고, 커리큘럼 데이터로는 남겨둔 채
-// 나중에 "오늘 실습 체크리스트 줘" 같은 별도 요청용으로 쓸 수 있다.
-// 다만 그 루틴의 핵심인 "기업 하나를 매일 직접 분석해보라"는 원문이
-// "내 추천"이라고 못박은 이 플랜의 중심 실천이라(2026-10-19 사용자 확인:
-// 강의형으로 바꾸면서 이 부분이 통째로 빠져서 "주식 기초 설명만 하고 기업
-// 분석은 안 시킨다"는 피드백을 받음) — 매일 마지막에 짧게 다시 권유한다.
+// 안 들어간다 — 커리큘럼 데이터로는 남겨둔 채 나중에 "오늘 실습 체크리스트
+// 줘" 같은 별도 요청용으로 쓸 수 있다.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { todayISO, businessDaysBetweenExclusive } from "@/lib/dates";
-import { dailyTopicFor, TOTAL_DAYS } from "@/lib/learning-curriculum";
-import { getProgress, startProgress, resetProgress, advanceAfterPush, isProgramComplete } from "@/lib/learning-journal";
+import { dailyTopicFor, TOTAL_DAYS, MONTH_PLANS } from "@/lib/learning-curriculum";
+import { getProgress, startProgress, resetProgress, markMaterialShown, isProgramComplete } from "@/lib/learning-journal";
 
 // 같은 주제를 다시 보여줄 때(같은 날 재요청, 같은 날 시작한 다른 사용자)
 // 매번 새로 생성하면 내용이 바뀌어 보이고 비용도 드니 재사용한다.
@@ -62,7 +62,7 @@ async function generateLecture(topic: string, monthTitle: string, anchorQuestion
 }
 
 export async function buildDailyMissionMessage(day: number): Promise<string> {
-  const { month, topic, question: fixedQuestion, isWeeklyReview } = dailyTopicFor(day);
+  const { month, topic, question: fixedQuestion, isWeeklyReview, isMonthEnd } = dailyTopicFor(day);
   const lecture = await generateLecture(topic, month.title, fixedQuestion);
 
   const header = day === 1 ? "📚 주식 학습 플래닛 — 1일차" : `📚 주식 학습 플래닛 — ${day}/${TOTAL_DAYS}일차`;
@@ -70,12 +70,14 @@ export async function buildDailyMissionMessage(day: number): Promise<string> {
 
   if (fixedQuestion) lines.push("", `스스로 점검: ${fixedQuestion}`);
   if (isWeeklyReview) lines.push("", "오늘은 주간 복습일이야 — 이번 주 배운 것들도 한번 돌아봐.");
+  if (isMonthEnd) lines.push("", `이번 달 마무리! 월말 결과물: ${month.milestone}. 다음 달부턴 "${nextMonthTitle(month.month)}"로 넘어가.`);
 
   lines.push("", "이상하거나 더 궁금한 거 있으면 바로 물어봐.");
   lines.push(
     "",
     "오늘 실천: 관심 있는 기업 하나를 골라 직접 분석해봐 — ①뭘 팔아서 돈 버는지 ②최근 분기 매출·영업이익·순이익 ③최근 주가가 움직인 이유(공식 자료·뉴스)를 확인하고, 상승 근거 3개·하락 위험 3개를 정리해서 말해줘. 내가 반대 논리로 반박해주고 일지로도 기록해둘게 — 수십 종목을 훑는 것보다 하나를 제대로 이해하는 게 훨씬 단단한 실력을 만들어."
   );
+  lines.push("", '다 읽고 오늘 몫을 끝냈으면 "학습 완료"라고 말해줘 — 그래야 다음 날로 넘어가(말 안 하면 같은 날 자료가 계속 나와).');
 
   if (day === 1) {
     lines.push(
@@ -87,13 +89,18 @@ export async function buildDailyMissionMessage(day: number): Promise<string> {
   return lines.join("\n");
 }
 
+function nextMonthTitle(currentMonth: number): string {
+  return MONTH_PLANS.find((m) => m.month === currentMonth + 1)?.title ?? "완주";
+}
+
 const COMPLETE_TEXT =
   '🎉 180일 주식 학습 플래닛을 완주했어! 여기까지 매일 기록한 투자 연구 일지가 네 가장 큰 자산이야 — "내 기록 검토해줘"라고 하면 전체를 같이 돌아볼 수 있어. 다시 처음부터 하고 싶으면 "학습 다시 시작해줘"라고 해줘.';
 
 // "학습자료 줘" — 핵심 진입점. 아직 시작 안 했으면 그 자리에서 1일차부터
-// 시작하고, 멈춰 있었으면 이어서 재개하고, 이미 진행 중이면 다음 일차를
-// 내준다. 오늘 이미 받았으면(중복 요청) 같은 내용을 다시 보여주고 진도는
-// 더 안 나간다. 마지막 요청 이후 평일을 건너뛰었으면 그 사실도 먼저 알려준다.
+// 시작하고, 멈춰 있었으면 이어서 재개하고, 이미 진행 중이면 그날(currentDay)
+// 자료를 내준다. 여러 번 요청해도 "학습 완료"라고 말하기 전까진 같은 날
+// 자료가 그대로 다시 나간다(진도는 completeCurrentDay만 올린다). 마지막
+// 완료일 이후 평일을 건너뛰었으면 그 사실도 같이 알려준다.
 export async function pullTodayMaterial(userId: string): Promise<string> {
   const today = todayISO();
   let progress = await getProgress(userId);
@@ -108,19 +115,18 @@ export async function pullTodayMaterial(userId: string): Promise<string> {
   if (isProgramComplete(progress.currentDay)) return COMPLETE_TEXT;
 
   const resumeNote = wasPaused ? "⏸ 멈춰 있던 거 다시 시작할게.\n\n" : "";
+  const alreadyShownToday = progress.lastPushDate === today;
 
-  if (progress.lastPushDate === today) {
-    // 오늘 이미 받은 자료를 또 요청 — 같은 날짜 안에서는 진도를 더
-    // 안 올리고 방금 준 그 미션을 그대로 다시 보여준다.
-    const day = Math.max(1, progress.currentDay - 1);
-    return resumeNote + (await buildDailyMissionMessage(day));
-  }
+  // "건너뛴 평일" 기준을 마지막 완료일로 잡는다 — 자료만 보고 "학습 완료"는
+  // 안 한 상태면 아직 그날 몫이 안 끝난 거라, 오늘 처음 자료를 보여줄 때만
+  // 알려준다(재요청마다 반복해서 나오면 거슬린다).
+  const baselineDate = progress.lastCompletedDate ?? progress.startDate;
+  const skipped = !alreadyShownToday ? businessDaysBetweenExclusive(baselineDate, today) : 0;
 
-  const skipped = progress.lastPushDate ? businessDaysBetweenExclusive(progress.lastPushDate, today) : 0;
+  await markMaterialShown(userId, today);
   const missionText = await buildDailyMissionMessage(progress.currentDay);
-  await advanceAfterPush(userId, today);
 
-  const skipNote = skipped > 0 ? `지난 ${skipped}일(평일 기준) 건너뛰었네 — 괜찮아, 이어서 할게.\n\n` : "";
+  const skipNote = skipped > 0 ? `지난 ${skipped}일(평일 기준) 완료를 안 했네 — 괜찮아, 오늘 몫부터 이어서 할게.\n\n` : "";
   return resumeNote + skipNote + missionText;
 }
 

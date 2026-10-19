@@ -555,36 +555,48 @@ model User {
 // paused면 더 안 보낸다("학습 그만할래"). 진도 자체는 180일을 다 채웠는지
 // 보여주는 숫자일 뿐이라 별도 "완료" 상태는 안 둔다(currentDay > 180이면 끝).
 model LearningProgress {
-  id           String   @id @default(cuid())
-  userId       String   @unique
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  startDate    String // YYYY-MM-DD, 학습 시작일
-  currentDay   Int      @default(1) // 다음에 보낼 미션이 180일 중 몇 일차인지
-  lastPushDate String? // 마지막으로 평일 미션을 보낸 날짜(크론이 하루 중 여러 번 불려도 중복 발송 방지)
-  streak       Int      @default(0) // 연속으로 일지(record_learning_journal)를 제출한 일수
-  paused       Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startDate         String // YYYY-MM-DD, 학습 시작일
+  currentDay        Int      @default(1) // 지금 진행 중인(아직 "학습 완료" 안 한) 일차
+  lastPushDate      String? // 마지막으로 그날 자료를 보여준 날짜(같은 날 재요청 시 중복 안내 방지용)
+  lastCompletedDate String? // 마지막으로 "학습 완료"로 하루를 끝낸 날짜 — 이게 있어야 currentDay가 올라감(2026-10-19: 자료만 받아도 진도가 올라가던 걸 "완료"라고 말해야만 올라가게 분리)
+  streak            Int      @default(0) // 연속으로 일지(record_learning_journal)를 제출한 일수
+  paused            Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }
 
 // 매일 쓰는 "투자 연구 일지"(record_learning_journal 도구로 채팅 중 기록) —
 // 하루 하나. "투자 기록 검토관" 모드가 지난 가설과 실제 결과를 비교할 때
-// 이 테이블을 읽는다.
+// 이 테이블을 읽는다. 2026-10-19 사용자가 공유한 상세 기획서에 맞춰 7개
+// 항목에서 16개 항목(DB 필드로는 15개 — date/day 빼면)으로 확장했다. 전부
+// optional — 전부 다 채워야 저장되는 게 아니라 사용자가 말해준 것만 채워서
+// 기록한다(기존 방식 그대로).
 model LearningJournalEntry {
-  id           String   @id @default(cuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  date         String // YYYY-MM-DD
-  day          Int // 기록 당시 180일 중 며칠차였는지
-  marketRegime String? // 상승/하락/횡보/고변동성
-  company      String?
-  companyCode  String?
-  thesis       String? // 투자 가설
-  bullish      String? // 상승 근거
-  bearish      String? // 하락 위험
-  invalidation String? // 가설이 틀렸다고 볼 조건
-  learnings    String? // 오늘 새로 배운 것
-  createdAt    DateTime @default(now())
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date              String // YYYY-MM-DD
+  day               Int // 기록 당시 180일 중 며칠차였는지
+  marketRegime      String? // 오늘의 시장 상황 — 상승/하락/횡보/고변동성
+  marketCause       String? // 시장을 움직인 핵심 원인
+  disclosureNote    String? // 오늘 읽은 중요 공시
+  company           String? // 분석한 기업
+  companyCode       String?
+  businessStructure String? // 기업의 사업 구조
+  earningsChange    String? // 최근 실적 변화
+  priceMoveReason   String? // 주가가 움직인 이유
+  volumeSupplyNote  String? // 거래량과 수급에서 발견한 점
+  thesis            String? // 투자 가설
+  bullish           String? // 상승 근거
+  bearish           String? // 하락 위험
+  invalidation      String? // 가설이 틀렸다고 볼 조건
+  dataToCheck       String? // 추가로 확인할 데이터
+  nextDayCheck      String? // 다음 날 검증할 내용
+  learnings         String? // 오늘 새로 배운 것
+  createdAt         DateTime @default(now())
 
   @@unique([userId, date])
   @@index([userId])

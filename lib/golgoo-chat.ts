@@ -29,7 +29,14 @@ import { buildHoldingDeepDiveBlock, buildRiskTopBlock, buildScenarioBlock, build
 import { cumulativeLearningBlock } from "@/lib/prediction-learning";
 import { fetchKisChart } from "@/lib/kis-chart";
 import { dailyTopicFor } from "@/lib/learning-curriculum";
-import { getProgress, pauseProgress, upsertJournalEntry, getRecentJournalEntries, getJournalStats } from "@/lib/learning-journal";
+import {
+  getProgress,
+  pauseProgress,
+  completeCurrentDay,
+  upsertJournalEntry,
+  getRecentJournalEntries,
+  getJournalStats,
+} from "@/lib/learning-journal";
 import { pullTodayMaterial } from "@/lib/learning-push";
 import { searchEncyclopedia } from "@/lib/naver-encyc";
 
@@ -386,12 +393,20 @@ const RECORD_JOURNAL_TOOL: Anthropic.Tool = {
   input_schema: {
     type: "object",
     properties: {
-      marketRegime: { type: "string", description: "오늘 시장 국면 — 상승/하락/횡보/고변동성 중 사용자가 말한 대로" },
+      marketRegime: { type: "string", description: "오늘의 시장 상황 — 상승/하락/횡보/고변동성 중 사용자가 말한 대로" },
+      marketCause: { type: "string", description: "시장을 움직인 핵심 원인" },
+      disclosureNote: { type: "string", description: "오늘 읽은 중요 공시" },
       company: { type: "string", description: "오늘 분석한 기업명" },
+      businessStructure: { type: "string", description: "그 기업의 사업 구조(뭘 팔아서 돈 버는지)" },
+      earningsChange: { type: "string", description: "최근 실적 변화" },
+      priceMoveReason: { type: "string", description: "주가가 움직인 이유" },
+      volumeSupplyNote: { type: "string", description: "거래량·수급에서 발견한 점" },
       thesis: { type: "string", description: "투자 가설(왜 오를/내릴 거라고 보는지)" },
       bullish: { type: "string", description: "상승 근거 — 여러 개면 줄바꿈으로 구분" },
       bearish: { type: "string", description: "하락 위험 — 여러 개면 줄바꿈으로 구분" },
       invalidation: { type: "string", description: "이 가설이 틀렸다고 볼 조건" },
+      dataToCheck: { type: "string", description: "추가로 확인할 데이터" },
+      nextDayCheck: { type: "string", description: "다음 날 검증할 내용" },
       learnings: { type: "string", description: "오늘 새로 배운 것" },
     },
     required: [],
@@ -404,11 +419,19 @@ async function recordJournal(
   userId: string,
   input: {
     marketRegime?: unknown;
+    marketCause?: unknown;
+    disclosureNote?: unknown;
     company?: unknown;
+    businessStructure?: unknown;
+    earningsChange?: unknown;
+    priceMoveReason?: unknown;
+    volumeSupplyNote?: unknown;
     thesis?: unknown;
     bullish?: unknown;
     bearish?: unknown;
     invalidation?: unknown;
+    dataToCheck?: unknown;
+    nextDayCheck?: unknown;
     learnings?: unknown;
   }
 ): Promise<RecordJournalResult> {
@@ -418,12 +441,20 @@ async function recordJournal(
 
   const filled = {
     marketRegime: str(input.marketRegime),
+    marketCause: str(input.marketCause),
+    disclosureNote: str(input.disclosureNote),
     company: resolved?.name ?? company,
     companyCode: resolved?.code ?? null,
+    businessStructure: str(input.businessStructure),
+    earningsChange: str(input.earningsChange),
+    priceMoveReason: str(input.priceMoveReason),
+    volumeSupplyNote: str(input.volumeSupplyNote),
     thesis: str(input.thesis),
     bullish: str(input.bullish),
     bearish: str(input.bearish),
     invalidation: str(input.invalidation),
+    dataToCheck: str(input.dataToCheck),
+    nextDayCheck: str(input.nextDayCheck),
     learnings: str(input.learnings),
   };
   if (Object.values(filled).every((v) => v === null)) return { ok: false, message: "뭘 기록할지 하나도 못 들었어 — 오늘 분석한 내용을 말해줄래?" };
@@ -484,8 +515,7 @@ async function buildTeacherModeBlock(userId: string | null, text: string): Promi
 async function currentTopicLabel(userId: string): Promise<string | null> {
   const progress = await getProgress(userId);
   if (!progress) return null;
-  const lastSentDay = Math.max(1, progress.currentDay - 1);
-  const { month, topic } = dailyTopicFor(lastSentDay);
+  const { month, topic } = dailyTopicFor(progress.currentDay);
   return `${month.title} — ${topic}`;
 }
 
@@ -518,7 +548,7 @@ async function buildJournalReviewBlock(userId: string): Promise<string> {
   for (const { e, movePct } of withMoves) {
     const moveLabel = movePct === null ? "실제 움직임 조회 불가" : `실제 움직임 ${movePct >= 0 ? "+" : ""}${movePct.toFixed(1)}%(기록일 종가 대비 현재)`;
     lines.push(
-      `- ${e.date}(${e.day}일차) ${e.company ?? "기업 미기재"}: 가설="${e.thesis ?? "-"}" / 상승근거="${e.bullish ?? "-"}" / 하락위험="${e.bearish ?? "-"}" / 무효조건="${e.invalidation ?? "-"}" → ${moveLabel}`
+      `- ${e.date}(${e.day}일차) ${e.company ?? "기업 미기재"}: 가설="${e.thesis ?? "-"}" / 상승근거="${e.bullish ?? "-"}" / 하락위험="${e.bearish ?? "-"}" / 무효조건="${e.invalidation ?? "-"}" / 당시주가움직인이유="${e.priceMoveReason ?? "-"}" / 다음날검증할것="${e.nextDayCheck ?? "-"}" → ${moveLabel}`
     );
   }
   lines.push("이걸로 우연히 맞은 판단과 근거가 유효했던 판단을 구분해주고, 반복되는 오류 패턴이 있으면 짚어줘.");
@@ -557,11 +587,12 @@ async function buildTermLookupBlock(text: string): Promise<string> {
 const LEARNING_CONTROL_TOOL: Anthropic.Tool = {
   name: "set_learning_plan_state",
   description:
-    "사용자가 '학습 시작해줘'/'플래닛 시작할래'처럼 180일 주식 학습 플래닛을 시작하고 싶다고 하면 start, '학습자료 줘'/'오늘 미션 줘'처럼 (이미 시작한 상태에서) 자료를 요청하면 material, '학습 그만할래'/'잠깐 쉴래'처럼 멈추고 싶다고 하면 pause를 호출해. 자료는 자동으로 안 오고 이 도구를 불러야만 나간다는 걸 기억해.",
+    "사용자가 '학습 시작해줘'/'플래닛 시작할래'처럼 180일 주식 학습 플래닛을 시작하고 싶다고 하면 start, '학습자료 줘'/'오늘 미션 줘'처럼 (이미 시작한 상태에서) 자료를 요청하면 material, '학습 완료'/'오늘 다 했어'/'오늘 몫 끝냈어'처럼 그날 학습을 끝냈다고 하면 complete, '학습 그만할래'/'잠깐 쉴래'처럼 멈추고 싶다고 하면 pause를 호출해. " +
+    "자료는 자동으로 안 오고 material을 불러야만 나가고, 진도도 자동으로 안 올라가고 complete를 불러야만 다음 날로 넘어간다는 걸 기억해 — 자료를 보여준 것과 완료 처리하는 건 서로 다른 동작이야.",
   input_schema: {
     type: "object",
     properties: {
-      action: { type: "string", enum: ["start", "material", "pause"], description: "start=최초 시작, material=다음 자료 요청, pause=중지" },
+      action: { type: "string", enum: ["start", "material", "complete", "pause"], description: "start=최초 시작, material=자료 요청, complete=오늘 분량 완료, pause=중지" },
     },
     required: ["action"],
   },
@@ -577,7 +608,20 @@ async function setLearningState(userId: string, input: { action?: unknown }): Pr
     const prefix = input.action === "start" ? "✅ 주식 학습 플래닛 시작했어!\n\n" : "";
     return { ok: true, message: prefix + text };
   }
-  return { ok: false, message: "시작할지, 자료를 받을지, 멈출지 다시 말해줄래?" };
+  if (input.action === "complete") {
+    const result = await completeCurrentDay(userId, todayISO());
+    if (!result.ok) {
+      if (result.reason === "already") return { ok: true, message: "오늘 건 이미 완료 처리했어 — 내일 또 하자!" };
+      if (result.reason === "paused") return { ok: false, message: '지금 학습 플래닛이 멈춰 있어 — "학습 시작해줘"라고 먼저 말해줄래?' };
+      if (result.reason === "programComplete") return { ok: true, message: "이미 180일을 다 완주했어! 🎉" };
+      return { ok: false, message: '아직 학습 플래닛을 시작 안 했어 — "학습자료 줘"라고 먼저 말해줄래?' };
+    }
+    return {
+      ok: true,
+      message: `✅ **${result.completedDay}일차** 완료! 다음에 "학습자료 줘"라고 하면 **${result.nextDay}일차**로 넘어갈게. 오늘 분석한 내용 있으면 말해줘 — 일지로 기록해둘게.`,
+    };
+  }
+  return { ok: false, message: "시작할지, 자료를 받을지, 오늘 분량을 완료할지, 멈출지 다시 말해줄래?" };
 }
 
 // "이번주/이번달/오늘 얼마 썼어" — LLM이 대충 말하지 않게 실제 집계(lib/
