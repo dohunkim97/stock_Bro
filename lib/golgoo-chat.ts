@@ -1366,6 +1366,7 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       };
     } catch (e) {
       lastErr = e;
+      console.error("[golgoo-chat] runChatTurn failed", e);
       const overloaded = e instanceof Anthropic.APIError && (e.status === 429 || e.status === 529 || e.status === 500);
       if (overloaded && i < 2) {
         await new Promise((r) => setTimeout(r, 900 * (i + 1)));
