@@ -1220,8 +1220,13 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   // 전부니 충분히" 할지(위 [지금 대화에서 새로 조회한 종목 데이터] 관련
   // 지침 참고) 모델이 판단하게 알려준다.
   const channelNote = cards !== undefined ? "" : "\n\n[참고] 지금은 텔레그램 대화야 — 화면에 뜨는 카드가 없어.";
-  const system =
-    baseSystem +
+  // 크레딧 절약: baseSystem(시황/수급/제보 등 — 하루 중 크론이 갱신하기 전까진
+  // 모든 사용자·모든 요청에 똑같은 내용)을 캐시 가능한 블록으로 따로 떼어낸다.
+  // 그 뒤(종목/포트폴리오/진단 등 요청마다 달라지는 블록)는 캐시 안 되는 채로
+  // 붙인다 — 어차피 매번 달라서 캐싱 이득이 없다. 1시간 TTL: 이 앱은 하루 중
+  // 몇 번씩 띄엄띄엄 쓰는 패턴이라(계속 대화하는 게 아니라) 기본 5분보다
+  // 길게 잡아야 캐시가 실제로 맞을 확률이 높다.
+  const volatileSystem =
     cardsBlock +
     (reports.length > 0 ? "\n\n" + stockContextBlock(reports) : "") +
     portfolioBlock +
@@ -1238,6 +1243,10 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
     principlesBlock +
     loginNote +
     channelNote;
+  const system: Anthropic.TextBlockParam[] = [
+    { type: "text", text: baseSystem, cache_control: { type: "ephemeral", ttl: "1h" } },
+    { type: "text", text: volatileSystem || "(추가 컨텍스트 없음)" },
+  ];
 
   const tools: Anthropic.Tool[] = [];
   if (cards) tools.push(ADJUST_TOOL); // 화면 카드 개념이 있는 채널(웹)에서만
@@ -1275,6 +1284,10 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       const response = await client.messages.create({
         model: "claude-sonnet-5",
         max_tokens: 800,
+        // 크레딧 절약: 이 채팅의 "어려운 부분"(숫자 계산·판정)은 전부 코드가
+        // 미리 끝내서 블록으로 넣어주고, 모델은 그걸 추출/서술만 하면 돼서
+        // 깊은 추론이 필요 없다 — low로 충분하고 사고 토큰도 줄어든다.
+        output_config: { effort: "low" },
         system,
         messages: anthropicMessages,
         tools,
