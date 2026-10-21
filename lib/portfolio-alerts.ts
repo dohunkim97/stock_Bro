@@ -167,7 +167,15 @@ async function alertLinesFor(userId: string, report: AssessmentReport): Promise<
     });
 
     const fromLabel = change ? `${STATE_ICON[change.fromState as AssessmentState]}${change.fromState}` : "신규 진단";
-    const reasonNote = change && change.reasons.length > 0 ? ` (${change.reasons.join(", ")})` : "";
+    // 변화 이력이 있으면(기존 로직) 바뀐 신호만 뽑고, 신규 진단(비교할
+    // 어제 기록이 없는 경우)은 change.reasons가 항상 빈 배열이라 아예
+    // 이유 없이 "신규 진단 → 축소검토"만 나가고 있었다(2026-10-21 사용자
+    // 확인: "왜 축소하라는지 모르겠다, 오류인 거 같다" — 실제로는 오류가
+    // 아니라 이유가 그냥 안 보였던 것. 평가손익과 무관하게 '지금 신호가
+    // 안 좋다'는 뜻인데, 그 신호 자체를 안 보여줬으니 당연히 이상해 보임).
+    // 이 경우 이번 판정의 음수 신호를 직접 이유로 보여준다.
+    const reasons = change ? change.reasons : a.signals.filter((s) => s.score !== null && s.score < 0).map((s) => `${s.label}: ${s.note}`);
+    const reasonNote = reasons.length > 0 ? ` (${reasons.join(", ")})` : "";
     lines.push(`**${a.name}**: ${fromLabel} → **${STATE_ICON[a.state]}${a.state}**${reasonNote}`);
   }
   return lines;
@@ -193,7 +201,7 @@ export async function sendPortfolioAlerts(): Promise<AlertRunSummary> {
       const lines = await alertLinesFor(user.id, report);
       if (lines.length === 0) continue;
 
-      const message = `⚠️ 둥지 알림 (${report.date})\n${lines.join("\n")}\n\n더 자세히 물어봐도 돼, 아니면 둥지에서 확인해줘.`;
+      const message = `⚠️ 둥지 알림 (${report.date})\n${lines.join("\n")}\n\n※ 차트·수급·거래량·재무 신호 기준 판정이라 지금 수익/손실 여부와는 별개야 — 수익 중이어도 신호가 꺾이면 축소검토로 떠.\n\n더 자세히 물어봐도 돼, 아니면 둥지에서 확인해줘.`;
       const sent = await sendTelegramMessage(user.telegramChatId, message);
       if (sent) {
         messagesSent++;

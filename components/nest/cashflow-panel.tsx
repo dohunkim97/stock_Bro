@@ -65,6 +65,7 @@ function CashFlowList({ rows, endpoint, color }: { rows: Row[]; endpoint: string
             <span style={{ color: "var(--faint)", fontFamily: "var(--mono)", width: 78, flexShrink: 0 }}>{r.date}</span>
             <span style={{ flex: 1, color: "var(--text)" }}>
               {r.category}
+              {r.memo && <span style={{ color: "var(--faint)" }}> · {r.memo}</span>}
               {r.installmentIndex && r.installmentMonths && (
                 <span style={{ marginLeft: 6, fontSize: 10, color: "var(--accent)", background: "var(--accent-soft)", borderRadius: 20, padding: "1px 6px" }}>
                   할부 {r.installmentIndex}/{r.installmentMonths}

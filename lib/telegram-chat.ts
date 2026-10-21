@@ -95,7 +95,7 @@ export async function handleTelegramText(userId: string, chatId: string, text: s
   const parsed = parseSimpleTransaction(text, mentioned.length);
   if (parsed) {
     const fn = parsed.direction === "expense" ? recordExpense : recordIncome;
-    const result = await fn(userId, { amount: parsed.amount, category: parsed.category, date: parsed.date });
+    const result = await fn(userId, { amount: parsed.amount, category: parsed.category, memo: parsed.memo, date: parsed.date });
     await sendTelegramMessage(chatId, result.message);
     await saveChatTurn(userId, date, text, result.message);
     return;

@@ -30,15 +30,31 @@ const AMOUNT_RE = /(\d+(?:\.\d+)?)\s*(억|만|천)?\s*원/g;
 // 단일 거래로 본다(두 개 이상이면 "과자 5만원, 음료 2만원"처럼 여러 건일
 // 수 있는데, 그건 이미 LLM 경로가 여러 번 도구를 호출해서 처리하므로 — 이
 // 규칙 기반 경로는 "하나로 명확한 경우"만 맡고 섣불리 나눠 처리하지 않는다.
-function findSingleAmount(text: string): number | null {
+// raw(매칭된 문자열 그대로)도 같이 돌려준다 — 아래 extractMemo가 금액
+// 부분만 정확히 도려내고 나머지를 메모로 쓰기 위해.
+function findSingleAmount(text: string): { amount: number; raw: string } | null {
   const cleaned = stripThousandCommas(text);
   const matches = [...cleaned.matchAll(AMOUNT_RE)];
   if (matches.length !== 1) return null;
-  const [, numStr, unit] = matches[0];
+  const [raw, numStr, unit] = matches[0];
   const n = Number(numStr);
   if (!Number.isFinite(n) || n <= 0) return null;
   const amount = Math.round(n * (unit ? UNIT_MULTIPLIER[unit] : 1));
-  return amount > 0 ? amount : null;
+  return amount > 0 ? { amount, raw } : null;
+}
+
+// "커피 4500원 썼어" → "커피" — 어디에/무엇에 썼는지가 카테고리("외식")
+// 보다 구체적이라 둥지 목록에서 바로 알아볼 수 있게 메모로 남긴다(2026-
+// 10-21 사용자 확인: "교통 이렇게만 써있으면 나중에 뭘 썼는지 모르잖아").
+// 금액 부분·날짜 단어·방향 동사·조사를 걷어내고 남는 걸 쓴다 — 아무것도
+// 안 남으면(동사만 있던 경우 등) null.
+function extractMemo(cleanedText: string, amountRaw: string): string | null {
+  let memo = cleanedText.replace(amountRaw, " ");
+  memo = memo.replace(/^(오늘|어제|아까|방금|그제)\s*/, "");
+  memo = memo.replace(/(썼어|썼|지출했|지출|결제했|결제|구매했|구매|샀어|샀|벌었어|벌었|받았어|받았|들어왔어|들어왔)\s*$/, "");
+  memo = memo.replace(/(에서|으로|을|를|이|가|은|는)\s*$/, "");
+  memo = memo.trim();
+  return memo.length > 0 ? memo : null;
 }
 
 // 이 메시지가 평범한 지출/수입 보고가 아니라 다른 경로로 가야 한다고
@@ -99,8 +115,9 @@ export function parseSimpleTransaction(rawText: string, mentionedStockCount: num
   if (mentionedStockCount > 0) return null;
   if (EXCLUDE_RE.test(text)) return null;
 
-  const amount = findSingleAmount(text);
-  if (amount === null) return null;
+  const found = findSingleAmount(text);
+  if (found === null) return null;
+  const { amount } = found;
 
   const isIncome = INCOME_HINT_RE.test(text);
   const isExpense = EXPENSE_HINT_RE.test(text) || matchCategory(text, EXPENSE_CATEGORY_KEYWORDS) !== null;
@@ -114,6 +131,7 @@ export function parseSimpleTransaction(rawText: string, mentionedStockCount: num
   // finance-constants.ts)에 실제로 있는 값이니, 못 찾으면 "기타"(둘 다에
   // 포함된 공통 분류)로 — 항상 유효한 카테고리가 나온다.
   const category = (isIncome ? matchCategory(text, INCOME_CATEGORY_KEYWORDS) : matchCategory(text, EXPENSE_CATEGORY_KEYWORDS)) ?? "기타";
+  const memo = extractMemo(stripThousandCommas(text), found.raw);
 
-  return { direction, amount, category, memo: null, date: resolveDate(text) };
+  return { direction, amount, category, memo, date: resolveDate(text) };
 }
