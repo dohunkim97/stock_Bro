@@ -39,6 +39,7 @@ import {
 } from "@/lib/learning-journal";
 import { pullTodayMaterial } from "@/lib/learning-push";
 import { searchEncyclopedia } from "@/lib/naver-encyc";
+import { findThemeStocks, themeStockBlock } from "@/lib/theme-search";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -579,6 +580,19 @@ async function buildTermLookupBlock(text: string): Promise<string> {
   return lines.join("\n");
 }
 
+// "로봇 테마 추천해줘", "2차전지 관련주 뭐있어" — StockTheme 테이블 전체를
+// 훑어서(그날 거래량 랭킹에 없는 종목도 포함) 실제 시세와 함께 근거로
+// 준다. 2026-10-21 사용자 확인: 이 질문에 골구가 답을 못 했던 원인은
+// StockTheme 데이터가 없어서가 아니라(ETF 실보유 종목 기반으로 정상
+// 수집되고 있었음), 채팅 엔진이 그 테이블을 아예 조회하지 않았던 것.
+const THEME_QUERY_RE = /테마\s*(추천|종목|알려|찾아|뭐|주)|관련\s*(종목|기업|주)/;
+
+async function buildThemeBlock(text: string): Promise<string> {
+  const result = await findThemeStocks(text).catch(() => null);
+  if (!result) return "";
+  return themeStockBlock(result);
+}
+
 // "학습 시작해줘"/"학습자료 줘"/"학습 그만할래" — 180일 플래닛을 켜고 끄고,
 // 자료를 내준다. 자동으로 밀어주는 평일 아침 발송은 없다(2026-10-16 사용자
 // 피드백: "자동으로 안보내고 내가 말하면 보내줘") — start와 material 둘 다
@@ -803,6 +817,9 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   const teacherModeBlock = lastUser ? await buildTeacherModeBlock(userId, lastUser.content) : "";
   // "~가 뭐야" 류 용어 질문엔 네이버 지식백과 검색 결과를 근거로 끼워준다.
   const termLookupBlock = lastUser ? await buildTermLookupBlock(lastUser.content) : "";
+  // "로봇 테마 추천해줘" — 그날 랭킹 top-N이 아니라 StockTheme 테이블
+  // 전체를 훑어야 거래가 뜸한 테마주도 찾을 수 있다(2026-10-21 버그 확인).
+  const themeBlock = lastUser && THEME_QUERY_RE.test(lastUser.content) ? await buildThemeBlock(lastUser.content) : "";
 
   const client = new Anthropic();
   const baseSystem = await buildSystemPrompt();
@@ -839,6 +856,7 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
     predictionReviewBlock +
     teacherModeBlock +
     termLookupBlock +
+    themeBlock +
     principlesBlock +
     loginNote +
     channelNote;
