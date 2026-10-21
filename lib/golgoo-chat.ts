@@ -39,6 +39,8 @@ import {
   removeIncomeRecord,
 } from "@/lib/finance-engine";
 import { checkBudgetAndAlert, setCategoryBudget, removeCategoryBudget, computeBudgetStatus, computeMonthOverview } from "@/lib/budget-engine";
+import { logAiCall, isOverDailyBudget, DAILY_BUDGET_MESSAGE } from "@/lib/ai-usage";
+import { computeSpendingTrend, getRecurringExpenseCandidates } from "@/lib/spending-insights";
 import { MIN_INSTALLMENT_MONTHS, MAX_INSTALLMENT_MONTHS } from "@/lib/installment";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "@/lib/finance-constants";
 import { prisma } from "@/lib/prisma";
@@ -773,10 +775,15 @@ async function deleteBudgetFromChat(userId: string, input: { category?: unknown 
 // 블록으로 넣어준다(portfolioBlock·expenseSummaryBlock과 같은 원칙 — LLM이
 // 어림잡지 않고 이 숫자를 그대로 인용). 예산을 하나도 안 정해놨으면
 // computeBudgetStatus가 빈 배열을 주니 그 경우는 블록 자체를 생략한다.
-const BUDGET_STATUS_RE = /예산\s*(어때|얼마|남았|현황|확인)|이번\s*달.*(저축|남|모을)|목표.*(달성\s*가능|충족)/;
+const BUDGET_STATUS_RE = /예산\s*(어때|얼마|남았|현황|확인)|이번\s*달.*(저축|남|모을)|목표.*(달성\s*가능|충족)|과소비|고정\s*지출|구독.*(뭐|얼마|있)/;
 
 async function buildBudgetBlock(userId: string): Promise<string> {
-  const [statuses, overview] = await Promise.all([computeBudgetStatus(userId), computeMonthOverview(userId)]);
+  const [statuses, overview, trend, recurring] = await Promise.all([
+    computeBudgetStatus(userId),
+    computeMonthOverview(userId),
+    computeSpendingTrend(userId),
+    getRecurringExpenseCandidates(userId),
+  ]);
   const lines = ["\n\n[이번 달 예산·저축 현황 — 코드가 계산한 실제 숫자, 그대로 근거로 써]"];
   if (statuses.length > 0) {
     for (const s of statuses) {
@@ -793,6 +800,18 @@ async function buildBudgetBlock(userId: string): Promise<string> {
   if (overview.feasible !== null) {
     lines.push(
       `등록된 목표들의 월 투자금 합 ₩${Math.round(overview.requiredMonthlyContribution).toLocaleString()} — ${overview.feasible ? "이번 달 예상 저축으로 충족 가능" : "이번 달 예상 저축으로는 부족"}`
+    );
+  }
+  if (trend.length > 0) {
+    lines.push(
+      "과소비 패턴(지난달 같은 기간 대비 30%+ 증가):",
+      ...trend.slice(0, 3).map((t) => `- ${t.category}: ₩${Math.round(t.thisMonth).toLocaleString()}(지난달 ₩${Math.round(t.lastMonth).toLocaleString()} 대비 +${t.diffPct!.toFixed(0)}%)`)
+    );
+  }
+  if (recurring.length > 0) {
+    lines.push(
+      "정기·구독성 지출(최근 60일):",
+      ...recurring.slice(0, 5).map((r) => `- ${r.category}${r.memo ? ` · ${r.memo}` : ""}: ₩${Math.round(r.amount).toLocaleString()}`)
     );
   }
   return lines.join("\n");
@@ -1411,6 +1430,14 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   // user 턴을 하나 꽂아 순서만 맞춘다.
   if (anthropicMessages[0]?.role !== "user") anthropicMessages.unshift({ role: "user", content: "(계속)" });
 
+  // 일일 AI 예산(섹션 6) — 넘었으면 아예 Claude를 안 부르고 정해진 문구로
+  // 끝낸다. 체크 자체는 아주 가벼운 집계 쿼리 하나뿐.
+  if (await isOverDailyBudget()) {
+    return { replyText: DAILY_BUDGET_MESSAGE };
+  }
+
+  const channel: "web" | "telegram" = cards !== undefined ? "web" : "telegram";
+
   let lastErr: unknown = null;
   for (let i = 0; i < 3; i++) {
     try {
@@ -1425,6 +1452,11 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
         messages: anthropicMessages,
         tools,
       });
+
+      // 호출별 토큰 로그(섹션 6) — await해서 응답이 끊기기 전에 반드시
+      // 기록되게 한다(다른 await들과 같은 이유, 서버리스는 응답 직후 멈출
+      // 수 있다). trigger는 이 호출을 일으킨 실제 사용자 메시지.
+      await logAiCall({ userId, channel, trigger: lastUser?.content ?? "", usage: response.usage });
 
       const text = response.content
         .filter((b): b is Anthropic.TextBlock => b.type === "text")

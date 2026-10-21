@@ -721,3 +721,21 @@ model PortfolioAssessment {
   @@unique([userId, code, date])
   @@index([userId, date])
 }
+
+// 골구 AI(Claude) 호출 1건당 토큰 사용량 로그 — 사용자 요청(2026-10-21) 6번
+// "AI 호출별 토큰·비용·실행 이유를 로그로 남김". User로의 관계는 일부러
+// 안 건다(비로그인 웹 채팅도 호출될 수 있어 userId가 없을 수 있고, 이건
+// 순수 집계/감사 로그라 User가 지워져도 기록은 남아있는 게 맞다).
+model AiCallLog {
+  id               String   @id @default(cuid())
+  userId           String? // 비로그인 웹 채팅이면 null
+  channel          String // "web" | "telegram"
+  trigger          String // 이 호출을 일으킨 사용자 메시지 앞부분(실행 이유 추적용)
+  inputTokens      Int
+  outputTokens     Int
+  cacheReadTokens  Int      @default(0)
+  cacheWriteTokens Int      @default(0)
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+}

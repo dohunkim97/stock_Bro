@@ -12,11 +12,61 @@
 // 막되, 같은 날 더 나빠지면(toState가 바뀌면) 다시 보낸다.
 
 import { prisma } from "@/lib/prisma";
+import { todayISO } from "@/lib/dates";
 import { getHoldings } from "@/lib/portfolio";
 import { getAssessmentReport, type AssessmentReport } from "@/lib/holding-assessment-store";
 import { sendTelegramMessage } from "@/lib/telegram-send";
 import { saveAssistantBroadcast } from "@/lib/chat-history";
 import { STATE_ICON, STATE_RANK, type AssessmentState } from "@/lib/holding-assessment";
+import { computeBudgetStatus, computeMonthOverview } from "@/lib/budget-engine";
+import { computeSpendingTrend, getRecurringExpenseCandidates } from "@/lib/spending-insights";
+
+// 주간 디지스트의 "예산·소비" 구간 — 사용자 요청(2026-10-21) 5번("반복되는
+// 과소비 패턴 지적", "불필요한 고정 지출 후보 발굴", "목표 저축액에 부족한
+// 금액 계산")을 여기 모았다. 전부 LLM 없이 코드가 계산한 숫자/목록 그대로
+// 문장으로만 조립한다(이 파일 전체의 원칙과 동일).
+async function buildBudgetSection(userId: string): Promise<string[]> {
+  const [statuses, overview, trend, recurring] = await Promise.all([
+    computeBudgetStatus(userId),
+    computeMonthOverview(userId),
+    computeSpendingTrend(userId),
+    getRecurringExpenseCandidates(userId),
+  ]);
+  const lines: string[] = [];
+
+  if (statuses.length > 0) {
+    lines.push("카테고리 예산:");
+    for (const s of statuses) {
+      lines.push(`- ${s.category}: ${s.pctUsed.toFixed(0)}% 사용(₩${Math.round(s.spent).toLocaleString()}/₩${s.limit.toLocaleString()})${s.willExceed ? " ⚠️ 월말 초과 예상" : ""}`);
+    }
+  }
+
+  if (overview.expense > 0) {
+    lines.push(
+      `이번 달 수입 ₩${Math.round(overview.income).toLocaleString()} · 지출 ₩${Math.round(overview.expense).toLocaleString()}(월말 예상 ₩${Math.round(overview.projectedExpense).toLocaleString()}) · 예상 저축 ₩${Math.round(overview.projectedSavings).toLocaleString()}`
+    );
+    if (overview.feasible !== null) {
+      lines.push(
+        overview.feasible
+          ? `목표 월 투자금 ₩${Math.round(overview.requiredMonthlyContribution).toLocaleString()} — 이번 달 저축으로 충족 가능`
+          : `⚠️ 목표 월 투자금 ₩${Math.round(overview.requiredMonthlyContribution).toLocaleString()}에 ₩${Math.round(overview.requiredMonthlyContribution - overview.projectedSavings).toLocaleString()} 부족할 것으로 예상`
+      );
+    }
+  }
+
+  if (trend.length > 0) {
+    lines.push("과소비 패턴(지난달 같은 기간 대비):", ...trend.slice(0, 3).map((t) => `- ${t.category}: ₩${Math.round(t.thisMonth).toLocaleString()} (지난달 ₩${Math.round(t.lastMonth).toLocaleString()} 대비 +${t.diffPct!.toFixed(0)}%)`));
+  }
+
+  if (recurring.length > 0) {
+    lines.push(
+      "정기·구독 지출 후보(최근 60일):",
+      ...recurring.slice(0, 5).map((r) => `- ${r.category}${r.memo ? ` · ${r.memo}` : ""}: ₩${Math.round(r.amount).toLocaleString()} (최근 ${r.lastDate}, ${r.occurrences}건)`)
+    );
+  }
+
+  return lines;
+}
 
 export type AlertRunSummary = { usersChecked: number; messagesSent: number };
 
@@ -32,11 +82,9 @@ export async function sendWeeklyPortfolioDigest(): Promise<AlertRunSummary> {
   for (const user of users) {
     if (!user.telegramChatId) continue;
     const holdings = await getHoldings(user.id);
-    if (holdings.length === 0) continue;
     usersChecked++;
 
     try {
-      const report = await getAssessmentReport(user.id);
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
       const weekAgoISO = sevenDaysAgo.toISOString().slice(0, 10);
@@ -46,7 +94,8 @@ export async function sendWeeklyPortfolioDigest(): Promise<AlertRunSummary> {
         prisma.financialSnapshot.findFirst({ where: { userId: user.id, date: { lte: weekAgoISO } }, orderBy: { date: "desc" } }),
       ]);
 
-      const lines = [`📅 주간 자산 진단 (${report.date})`];
+      const date = latestSnap?.date ?? todayISO();
+      const lines = [`📅 주간 자산 진단 (${date})`];
       if (latestSnap && pastSnap) {
         const diff = latestSnap.netWorth - pastSnap.netWorth;
         const diffPct = pastSnap.netWorth !== 0 ? (diff / Math.abs(pastSnap.netWorth)) * 100 : null;
@@ -57,23 +106,35 @@ export async function sendWeeklyPortfolioDigest(): Promise<AlertRunSummary> {
         lines.push("순자산 변화: 1주일 전 기록이 없어 비교 못 함(둥지를 방문해야 그날 스냅샷이 남아).");
       }
 
-      const byState = { 유지: 0, 관찰: 0, 축소검토: 0, 정밀점검: 0 };
-      for (const a of report.assessments) byState[a.state]++;
-      lines.push(
-        `종목 판정: 유지 ${byState.유지} · 관찰 ${byState.관찰} · 축소검토 ${byState.축소검토} · 정밀점검 ${byState.정밀점검}`
-      );
+      // 종목 판정은 보유 종목이 있을 때만 — 없는 사람에게 "유지 0, 관찰
+      // 0..."을 보여주는 건 의미가 없다(2026-10-21: 예전엔 보유 종목 없는
+      // 사용자는 이 리포트 자체를 통째로 못 받았는데, 지출/예산만 쓰는
+      // 사람도 주간 디지스트를 받아야 해서 게이트를 분리했다).
+      if (holdings.length > 0) {
+        const report = await getAssessmentReport(user.id);
+        const byState = { 유지: 0, 관찰: 0, 축소검토: 0, 정밀점검: 0 };
+        for (const a of report.assessments) byState[a.state]++;
+        lines.push(`종목 판정: 유지 ${byState.유지} · 관찰 ${byState.관찰} · 축소검토 ${byState.축소검토} · 정밀점검 ${byState.정밀점검}`);
 
-      const risky = report.assessments.filter((a) => a.state === "축소검토" || a.state === "정밀점검").slice(0, 3);
-      if (risky.length > 0) {
-        lines.push("주의가 필요한 종목:", ...risky.map((a) => `- ${a.name}: ${a.state} (${a.stateNote})`));
+        const risky = report.assessments.filter((a) => a.state === "축소검토" || a.state === "정밀점검").slice(0, 3);
+        if (risky.length > 0) {
+          lines.push("주의가 필요한 종목:", ...risky.map((a) => `- ${a.name}: ${a.state} (${a.stateNote})`));
+        }
+        if (report.flags.length > 0) lines.push("포트폴리오 경고:", ...report.flags.map((f) => `- ${f.text}`));
       }
-      if (report.flags.length > 0) lines.push("포트폴리오 경고:", ...report.flags.map((f) => `- ${f.text}`));
+
+      const budgetLines = await buildBudgetSection(user.id);
+      if (budgetLines.length > 0) lines.push("", "💰 예산·소비", ...budgetLines);
+
+      // 보고할 내용이 아무것도 없으면(보유 종목도, 지출 기록도, 예산도
+      // 없는 완전히 새 계정) 빈 메시지를 보내지 않는다.
+      if (lines.length <= 1) continue;
 
       const text = lines.join("\n");
       const sent = await sendTelegramMessage(user.telegramChatId, text);
       if (sent) {
         messagesSent++;
-        await saveAssistantBroadcast(user.id, report.date, text);
+        await saveAssistantBroadcast(user.id, date, text);
       }
     } catch (e) {
       console.error("[weekly-digest] failed for user", user.id, e);
