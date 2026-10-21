@@ -28,6 +28,19 @@ function kstDayRange(dateISO: string): { start: Date; end: Date } {
   return { start, end };
 }
 
+// trigger는 "AI를 왜 불렀는지" 사용량 분석용이지 거래 기록이 아니다 —
+// 금액은 이미 ExpenseRecord/IncomeRecord에 정식으로(접근 제어와 함께)
+// 저장되니, 여기에 "월급 300만원 받았어"처럼 실제 액수가 평문으로 한 번
+// 더 복사돼 남을 이유가 없다(2026-10-21 사용자 확인 후 마스킹 추가).
+// "숫자+단위+원" 패턴을 전부 "***원"으로 가린다 — lib/expense-parser.ts가
+// 금액을 찾을 때 쓰는 패턴과 같은 모양(억/만/천 단위, 쉼표 포함)이라 실제
+// 지출/수입 보고 문장에서 금액만 정확히 가려진다.
+const AMOUNT_MASK_RE = /\d[\d,.]*\s*(?:억|만|천)?\s*원/g;
+
+function maskAmounts(text: string): string {
+  return text.replace(AMOUNT_MASK_RE, "***원");
+}
+
 // 실패해도(DB 순간 장애 등) 실제 채팅 응답을 막으면 안 되니 에러를 삼킨다 —
 // 로그가 한 건 빠지는 것보다 사용자가 답을 못 받는 게 훨씬 나쁘다.
 export async function logAiCall(input: {
@@ -41,7 +54,7 @@ export async function logAiCall(input: {
       data: {
         userId: input.userId,
         channel: input.channel,
-        trigger: input.trigger.slice(0, 120),
+        trigger: maskAmounts(input.trigger).slice(0, 120),
         inputTokens: input.usage.input_tokens,
         outputTokens: input.usage.output_tokens,
         cacheReadTokens: input.usage.cache_read_input_tokens ?? 0,
