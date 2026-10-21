@@ -15,11 +15,30 @@ import { fetchKisQuote } from "@/lib/kis-quote";
 import {
   addHolding,
   computeOverview,
+  getHoldings,
   getHoldingsWithLiveData,
   getPortfolioSettings,
   resolveHoldingCode,
+  removeHoldingsByCode,
+  updatePortfolioSettings,
+  type PortfolioSettingsData,
 } from "@/lib/portfolio";
-import { addExpenseRecord, addIncomeRecord, addLiability, addFinancialGoal, getExpenseSummary } from "@/lib/finance-engine";
+import {
+  addExpenseRecord,
+  addIncomeRecord,
+  addLiability,
+  addFinancialGoal,
+  addInstallmentExpense,
+  getExpenseSummary,
+  getFinancialGoals,
+  updateFinancialGoal,
+  removeFinancialGoal,
+  getLiabilities,
+  removeLiability,
+  removeExpenseRecord,
+  removeIncomeRecord,
+} from "@/lib/finance-engine";
+import { MIN_INSTALLMENT_MONTHS, MAX_INSTALLMENT_MONTHS } from "@/lib/installment";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "@/lib/finance-constants";
 import { prisma } from "@/lib/prisma";
 import { upsertThesis } from "@/lib/holding-thesis";
@@ -40,6 +59,7 @@ import {
 import { pullTodayMaterial } from "@/lib/learning-push";
 import { searchEncyclopedia } from "@/lib/naver-encyc";
 import { findThemeStocks, themeStockBlock } from "@/lib/theme-search";
+import { recordBuyJournal, recordSaleJournal } from "@/lib/trade-journal";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -161,6 +181,10 @@ async function recordHoldingPurchase(
     quantity: roundedQuantity,
     buyDate: todayISO(),
   });
+  // 매매일지에도 "산 사건" 자체를 남겨서(lib/trade-journal.ts) 나중에 매도와
+  // 묶여 매매 리포트로 보인다 — 실패해도(드물게) 둥지 기록 자체는 이미
+  // 끝났으니 사용자에게 보여줄 메시지에는 영향 없게 조용히 넘어간다.
+  await recordBuyJournal(userId, { code: resolved.code, name: resolved.name, quantity: roundedQuantity, price: roundedPrice, date: todayISO() }).catch(() => {});
 
   const total = roundedQuantity * roundedPrice;
   const assumedNote = priceIsAssumed ? " (매수가는 현재 시세로 추정했어, 실제 체결가가 다르면 둥지에서 고쳐줘)" : "";
@@ -174,25 +198,130 @@ async function recordHoldingPurchase(
   };
 }
 
+// "LG에너지솔루션 처분했어", "삼성전자 10주 85000원에 팔았어" 같은 실제 매도
+// 보고 — record_holding_purchase의 반대쪽. 평단가 대비 실현손익을 코드가
+// 계산해서 매매일지(lib/trade-journal.ts)에 남기고, 둥지 보유 수량도 그만큼
+// 줄인다(전량이면 그 종목 행 자체가 없어짐).
+const RECORD_SALE_TOOL: Anthropic.Tool = {
+  name: "record_holding_sale",
+  description:
+    "사용자가 실제로 보유 종목을 매도/처분/정리했다고 말했을 때만 호출해(예: 'LG에너지솔루션 처분했어', '삼성전자 10주 85000원에 팔았어', " +
+    "'카카오 전량 매도했어'). 종목 매수 보고면 이 도구 대신 record_holding_purchase를 써. " +
+    "quantity(수량)·pricePerShare(매도단가)·totalAmount(총 매도금액) 중 최소 하나가 있거나, '전량'/'다'처럼 전부 팔았다는 뜻이면 allQuantity를 true로 — " +
+    "아무 정보도 없으면 호출하지 말고 얼마에 몇 주 팔았는지 되물어봐. " +
+    "한 메시지에 여러 종목을 팔았다고 하면 종목 수만큼 각각 호출해.",
+  input_schema: {
+    type: "object",
+    properties: {
+      stockName: { type: "string", description: "매도한 종목의 정확한 한글 종목명" },
+      quantity: { type: "number", description: "매도 수량(주). 모르면 생략." },
+      pricePerShare: { type: "number", description: "주당 매도가(원). 모르면 생략." },
+      totalAmount: { type: "number", description: "총 매도금액(원). 수량·단가 없이 총액만 말했을 때 사용. 모르면 생략." },
+      allQuantity: { type: "boolean", description: "'전량'/'다'/'전부' 매도했다는 뜻이면 true." },
+    },
+    required: ["stockName"],
+  },
+};
+
+type RecordSaleResult = { ok: boolean; message: string };
+
+async function recordHoldingSale(
+  userId: string,
+  input: { stockName?: unknown; quantity?: unknown; pricePerShare?: unknown; totalAmount?: unknown; allQuantity?: unknown }
+): Promise<RecordSaleResult> {
+  const stockName = typeof input.stockName === "string" ? input.stockName.trim() : "";
+  if (!stockName) return { ok: false, message: "어떤 종목인지 못 들었어. 종목명을 다시 말해줄래?" };
+
+  const quantity = typeof input.quantity === "number" && input.quantity > 0 ? input.quantity : null;
+  const pricePerShare = typeof input.pricePerShare === "number" && input.pricePerShare > 0 ? input.pricePerShare : null;
+  const totalAmount = typeof input.totalAmount === "number" && input.totalAmount > 0 ? input.totalAmount : null;
+  const allQuantity = input.allQuantity === true;
+
+  if (!allQuantity && quantity === null && pricePerShare === null && totalAmount === null) {
+    return { ok: false, message: `${stockName} 몇 주를, 또는 얼마에 팔았는지 말해줄래?` };
+  }
+
+  const resolved = await resolveHoldingCode(stockName);
+  if (!resolved) return { ok: false, message: `"${stockName}" 종목을 찾지 못했어. 종목명을 다시 확인해줄래?` };
+
+  const holdingRows = await getHoldings(userId);
+  const held = holdingRows.filter((h) => h.code === resolved.code);
+  const heldQty = held.reduce((s, h) => s + h.quantity, 0);
+  if (heldQty <= 0) return { ok: false, message: `둥지에 ${resolved.name} 보유 기록이 없어 — 매수부터 기록해야 매도 처리가 돼.` };
+
+  let finalQuantity = allQuantity ? heldQty : quantity;
+  let finalPrice = pricePerShare;
+  let priceIsAssumed = false;
+
+  if (finalQuantity !== null && finalPrice === null && totalAmount !== null && !allQuantity) {
+    finalPrice = totalAmount / finalQuantity!;
+  } else if (finalQuantity === null && finalPrice !== null && totalAmount !== null) {
+    finalQuantity = totalAmount / finalPrice;
+  } else if (finalQuantity === null && finalPrice === null && totalAmount !== null) {
+    const quote = await fetchKisQuote(resolved.code).catch(() => null);
+    if (!quote) return { ok: false, message: `${resolved.name} 현재가를 못 가져와서 수량을 못 정했어. 몇 주 팔았는지 알려줄래?` };
+    finalPrice = quote.price;
+    finalQuantity = totalAmount / finalPrice;
+    priceIsAssumed = true;
+  } else if (finalQuantity !== null && finalPrice === null) {
+    const quote = await fetchKisQuote(resolved.code).catch(() => null);
+    if (!quote) return { ok: false, message: `${resolved.name} 매도가를 몰라서 기록 못 했어. 얼마에 팔았는지 알려줄래?` };
+    finalPrice = quote.price;
+    priceIsAssumed = true;
+  }
+
+  if (finalQuantity === null || finalPrice === null || finalQuantity <= 0 || finalPrice <= 0) {
+    return { ok: false, message: `${resolved.name} 수량과 매도가를 정하지 못해서 기록 못 했어.` };
+  }
+
+  const roundedQuantity = Math.min(Math.round(finalQuantity), Math.round(heldQty));
+  const roundedPrice = Math.round(finalPrice);
+
+  const result = await recordSaleJournal(userId, {
+    code: resolved.code,
+    name: resolved.name,
+    quantity: roundedQuantity,
+    price: roundedPrice,
+    date: todayISO(),
+  });
+  if (!result) return { ok: false, message: `둥지에 ${resolved.name} 보유 기록이 없어 — 매수부터 기록해야 매도 처리가 돼.` };
+
+  const pnlLabel = result.realizedPnl >= 0 ? "익절" : "손절";
+  const pnlPctText = result.realizedPnlPct !== null ? ` (${result.realizedPnlPct >= 0 ? "+" : ""}${result.realizedPnlPct.toFixed(1)}%)` : "";
+  const assumedNote = priceIsAssumed ? " (매도가는 현재 시세로 추정했어, 실제 체결가가 다르면 알려줘)" : "";
+  const remainNote = result.fullyClosed ? " 전량 매도 완료." : ` 남은 수량은 둥지에서 확인해줘.`;
+
+  return {
+    ok: true,
+    message:
+      `✅ **${resolved.name} ${result.soldQty}주**, 매도가 **₩${roundedPrice.toLocaleString()}**에 매매일지 기록했어.\n` +
+      `매입 평단가 ₩${Math.round(result.avgBuyPrice).toLocaleString()} 대비 **${pnlLabel} ₩${Math.round(Math.abs(result.realizedPnl)).toLocaleString()}**${pnlPctText} 실현.${remainNote}${assumedNote}`,
+  };
+}
+
 // 일상 지출 보고("커피 5천원 썼어", "점심 만원 결제했어")를 들었을 때 호출하는
 // 도구 — 둥지 수입·지출·부채(lib/finance-engine.ts)에 지출 한 건을 기록한다.
 // record_holding_purchase와 같은 원칙: 모델은 추출만, 숫자 기록은 서버가.
 const RECORD_EXPENSE_TOOL: Anthropic.Tool = {
   name: "record_expense",
   description:
-    "사용자가 실제로 돈을 썼다고 말했을 때만 호출해(예: '커피 5천원 썼어', '점심 만원 결제했어', '옷 사는데 8만원 썼어'). " +
+    "사용자가 실제로 돈을 썼다고 말했을 때만 호출해(예: '커피 5천원 썼어', '점심 만원 결제했어', '옷 사는데 8만원 썼어', '인형뽑기 5천원 지출했어'). " +
+    "생소한 상호명/활동명이어도(바로 위에 [네이버 검색 참고]가 있으면 그걸로 뭔지 판단해) 지출 맥락이면 주저하지 말고 호출해 — 정확한 카테고리를 모르면 가장 비슷한 걸 고르거나 '기타'로 둬, 모른다고 호출을 건너뛰지 마. " +
     "'주식 샀어'처럼 종목 매수면 이 도구 대신 record_holding_purchase를 써. amount(금액)는 필수고, 못 들었으면 호출하지 말고 얼마 썼는지 되물어봐. " +
-    "한 메시지에 여러 지출을 한 번에 말하면(예: '과자 5만원, 음료 2만원 썼어') 이 도구를 지출 건수만큼 각각 따로 호출해 — 첫 건만 부르고 끝내지 마.",
+    "한 메시지에 여러 지출을 한 번에 말하면(예: '과자 5만원, 음료 2만원 썼어') 이 도구를 지출 건수만큼 각각 따로 호출해 — 첫 건만 부르고 끝내지 마. " +
+    "할부로 결제했다고 하면(예: '커피머신 60만원 10개월 할부로 샀어') installmentMonths를 채워서 호출해 — amount는 할부 총액.",
   input_schema: {
     type: "object",
     properties: {
-      amount: { type: "number", description: "지출 금액(원). 필수." },
+      amount: { type: "number", description: "지출 금액(원, 할부면 총액). 필수." },
       category: {
         type: "string",
         enum: [...EXPENSE_CATEGORIES],
         description: "가장 가까운 카테고리 하나를 골라. 애매하면 '기타'.",
       },
       memo: { type: "string", description: "무엇에 썼는지 짧은 메모(예: '스타벅스 커피'). 모르면 생략." },
+      installmentMonths: { type: "number", description: "할부 개월 수. 할부가 아니면 생략." },
+      annualRatePct: { type: "number", description: "할부 연 이자율(%). 무이자거나 모르면 생략(0으로 처리)." },
     },
     required: ["amount"],
   },
@@ -204,7 +333,7 @@ type RecordExpenseResult = { ok: boolean; message: string };
 // 도구 왕복 없이 바로 기록할 때도 이 함수를 그대로 쓴다.
 export async function recordExpense(
   userId: string,
-  input: { amount?: unknown; category?: unknown; memo?: unknown }
+  input: { amount?: unknown; category?: unknown; memo?: unknown; installmentMonths?: unknown; annualRatePct?: unknown }
 ): Promise<RecordExpenseResult> {
   const amount = typeof input.amount === "number" && input.amount > 0 ? Math.round(input.amount) : null;
   if (amount === null) return { ok: false, message: "얼마 썼는지 금액을 말해줄래?" };
@@ -213,6 +342,21 @@ export async function recordExpense(
     ? input.category
     : "기타";
   const memo = typeof input.memo === "string" && input.memo.trim() ? input.memo.trim() : undefined;
+
+  const months = typeof input.installmentMonths === "number" ? Math.round(input.installmentMonths) : null;
+  if (months !== null) {
+    if (months < MIN_INSTALLMENT_MONTHS || months > MAX_INSTALLMENT_MONTHS) {
+      return { ok: false, message: `할부는 ${MIN_INSTALLMENT_MONTHS}~${MAX_INSTALLMENT_MONTHS}개월까지 가능해 — 다시 말해줄래?` };
+    }
+    const rate = typeof input.annualRatePct === "number" && input.annualRatePct >= 0 ? input.annualRatePct : 0;
+    const result = await addInstallmentExpense(userId, { startDate: todayISO(), category, totalAmount: amount, months, annualRatePct: rate, memo });
+    if (!result) return { ok: false, message: "할부를 계산하지 못했어 — 금액·개월을 다시 확인해줄래?" };
+    const monthly = result.plan.payments[result.plan.payments.length - 1];
+    return {
+      ok: true,
+      message: `✅ 할부 지출 기록했어: ${category} 총 **₩${amount.toLocaleString()}**, ${months}개월(매달 약 ₩${Math.round(monthly).toLocaleString()})${memo ? ` (${memo})` : ""}`,
+    };
+  }
 
   await addExpenseRecord(userId, { date: todayISO(), category, amount, memo });
 
@@ -225,6 +369,7 @@ const RECORD_INCOME_TOOL: Anthropic.Tool = {
   name: "record_income",
   description:
     "사용자가 실제로 돈이 들어왔다고 말했을 때만 호출해(예: '월급 300만원 들어왔어', '부업으로 20만원 벌었어', '보너스 50만원 받았어'). " +
+    "생소한 출처명이어도(바로 위에 [네이버 검색 참고]가 있으면 참고해) 수입 맥락이면 주저하지 말고 호출해 — 카테고리가 애매하면 '기타'로 둬. " +
     "돈을 쓴 거면(지출) 이 도구 대신 record_expense를 써. amount(금액)는 필수고, 못 들었으면 호출하지 말고 되물어봐. " +
     "한 메시지에 여러 건을 말하면 건수만큼 각각 호출해.",
   input_schema: {
@@ -322,6 +467,225 @@ async function addGoalFromChat(
   const name = typeof input.name === "string" && input.name.trim() ? input.name.trim() : `${targetAmount.toLocaleString()}원 목표`;
   await addFinancialGoal(userId, { name, targetAmount, targetDate, monthlyContribution });
   return { ok: true, message: `✅ 목표 추가했어: ${name}, ${targetDate}까지 ₩${targetAmount.toLocaleString()}` };
+}
+
+// 둥지 설정(총 시드/현금/채권/대체자산/목표 비중) — 사이트의 ⚙ 설정 모달과
+// 똑같은 값을 채팅으로도 바꿀 수 있게. 말한 항목만 채워서 호출하면 되고,
+// 나머지는 건드리지 않는다(부분 업데이트).
+const UPDATE_SETTINGS_TOOL: Anthropic.Tool = {
+  name: "update_portfolio_settings",
+  description:
+    "사용자가 둥지 설정(현금/채권/대체자산 보유액, 목표 비중)을 바꿔달라고 하면 호출해(예: '현금 500만원으로 설정해줘', " +
+    "'채권 목표 비중 20%로 바꿔줘', '대체자산 300만원 있어'). 말한 항목만 채워서 호출해 — 언급 안 한 항목은 그대로 유지돼.",
+  input_schema: {
+    type: "object",
+    properties: {
+      totalSeed: { type: "number", description: "총 시드(원)" },
+      cashAmount: { type: "number", description: "보유 현금(원)" },
+      bondAmount: { type: "number", description: "채권 및 안전자산(원)" },
+      altAssetAmount: { type: "number", description: "대체자산(금/코인 등, 원)" },
+      targetStockPct: { type: "number", description: "목표 주식 비중(%)" },
+      targetBondPct: { type: "number", description: "목표 채권 비중(%)" },
+      targetAltPct: { type: "number", description: "목표 대체자산 비중(%)" },
+      targetCashPct: { type: "number", description: "목표 현금 비중(%)" },
+    },
+    required: [],
+  },
+};
+
+type UpdateSettingsResult = { ok: boolean; message: string };
+
+async function updateSettingsFromChat(userId: string, input: Record<string, unknown>): Promise<UpdateSettingsResult> {
+  const fields: (keyof PortfolioSettingsData)[] = [
+    "totalSeed",
+    "cashAmount",
+    "bondAmount",
+    "altAssetAmount",
+    "targetStockPct",
+    "targetBondPct",
+    "targetAltPct",
+    "targetCashPct",
+  ];
+  const patch: Partial<PortfolioSettingsData> = {};
+  for (const f of fields) {
+    const v = input[f];
+    if (typeof v === "number" && Number.isFinite(v) && v >= 0) patch[f] = v;
+  }
+  if (Object.keys(patch).length === 0) return { ok: false, message: "뭘 바꿀지 못 들었어 — 어떤 항목을 얼마로 바꿀지 말해줄래?" };
+
+  await updatePortfolioSettings(userId, patch);
+  const label: Record<string, string> = {
+    totalSeed: "총 시드",
+    cashAmount: "현금",
+    bondAmount: "채권",
+    altAssetAmount: "대체자산",
+    targetStockPct: "목표 주식 비중",
+    targetBondPct: "목표 채권 비중",
+    targetAltPct: "목표 대체자산 비중",
+    targetCashPct: "목표 현금 비중",
+  };
+  const parts = Object.entries(patch).map(([k, v]) => `${label[k]} ${v.toLocaleString()}${k.startsWith("target") ? "%" : "원"}`);
+  return { ok: true, message: `✅ 둥지 설정 바꿨어: ${parts.join(", ")}` };
+}
+
+// 실제 매도가 아니라 입력 실수 정정용("잘못 기록했어", "이거 지워줘") — 진짜
+// 팔았다는 보고면 record_holding_sale을 써야 한다고 모델에게 명확히 구분시킨다.
+const DELETE_HOLDING_TOOL: Anthropic.Tool = {
+  name: "delete_holding_entry",
+  description:
+    "사용자가 실제로 판 게 아니라 '잘못 기록했어', '이거 지워줘'처럼 보유 종목 기록 자체를 지워달라고 할 때만 호출해. " +
+    "실제로 팔았다는 보고면 이 도구 대신 record_holding_sale을 써 — 둘을 헷갈리지 마. stockName의 모든 보유 기록을 완전히 지운다(복구 안 됨).",
+  input_schema: {
+    type: "object",
+    properties: { stockName: { type: "string", description: "지울 종목명" } },
+    required: ["stockName"],
+  },
+};
+
+type DeleteHoldingResult = { ok: boolean; message: string };
+
+async function deleteHoldingFromChat(userId: string, input: { stockName?: unknown }): Promise<DeleteHoldingResult> {
+  const stockName = typeof input.stockName === "string" ? input.stockName.trim() : "";
+  if (!stockName) return { ok: false, message: "어떤 종목인지 말해줄래?" };
+  const resolved = await resolveHoldingCode(stockName);
+  if (!resolved) return { ok: false, message: `"${stockName}" 종목을 찾지 못했어.` };
+  const count = await removeHoldingsByCode(userId, resolved.code);
+  if (count === 0) return { ok: false, message: `둥지에 ${resolved.name} 보유 기록이 없어.` };
+  return { ok: true, message: `✅ ${resolved.name} 보유 기록을 지웠어(${count}건).` };
+}
+
+// "방금 그거 잘못 기록했어" — 가장 최근에 기록한 지출/수입/부채/목표 한 건만
+// 지운다. 어떤 행인지 서술로 다시 찾게 하는 대신(오탐 위험), "가장 최근 것"
+// 이라는 명확한 기준 하나만 쓴다 — 보통 실수는 바로 직전 턴에서 발견되니까.
+const UNDO_LAST_ENTRY_TOOL: Anthropic.Tool = {
+  name: "undo_last_entry",
+  description:
+    "사용자가 '방금 그거 잘못 기록했어', '방금 지출 취소해줘', '방금 거 지워줘'처럼 바로 직전에 기록한 걸 취소해달라고 할 때 호출해. " +
+    "type으로 어떤 종류의 가장 최근 한 건을 지울지 지정해(expense/income/liability/goal) — 대화 맥락에서 뭘 취소하려는지 보고 판단해.",
+  input_schema: {
+    type: "object",
+    properties: {
+      type: { type: "string", enum: ["expense", "income", "liability", "goal"], description: "취소할 기록 종류" },
+    },
+    required: ["type"],
+  },
+};
+
+type UndoResult = { ok: boolean; message: string };
+
+async function undoLastEntry(userId: string, input: { type?: unknown }): Promise<UndoResult> {
+  const type = input.type;
+  if (type === "expense") {
+    const last = await prisma.expenseRecord.findFirst({ where: { userId }, orderBy: { createdAt: "desc" } });
+    if (!last) return { ok: false, message: "지울 지출 기록이 없어." };
+    await removeExpenseRecord(userId, last.id);
+    return { ok: true, message: `✅ 지출 취소했어: ${last.category} ₩${Math.round(last.amount).toLocaleString()}` };
+  }
+  if (type === "income") {
+    const last = await prisma.incomeRecord.findFirst({ where: { userId }, orderBy: { createdAt: "desc" } });
+    if (!last) return { ok: false, message: "지울 수입 기록이 없어." };
+    await removeIncomeRecord(userId, last.id);
+    return { ok: true, message: `✅ 수입 취소했어: ${last.category} ₩${Math.round(last.amount).toLocaleString()}` };
+  }
+  if (type === "liability") {
+    const last = await prisma.liability.findFirst({ where: { userId }, orderBy: { createdAt: "desc" } });
+    if (!last) return { ok: false, message: "지울 부채 기록이 없어." };
+    await removeLiability(userId, last.id);
+    return { ok: true, message: `✅ 부채 기록 취소했어: ${last.name} ₩${Math.round(last.principal).toLocaleString()}` };
+  }
+  if (type === "goal") {
+    const last = await prisma.financialGoal.findFirst({ where: { userId }, orderBy: { createdAt: "desc" } });
+    if (!last) return { ok: false, message: "지울 목표가 없어." };
+    await removeFinancialGoal(userId, last.id);
+    return { ok: true, message: `✅ 목표 취소했어: ${last.name}` };
+  }
+  return { ok: false, message: "지출/수입/부채/목표 중 뭘 취소할지 말해줄래?" };
+}
+
+// 목표 이름으로 찾아서 바꾸거나 지운다 — add_financial_goal로 만든 뒤 조건이
+// 바뀌면("월 투자금 50만원으로 늘렸어") 매번 새로 만들지 않고 기존 걸 고친다.
+const UPDATE_GOAL_TOOL: Anthropic.Tool = {
+  name: "update_financial_goal",
+  description:
+    "사용자가 기존 재무 목표의 금액/날짜/월 투자금을 바꿔달라고 하면 호출해(예: '첫 1억 목표 월 투자금 50만원으로 늘려줘'). " +
+    "goalName으로 기존 목표를 찾는다 — 정확히 일치 안 해도 이름에 포함된 단어면 찾아. 못 찾으면 지어내지 말고 어떤 목표인지 되물어봐.",
+  input_schema: {
+    type: "object",
+    properties: {
+      goalName: { type: "string", description: "바꿀 목표의 이름(일부만 맞아도 됨)" },
+      targetAmount: { type: "number", description: "새 목표 금액(원). 안 바꾸면 생략." },
+      targetDate: { type: "string", description: "새 목표일 YYYY-MM-DD. 안 바꾸면 생략." },
+      monthlyContribution: { type: "number", description: "새 월 투자금(원). 안 바꾸면 생략." },
+    },
+    required: ["goalName"],
+  },
+};
+
+const DELETE_GOAL_TOOL: Anthropic.Tool = {
+  name: "delete_financial_goal",
+  description: "사용자가 재무 목표를 삭제해달라고 하면 호출해(예: '첫 1억 목표 지워줘'). goalName으로 기존 목표를 찾는다.",
+  input_schema: {
+    type: "object",
+    properties: { goalName: { type: "string", description: "지울 목표의 이름(일부만 맞아도 됨)" } },
+    required: ["goalName"],
+  },
+};
+
+async function findGoalByName(userId: string, goalName: string) {
+  const goals = await getFinancialGoals(userId);
+  const q = goalName.trim().toLowerCase();
+  return goals.find((g) => g.name.toLowerCase().includes(q)) ?? null;
+}
+
+async function updateGoalFromChat(
+  userId: string,
+  input: { goalName?: unknown; targetAmount?: unknown; targetDate?: unknown; monthlyContribution?: unknown }
+): Promise<UndoResult> {
+  const goalName = typeof input.goalName === "string" ? input.goalName.trim() : "";
+  if (!goalName) return { ok: false, message: "어떤 목표인지 이름을 말해줄래?" };
+  const goal = await findGoalByName(userId, goalName);
+  if (!goal) return { ok: false, message: `"${goalName}"이라는 목표를 못 찾았어 — 등록된 목표 이름을 다시 확인해줄래?` };
+
+  const patch: { targetAmount?: number; targetDate?: string; monthlyContribution?: number } = {};
+  if (typeof input.targetAmount === "number" && input.targetAmount > 0) patch.targetAmount = Math.round(input.targetAmount);
+  if (typeof input.targetDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input.targetDate)) patch.targetDate = input.targetDate;
+  if (typeof input.monthlyContribution === "number" && input.monthlyContribution >= 0) patch.monthlyContribution = input.monthlyContribution;
+  if (Object.keys(patch).length === 0) return { ok: false, message: `${goal.name}에서 뭘 바꿀지 못 들었어.` };
+
+  await updateFinancialGoal(userId, goal.id, patch);
+  return { ok: true, message: `✅ "${goal.name}" 목표 수정했어.` };
+}
+
+async function deleteGoalFromChat(userId: string, input: { goalName?: unknown }): Promise<UndoResult> {
+  const goalName = typeof input.goalName === "string" ? input.goalName.trim() : "";
+  if (!goalName) return { ok: false, message: "어떤 목표인지 이름을 말해줄래?" };
+  const goal = await findGoalByName(userId, goalName);
+  if (!goal) return { ok: false, message: `"${goalName}"이라는 목표를 못 찾았어.` };
+  await removeFinancialGoal(userId, goal.id);
+  return { ok: true, message: `✅ "${goal.name}" 목표 지웠어.` };
+}
+
+// 부채 상환 완료("카드론 다 갚았어") — 이름으로 찾아서 지운다. 수정(금리 등)은
+// 아직 범위 밖이라 둥지에서 직접 고치라고 안내한다(record_liability 설명과 동일 원칙).
+const DELETE_LIABILITY_TOOL: Anthropic.Tool = {
+  name: "delete_liability",
+  description: "사용자가 빚을 다 갚았다고 하면 호출해(예: '카드론 다 갚았어', '학자금 대출 상환 완료'). liabilityName으로 기존 부채를 찾는다.",
+  input_schema: {
+    type: "object",
+    properties: { liabilityName: { type: "string", description: "상환 완료한 부채 이름(일부만 맞아도 됨)" } },
+    required: ["liabilityName"],
+  },
+};
+
+async function deleteLiabilityFromChat(userId: string, input: { liabilityName?: unknown }): Promise<UndoResult> {
+  const liabilityName = typeof input.liabilityName === "string" ? input.liabilityName.trim() : "";
+  if (!liabilityName) return { ok: false, message: "어떤 부채인지 이름을 말해줄래?" };
+  const liabilities = await getLiabilities(userId);
+  const q = liabilityName.toLowerCase();
+  const found = liabilities.find((l) => l.name.toLowerCase().includes(q));
+  if (!found) return { ok: false, message: `"${liabilityName}"이라는 부채를 못 찾았어.` };
+  await removeLiability(userId, found.id);
+  return { ok: true, message: `✅ "${found.name}" 부채 기록 지웠어. 축하해! 🎉` };
 }
 
 // module ③/⑩ — "왜 이 종목을 샀는지"를 말해주면 기록해둔다. 다음에 이
@@ -593,6 +957,35 @@ async function buildThemeBlock(text: string): Promise<string> {
   return themeStockBlock(result);
 }
 
+// "인형뽑기 5천원 지출했어"처럼 지출/수입 보고문에 나온 대상이 생소한
+// 상호명·신조어·활동명이어도 record_expense/record_income 호출을 주저하지
+// 않게, 동사 앞 대상을 뽑아 미리 네이버에서 찾아 넣어준다(사용자 요청:
+// "모르는 단어면 네이버에 알아서 찾아서 지출이든 소득이든 기록하게 해줘").
+// "~이 뭐야?" 질문용 TERM_LOOKUP_RE와 달리 이건 "~했어" 보고문에서 쓴다 —
+// 둘이 서로 다른 메시지 모양을 보는 거라 겹쳐도 문제없다.
+const SPEND_VERB_RE = /(썼어|썼|지출했|지출|결제했|결제|구매했|구매|샀어|샀|벌었어|벌었|받았어|받았|들어왔어|들어왔)/;
+
+function extractSpendSubject(text: string): string | null {
+  const m = text.match(SPEND_VERB_RE);
+  if (!m || m.index === undefined) return null;
+  let subject = text.slice(0, m.index);
+  subject = subject.replace(/^(오늘|어제|아까|방금|그제)\s*/, "");
+  subject = subject.replace(/[\d,]+\s*(원|만원|천원|억원)?/g, "");
+  subject = subject.replace(/(에서|으로|을|를|이|가|은|는)\s*$/, "").trim();
+  if (subject.length < 2 || /^[\d\s,.]+$/.test(subject)) return null;
+  return subject.slice(-15);
+}
+
+async function buildSpendLookupBlock(text: string): Promise<string> {
+  const subject = extractSpendSubject(text);
+  if (!subject) return "";
+  const results = await searchEncyclopedia(subject, 2);
+  if (results.length === 0) return "";
+  const lines = [`\n\n[네이버 검색 참고 — "${subject}"가 뭔지 애매하면 이걸로 지출/수입 여부와 카테고리를 판단해, 모른다고 기록을 건너뛰지 마]`];
+  for (const r of results) lines.push(`- ${r.title}: ${r.description}`);
+  return lines.join("\n");
+}
+
 // "학습 시작해줘"/"학습자료 줘"/"학습 그만할래" — 180일 플래닛을 켜고 끄고,
 // 자료를 내준다. 자동으로 밀어주는 평일 아침 발송은 없다(2026-10-16 사용자
 // 피드백: "자동으로 안보내고 내가 말하면 보내줘") — start와 material 둘 다
@@ -820,6 +1213,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   // "로봇 테마 추천해줘" — 그날 랭킹 top-N이 아니라 StockTheme 테이블
   // 전체를 훑어야 거래가 뜸한 테마주도 찾을 수 있다(2026-10-21 버그 확인).
   const themeBlock = lastUser && THEME_QUERY_RE.test(lastUser.content) ? await buildThemeBlock(lastUser.content) : "";
+  // "인형뽑기 5천원 썼어" 같은 지출/수입 보고에서 대상이 생소하면 미리 찾아준다.
+  const spendLookupBlock = lastUser ? await buildSpendLookupBlock(lastUser.content) : "";
 
   const client = new Anthropic();
   const baseSystem = await buildSystemPrompt();
@@ -842,8 +1237,13 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   // 전부니 충분히" 할지(위 [지금 대화에서 새로 조회한 종목 데이터] 관련
   // 지침 참고) 모델이 판단하게 알려준다.
   const channelNote = cards !== undefined ? "" : "\n\n[참고] 지금은 텔레그램 대화야 — 화면에 뜨는 카드가 없어.";
-  const system =
-    baseSystem +
+  // 크레딧 절약: baseSystem(시황/수급/제보 등 — 하루 중 크론이 갱신하기 전까진
+  // 모든 사용자·모든 요청에 똑같은 내용)을 캐시 가능한 블록으로 따로 떼어낸다.
+  // 그 뒤(종목/포트폴리오/진단 등 요청마다 달라지는 블록)는 캐시 안 되는 채로
+  // 붙인다 — 어차피 매번 달라서 캐싱 이득이 없다. 1시간 TTL: 이 앱은 하루 중
+  // 몇 번씩 띄엄띄엄 쓰는 패턴이라(계속 대화하는 게 아니라) 기본 5분보다
+  // 길게 잡아야 캐시가 실제로 맞을 확률이 높다.
+  const volatileSystem =
     cardsBlock +
     (reports.length > 0 ? "\n\n" + stockContextBlock(reports) : "") +
     portfolioBlock +
@@ -857,19 +1257,31 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
     teacherModeBlock +
     termLookupBlock +
     themeBlock +
+    spendLookupBlock +
     principlesBlock +
     loginNote +
     channelNote;
+  const system: Anthropic.TextBlockParam[] = [
+    { type: "text", text: baseSystem, cache_control: { type: "ephemeral", ttl: "1h" } },
+    { type: "text", text: volatileSystem || "(추가 컨텍스트 없음)" },
+  ];
 
   const tools: Anthropic.Tool[] = [];
   if (cards) tools.push(ADJUST_TOOL); // 화면 카드 개념이 있는 채널(웹)에서만
   if (userId)
     tools.push(
       RECORD_HOLDING_TOOL,
+      RECORD_SALE_TOOL,
+      DELETE_HOLDING_TOOL,
       RECORD_EXPENSE_TOOL,
       RECORD_INCOME_TOOL,
       RECORD_LIABILITY_TOOL,
+      DELETE_LIABILITY_TOOL,
       ADD_GOAL_TOOL,
+      UPDATE_GOAL_TOOL,
+      DELETE_GOAL_TOOL,
+      UPDATE_SETTINGS_TOOL,
+      UNDO_LAST_ENTRY_TOOL,
       RECORD_THESIS_TOOL,
       SET_PRINCIPLE_TOOL,
       RECORD_JOURNAL_TOOL,
@@ -890,6 +1302,10 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       const response = await client.messages.create({
         model: "claude-sonnet-5",
         max_tokens: 800,
+        // 크레딧 절약: 이 채팅의 "어려운 부분"(숫자 계산·판정)은 전부 코드가
+        // 미리 끝내서 블록으로 넣어주고, 모델은 그걸 추출/서술만 하면 돼서
+        // 깊은 추론이 필요 없다 — low로 충분하고 사고 토큰도 줄어든다.
+        output_config: { effort: "low" },
         system,
         messages: anthropicMessages,
         tools,
@@ -921,10 +1337,17 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
         userId ? Promise.all(uses.map((u) => fn(userId, u.input as Record<string, unknown>))) : Promise.resolve([]);
 
       const holdingResults = await runAll(findAllTools("record_holding_purchase"), recordHoldingPurchase);
+      const saleResults = await runAll(findAllTools("record_holding_sale"), recordHoldingSale);
+      const deleteHoldingResults = await runAll(findAllTools("delete_holding_entry"), deleteHoldingFromChat);
       const expenseResults = await runAll(findAllTools("record_expense"), recordExpense);
       const incomeResults = await runAll(findAllTools("record_income"), recordIncome);
       const liabilityResults = await runAll(findAllTools("record_liability"), recordLiability);
+      const deleteLiabilityResults = await runAll(findAllTools("delete_liability"), deleteLiabilityFromChat);
       const goalResults = await runAll(findAllTools("add_financial_goal"), addGoalFromChat);
+      const updateGoalResults = await runAll(findAllTools("update_financial_goal"), updateGoalFromChat);
+      const deleteGoalResults = await runAll(findAllTools("delete_financial_goal"), deleteGoalFromChat);
+      const settingsResults = await runAll(findAllTools("update_portfolio_settings"), updateSettingsFromChat);
+      const undoResults = await runAll(findAllTools("undo_last_entry"), undoLastEntry);
       const thesisResults = await runAll(findAllTools("record_investment_thesis"), recordThesis);
       const principleResults = await runAll(findAllTools("set_investment_principle"), setPrinciple);
       const journalResults = await runAll(findAllTools("record_learning_journal"), recordJournal);
@@ -934,10 +1357,17 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
 
       const replyText =
         joinMsgs(holdingResults) ??
+        joinMsgs(saleResults) ??
+        joinMsgs(deleteHoldingResults) ??
         joinMsgs(expenseResults) ??
         joinMsgs(incomeResults) ??
         joinMsgs(liabilityResults) ??
+        joinMsgs(deleteLiabilityResults) ??
         joinMsgs(goalResults) ??
+        joinMsgs(updateGoalResults) ??
+        joinMsgs(deleteGoalResults) ??
+        joinMsgs(settingsResults) ??
+        joinMsgs(undoResults) ??
         joinMsgs(thesisResults) ??
         joinMsgs(principleResults) ??
         joinMsgs(journalResults) ??
@@ -967,6 +1397,7 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       };
     } catch (e) {
       lastErr = e;
+      console.error("[golgoo-chat] runChatTurn failed", e);
       const overloaded = e instanceof Anthropic.APIError && (e.status === 429 || e.status === 529 || e.status === 500);
       if (overloaded && i < 2) {
         await new Promise((r) => setTimeout(r, 900 * (i + 1)));
