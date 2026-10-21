@@ -38,6 +38,7 @@ import {
   removeExpenseRecord,
   removeIncomeRecord,
 } from "@/lib/finance-engine";
+import { checkBudgetAndAlert, setCategoryBudget, removeCategoryBudget, computeBudgetStatus, computeMonthOverview } from "@/lib/budget-engine";
 import { MIN_INSTALLMENT_MONTHS, MAX_INSTALLMENT_MONTHS } from "@/lib/installment";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "@/lib/finance-constants";
 import { prisma } from "@/lib/prisma";
@@ -367,6 +368,7 @@ export async function recordExpense(
     const result = await addInstallmentExpense(userId, { startDate: date, category, totalAmount: amount, months, annualRatePct: rate, memo });
     if (!result) return { ok: false, message: "할부를 계산하지 못했어 — 금액·개월을 다시 확인해줄래?" };
     const monthly = result.plan.payments[result.plan.payments.length - 1];
+    await checkBudgetAndAlert(userId, category);
     return {
       ok: true,
       message: `✅ 할부 지출 기록했어: ${category} 총 **₩${amount.toLocaleString()}**, ${months}개월(매달 약 ₩${Math.round(monthly).toLocaleString()})${memo ? ` (${memo})` : ""}${dateNote}`,
@@ -374,6 +376,13 @@ export async function recordExpense(
   }
 
   await addExpenseRecord(userId, { date, category, amount, memo });
+  // 예산 감시 — 이 카테고리에 한도가 설정돼 있으면 사용률을 계산해서
+  // 80%/100% 선을 이번 달 처음 넘겼을 때만 별도 텔레그램 경고를 보낸다
+  // (lib/budget-engine.ts, 실패해도 이 확인 메시지는 그대로 나가게 내부에서
+  // 에러를 삼킨다). await하는 이유는 다른 곳과 같다 — Vercel 서버리스
+  // 함수는 응답을 보낸 직후 그대로 멈출 수 있어서 fire-and-forget이면
+  // 알림이 조용히 유실될 수 있다.
+  await checkBudgetAndAlert(userId, category);
 
   return { ok: true, message: `✅ 지출 기록했어: ${category} **₩${amount.toLocaleString()}**${memo ? ` (${memo})` : ""}${dateNote}` };
 }
@@ -712,6 +721,81 @@ async function deleteLiabilityFromChat(userId: string, input: { liabilityName?: 
   if (!found) return { ok: false, message: `"${liabilityName}"이라는 부채를 못 찾았어.` };
   await removeLiability(userId, found.id);
   return { ok: true, message: `✅ "${found.name}" 부채 기록 지웠어. 축하해! 🎉` };
+}
+
+// 카테고리별 월 예산 한도 설정 — 사용자 요청(2026-10-21) 3번 "자동 예산
+// 감시 엔진"의 설정 창구. 전용 설정 화면 대신 채팅으로 바로 되게(이
+// 앱에서 이미 쓰는 방식 — update_portfolio_settings 등과 같은 원칙).
+const SET_BUDGET_TOOL: Anthropic.Tool = {
+  name: "set_category_budget",
+  description:
+    "사용자가 카테고리별 월 지출 한도를 정하고 싶다고 하면 호출해(예: '식비 예산 50만원으로 해줘', '교통비 한도 10만원 잡아줘'). " +
+    "이 한도를 넘으면(80%/100%) 내가 알아서 텔레그램으로 경고해준다는 뜻이야. category는 반드시 지출 카테고리 중 하나.",
+  input_schema: {
+    type: "object",
+    properties: {
+      category: { type: "string", enum: [...EXPENSE_CATEGORIES], description: "예산을 설정할 지출 카테고리" },
+      monthlyLimit: { type: "number", description: "월 한도(원)" },
+    },
+    required: ["category", "monthlyLimit"],
+  },
+};
+
+type SetBudgetResult = { ok: boolean; message: string };
+
+async function setBudgetFromChat(userId: string, input: { category?: unknown; monthlyLimit?: unknown }): Promise<SetBudgetResult> {
+  const category = typeof input.category === "string" && (EXPENSE_CATEGORIES as readonly string[]).includes(input.category) ? input.category : null;
+  const monthlyLimit = typeof input.monthlyLimit === "number" && input.monthlyLimit > 0 ? Math.round(input.monthlyLimit) : null;
+  if (!category || monthlyLimit === null) return { ok: false, message: "어떤 카테고리에 얼마로 한도를 잡을지 다시 말해줄래?" };
+  await setCategoryBudget(userId, category, monthlyLimit);
+  return { ok: true, message: `✅ **${category}** 월 예산을 **₩${monthlyLimit.toLocaleString()}**로 설정했어 — 80%, 100% 넘으면 알려줄게.` };
+}
+
+const DELETE_BUDGET_TOOL: Anthropic.Tool = {
+  name: "delete_category_budget",
+  description: "사용자가 특정 카테고리 예산 설정을 없애고 싶다고 하면 호출해(예: '식비 예산 그만 추적해줘', '교통비 한도 없애줘').",
+  input_schema: {
+    type: "object",
+    properties: { category: { type: "string", enum: [...EXPENSE_CATEGORIES], description: "예산 설정을 지울 카테고리" } },
+    required: ["category"],
+  },
+};
+
+async function deleteBudgetFromChat(userId: string, input: { category?: unknown }): Promise<SetBudgetResult> {
+  const category = typeof input.category === "string" && (EXPENSE_CATEGORIES as readonly string[]).includes(input.category) ? input.category : null;
+  if (!category) return { ok: false, message: "어떤 카테고리 예산을 없앨지 다시 말해줄래?" };
+  await removeCategoryBudget(userId, category);
+  return { ok: true, message: `✅ **${category}** 예산 설정 지웠어 — 더 이상 경고 안 보낼게.` };
+}
+
+// "예산 어때", "이번 달 저축 가능해?" — 코드가 계산한 실제 숫자(카테고리별
+// 사용률·예상 월 지출, 목표 대비 저축 가능 여부)를 시스템 프롬프트에
+// 블록으로 넣어준다(portfolioBlock·expenseSummaryBlock과 같은 원칙 — LLM이
+// 어림잡지 않고 이 숫자를 그대로 인용). 예산을 하나도 안 정해놨으면
+// computeBudgetStatus가 빈 배열을 주니 그 경우는 블록 자체를 생략한다.
+const BUDGET_STATUS_RE = /예산\s*(어때|얼마|남았|현황|확인)|이번\s*달.*(저축|남|모을)|목표.*(달성\s*가능|충족)/;
+
+async function buildBudgetBlock(userId: string): Promise<string> {
+  const [statuses, overview] = await Promise.all([computeBudgetStatus(userId), computeMonthOverview(userId)]);
+  const lines = ["\n\n[이번 달 예산·저축 현황 — 코드가 계산한 실제 숫자, 그대로 근거로 써]"];
+  if (statuses.length > 0) {
+    for (const s of statuses) {
+      lines.push(
+        `- ${s.category}: ₩${Math.round(s.spent).toLocaleString()} / ₩${s.limit.toLocaleString()} (${s.pctUsed.toFixed(0)}%)${s.willExceed ? " — 이대로면 이번 달 말 초과 예상" : ""}`
+      );
+    }
+  } else {
+    lines.push("- 설정된 카테고리 예산이 없음(사용자가 요청하면 set_category_budget로 만들어줄 수 있음)");
+  }
+  lines.push(
+    `이번 달 수입 ₩${Math.round(overview.income).toLocaleString()}, 지출 ₩${Math.round(overview.expense).toLocaleString()}(이대로면 월말 예상 ₩${Math.round(overview.projectedExpense).toLocaleString()}), 예상 저축 ₩${Math.round(overview.projectedSavings).toLocaleString()}`
+  );
+  if (overview.feasible !== null) {
+    lines.push(
+      `등록된 목표들의 월 투자금 합 ₩${Math.round(overview.requiredMonthlyContribution).toLocaleString()} — ${overview.feasible ? "이번 달 예상 저축으로 충족 가능" : "이번 달 예상 저축으로는 부족"}`
+    );
+  }
+  return lines.join("\n");
 }
 
 // module ③/⑩ — "왜 이 종목을 샀는지"를 말해주면 기록해둔다. 다음에 이
@@ -1170,6 +1254,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   const wantsPortfolioInfo = !!lastUser && /포트폴리오|보유\s*종목|둥지|내\s*자산|수익률|평가\s*금액|리포트|계좌/.test(lastUser.content);
   const portfolioBlock = userId && wantsPortfolioInfo ? await buildPortfolioBlock(userId) : "";
   const expenseSummaryBlock = userId && lastUser ? await buildExpenseSummaryBlock(userId, lastUser.content) : "";
+  // "예산 어때", "이번 달 저축 가능해?" — module ⑫ 예산 감시 엔진 조회.
+  const budgetBlock = userId && lastUser && BUDGET_STATUS_RE.test(lastUser.content) ? await buildBudgetBlock(userId) : "";
 
   // module ③/④/⑤/⑦ — 보유종목 진단(lib/holding-assessment-store.ts)이
   // 이미 계산해둔 신호·판정을 그대로 재사용해 깊은 질문에 답한다. 네 질문
@@ -1274,6 +1360,7 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
     (reports.length > 0 ? "\n\n" + stockContextBlock(reports) : "") +
     portfolioBlock +
     expenseSummaryBlock +
+    budgetBlock +
     deepDiveBlock +
     riskTopBlock +
     scenarioBlock +
@@ -1303,6 +1390,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       RECORD_INCOME_TOOL,
       RECORD_LIABILITY_TOOL,
       DELETE_LIABILITY_TOOL,
+      SET_BUDGET_TOOL,
+      DELETE_BUDGET_TOOL,
       ADD_GOAL_TOOL,
       UPDATE_GOAL_TOOL,
       DELETE_GOAL_TOOL,
@@ -1369,6 +1458,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       const incomeResults = await runAll(findAllTools("record_income"), recordIncome);
       const liabilityResults = await runAll(findAllTools("record_liability"), recordLiability);
       const deleteLiabilityResults = await runAll(findAllTools("delete_liability"), deleteLiabilityFromChat);
+      const setBudgetResults = await runAll(findAllTools("set_category_budget"), setBudgetFromChat);
+      const deleteBudgetResults = await runAll(findAllTools("delete_category_budget"), deleteBudgetFromChat);
       const goalResults = await runAll(findAllTools("add_financial_goal"), addGoalFromChat);
       const updateGoalResults = await runAll(findAllTools("update_financial_goal"), updateGoalFromChat);
       const deleteGoalResults = await runAll(findAllTools("delete_financial_goal"), deleteGoalFromChat);
@@ -1389,6 +1480,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
         joinMsgs(incomeResults) ??
         joinMsgs(liabilityResults) ??
         joinMsgs(deleteLiabilityResults) ??
+        joinMsgs(setBudgetResults) ??
+        joinMsgs(deleteBudgetResults) ??
         joinMsgs(goalResults) ??
         joinMsgs(updateGoalResults) ??
         joinMsgs(deleteGoalResults) ??

@@ -548,6 +548,38 @@ model User {
   learningProgress      LearningProgress?
   learningJournalEntries LearningJournalEntry[]
   tradeJournalEntries  TradeJournalEntry[]
+  categoryBudgets      CategoryBudget[]
+  budgetAlertLogs      BudgetAlertLog[]
+}
+
+// 카테고리별 월 예산 한도 — 채팅으로 설정("식비 예산 50만원으로 해줘",
+// lib/golgoo-chat.ts의 set_category_budget 도구). 사용자 요청(2026-10-21)
+// 3번 "자동 예산 감시 엔진": 지출 기록 직후 이 한도 대비 사용률을 계산해서
+// (lib/budget-engine.ts) 넘으면 LLM 없이 미리 정한 문구로 경고한다.
+model CategoryBudget {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category     String // EXPENSE_CATEGORIES 중 하나
+  monthlyLimit Float
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, category])
+}
+
+// 예산 경고 발송 기록 — 같은 달, 같은 카테고리, 같은 단계(80%/100%)는 한
+// 번만 보내게 막는 쿨다운/상태 관리(lib/portfolio-alertLog와 같은 패턴).
+model BudgetAlertLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category  String
+  level     Int // 80 | 100
+  month     String // YYYY-MM
+  createdAt DateTime @default(now())
+
+  @@unique([userId, category, level, month])
 }
 
 // 매매일지 — 채팅으로 "매수했어"/"매도했어"라고 보고하면 한 행씩 쌓인다.
