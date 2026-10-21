@@ -1,18 +1,22 @@
 // 텔레그램 방에서 온, 링크 없는(=제보가 아닌) 메시지를 처리한다 — "모닝
 // 리포트 줘"는 LLM 없이 이미 저장된 브리핑을 그대로 relay하고(숫자/요약은
-// 크론이 이미 만들어뒀으니 다시 요약시킬 필요가 없다), 그 외엔 골구 채팅
-// 엔진(lib/golgoo-chat.ts)에 태워 웹 채팅과 똑같이 답한다 — 종목 질문,
-// "얼마 샀어"/"~썼어" 기록, "포트폴리오 어때" 전부 이 한 경로로 들어간다.
+// 크론이 이미 만들어뒀으니 다시 요약시킬 필요가 없다), "점심 9000원" 같은
+// 확실히 단순한 지출/수입 보고도 LLM 없이 규칙 기반으로 바로 기록한다
+// (lib/expense-parser.ts — 2026-10-21 사용자 요청: "AI 없는 지출 기록
+// 엔진"). 그 외엔 골구 채팅 엔진(lib/golgoo-chat.ts)에 태워 웹 채팅과
+// 똑같이 답한다 — 종목 질문, 애매한 지출/매수 기록, "포트폴리오 어때" 등.
 // 음성 메모·영수증 사진(lib/telegram-media.ts)도 여기서 글자/지출 기록으로
 // 바뀐 뒤 같은 경로를 탄다.
 
 import { todayISO, prevBusinessDay } from "@/lib/dates";
-import { getTodayMessagesForChat } from "@/lib/chat-history";
-import { runChatTurn, recordExpense } from "@/lib/golgoo-chat";
+import { getTodayMessagesForChat, saveChatTurn } from "@/lib/chat-history";
+import { runChatTurn, recordExpense, recordIncome } from "@/lib/golgoo-chat";
 import { sendTelegramMessage } from "@/lib/telegram-send";
 import { downloadTelegramFile, transcribeVoice, extractReceiptFromImage } from "@/lib/telegram-media";
 import { getBriefingSlotsForDate, formatBriefingForTelegram } from "@/lib/market-briefing";
 import { pullTodayMaterial, SUNDAY_REVIEW_TEXT } from "@/lib/learning-push";
+import { findMentionedStocks } from "@/lib/chat-stock-report";
+import { parseSimpleTransaction } from "@/lib/expense-parser";
 
 // 일부러 "리포트 줘"만 단독으론 안 받는다 — "내 포트폴리오 리포트 줘"처럼
 // 개인 자산 쪽을 묻는 말까지 여기로 끌어오면 안 되니(그건 golgoo-chat의
@@ -65,6 +69,24 @@ export async function handleTelegramText(userId: string, chatId: string, text: s
 
   if (SUNDAY_REVIEW_RE.test(text)) {
     await sendTelegramMessage(chatId, SUNDAY_REVIEW_TEXT);
+    return;
+  }
+
+  // "AI 없는 지출 기록 엔진"(사용자 요청 2026-10-21: "단순 지출 입력마다
+  // LLM이 호출돼 토큰이 과다 소비된다") — "점심 9000원"처럼 확실히 단순한
+  // 단일 지출/수입 보고는 Claude를 아예 안 부르고 정규식+사전으로 바로
+  // 기록한다. 조금이라도 애매하면(금액 여러 개, 종목 언급, 질문형 등)
+  // parseSimpleTransaction이 null을 돌려주고, 아래 기존 LLM 경로로 그대로
+  // 넘어간다 — 애매한 걸 억지로 규칙으로 처리하려다 잘못 기록하지 않기
+  // 위해, 못 찾은 종목 여부부터 먼저 확인한다(findMentionedStocks는 이미
+  // DB 조회 한 번이라 LLM 호출보다 훨씬 쌈).
+  const mentioned = await findMentionedStocks(text);
+  const parsed = parseSimpleTransaction(text, mentioned.length);
+  if (parsed) {
+    const fn = parsed.direction === "expense" ? recordExpense : recordIncome;
+    const result = await fn(userId, { amount: parsed.amount, category: parsed.category, date: parsed.date });
+    await sendTelegramMessage(chatId, result.message);
+    await saveChatTurn(userId, date, text, result.message);
     return;
   }
 

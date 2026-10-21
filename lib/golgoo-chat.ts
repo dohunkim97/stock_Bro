@@ -320,6 +320,10 @@ const RECORD_EXPENSE_TOOL: Anthropic.Tool = {
         description: "가장 가까운 카테고리 하나를 골라. 애매하면 '기타'.",
       },
       memo: { type: "string", description: "무엇에 썼는지 짧은 메모(예: '스타벅스 커피'). 모르면 생략." },
+      date: {
+        type: "string",
+        description: "실제 지출한 날짜(YYYY-MM-DD). '어제'/'그제'처럼 말했으면 [오늘의 시장 데이터]에 보이는 오늘 날짜를 기준으로 계산해서 채워. 오늘이면 생략해도 돼.",
+      },
       installmentMonths: { type: "number", description: "할부 개월 수. 할부가 아니면 생략." },
       annualRatePct: { type: "number", description: "할부 연 이자율(%). 무이자거나 모르면 생략(0으로 처리)." },
     },
@@ -331,9 +335,18 @@ type RecordExpenseResult = { ok: boolean; message: string };
 
 // export됨 — lib/telegram-chat.ts가 영수증 사진 OCR(이미 구조화된 결과)을
 // 도구 왕복 없이 바로 기록할 때도 이 함수를 그대로 쓴다.
+// YYYY-MM-DD 형식이고 미래가 아닐 때만 받아들인다 — 모델이 날짜 계산을
+// 잘못해서 엉뚱한 미래 날짜를 보내는 경우(어제 계산을 실수로 내일로 하는
+// 등)에 대비해, 이상하면 조용히 오늘로 되돌린다(틀린 날짜로 기록하는
+// 것보다 오늘로 기록하는 게 덜 나쁘다).
+function safeDate(input: unknown): string {
+  if (typeof input !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(input)) return todayISO();
+  return input <= todayISO() ? input : todayISO();
+}
+
 export async function recordExpense(
   userId: string,
-  input: { amount?: unknown; category?: unknown; memo?: unknown; installmentMonths?: unknown; annualRatePct?: unknown }
+  input: { amount?: unknown; category?: unknown; memo?: unknown; date?: unknown; installmentMonths?: unknown; annualRatePct?: unknown }
 ): Promise<RecordExpenseResult> {
   const amount = typeof input.amount === "number" && input.amount > 0 ? Math.round(input.amount) : null;
   if (amount === null) return { ok: false, message: "얼마 썼는지 금액을 말해줄래?" };
@@ -342,6 +355,8 @@ export async function recordExpense(
     ? input.category
     : "기타";
   const memo = typeof input.memo === "string" && input.memo.trim() ? input.memo.trim() : undefined;
+  const date = safeDate(input.date);
+  const dateNote = date !== todayISO() ? ` (${date})` : "";
 
   const months = typeof input.installmentMonths === "number" ? Math.round(input.installmentMonths) : null;
   if (months !== null) {
@@ -349,18 +364,18 @@ export async function recordExpense(
       return { ok: false, message: `할부는 ${MIN_INSTALLMENT_MONTHS}~${MAX_INSTALLMENT_MONTHS}개월까지 가능해 — 다시 말해줄래?` };
     }
     const rate = typeof input.annualRatePct === "number" && input.annualRatePct >= 0 ? input.annualRatePct : 0;
-    const result = await addInstallmentExpense(userId, { startDate: todayISO(), category, totalAmount: amount, months, annualRatePct: rate, memo });
+    const result = await addInstallmentExpense(userId, { startDate: date, category, totalAmount: amount, months, annualRatePct: rate, memo });
     if (!result) return { ok: false, message: "할부를 계산하지 못했어 — 금액·개월을 다시 확인해줄래?" };
     const monthly = result.plan.payments[result.plan.payments.length - 1];
     return {
       ok: true,
-      message: `✅ 할부 지출 기록했어: ${category} 총 **₩${amount.toLocaleString()}**, ${months}개월(매달 약 ₩${Math.round(monthly).toLocaleString()})${memo ? ` (${memo})` : ""}`,
+      message: `✅ 할부 지출 기록했어: ${category} 총 **₩${amount.toLocaleString()}**, ${months}개월(매달 약 ₩${Math.round(monthly).toLocaleString()})${memo ? ` (${memo})` : ""}${dateNote}`,
     };
   }
 
-  await addExpenseRecord(userId, { date: todayISO(), category, amount, memo });
+  await addExpenseRecord(userId, { date, category, amount, memo });
 
-  return { ok: true, message: `✅ 지출 기록했어: ${category} **₩${amount.toLocaleString()}**${memo ? ` (${memo})` : ""}` };
+  return { ok: true, message: `✅ 지출 기록했어: ${category} **₩${amount.toLocaleString()}**${memo ? ` (${memo})` : ""}${dateNote}` };
 }
 
 // 일상 수입 보고("월급 300만원 들어왔어", "부업으로 20만원 벌었어")를 들었을 때
@@ -378,6 +393,10 @@ const RECORD_INCOME_TOOL: Anthropic.Tool = {
       amount: { type: "number", description: "수입 금액(원). 필수." },
       category: { type: "string", enum: [...INCOME_CATEGORIES], description: "가장 가까운 카테고리 하나. 애매하면 '기타'." },
       memo: { type: "string", description: "짧은 메모. 모르면 생략." },
+      date: {
+        type: "string",
+        description: "실제 들어온 날짜(YYYY-MM-DD). '어제'처럼 말했으면 [오늘의 시장 데이터]의 오늘 날짜 기준으로 계산해서 채워. 오늘이면 생략해도 돼.",
+      },
     },
     required: ["amount"],
   },
@@ -385,14 +404,21 @@ const RECORD_INCOME_TOOL: Anthropic.Tool = {
 
 type RecordIncomeResult = { ok: boolean; message: string };
 
-async function recordIncome(userId: string, input: { amount?: unknown; category?: unknown; memo?: unknown }): Promise<RecordIncomeResult> {
+// export됨 — lib/expense-parser.ts가 규칙 기반 파싱 성공 시(LLM 안 거치고)
+// 바로 기록할 때도 이 함수를 그대로 쓴다(recordExpense와 같은 이유).
+export async function recordIncome(
+  userId: string,
+  input: { amount?: unknown; category?: unknown; memo?: unknown; date?: unknown }
+): Promise<RecordIncomeResult> {
   const amount = typeof input.amount === "number" && input.amount > 0 ? Math.round(input.amount) : null;
   if (amount === null) return { ok: false, message: "얼마 들어왔는지 금액을 말해줄래?" };
   const category =
     typeof input.category === "string" && (INCOME_CATEGORIES as readonly string[]).includes(input.category) ? input.category : "기타";
   const memo = typeof input.memo === "string" && input.memo.trim() ? input.memo.trim() : undefined;
-  await addIncomeRecord(userId, { date: todayISO(), category, amount, memo });
-  return { ok: true, message: `✅ 수입 기록했어: ${category} **₩${amount.toLocaleString()}**${memo ? ` (${memo})` : ""}` };
+  const date = safeDate(input.date);
+  const dateNote = date !== todayISO() ? ` (${date})` : "";
+  await addIncomeRecord(userId, { date, category, amount, memo });
+  return { ok: true, message: `✅ 수입 기록했어: ${category} **₩${amount.toLocaleString()}**${memo ? ` (${memo})` : ""}${dateNote}` };
 }
 
 // 새 대출/빚이 생겼다는 보고("학자금 대출 500만원 받았어")를 들었을 때 호출 —

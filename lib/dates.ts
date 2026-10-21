@@ -70,6 +70,16 @@ function fromISO(iso: string): Date {
   return new Date(y, m - 1, d);
 }
 
+// 순수 달력일 오프셋 — prevBusinessDay/nextBusinessDay와 달리 주말·휴장일을
+// 건너뛰지 않는다("어제"는 항상 어제지, 어제가 토요일이면 금요일로 당겨질
+// 이유가 없다 — 소비는 주말에도 일어난다). lib/expense-parser.ts가 "어제
+// 저녁 18000원" 같은 상대 날짜를 풀 때 쓴다.
+export function offsetCalendarDays(iso: string, days: number): string {
+  const d = fromISO(iso);
+  d.setDate(d.getDate() + days);
+  return toISO(d);
+}
+
 export function formatDateLabel(iso: string): string {
   const d = fromISO(iso);
   const y = d.getFullYear();
