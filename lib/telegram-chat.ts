@@ -17,6 +17,7 @@ import { getBriefingSlotsForDate, formatBriefingForTelegram } from "@/lib/market
 import { pullTodayMaterial, SUNDAY_REVIEW_TEXT } from "@/lib/learning-push";
 import { findMentionedStocks } from "@/lib/chat-stock-report";
 import { parseSimpleTransaction } from "@/lib/expense-parser";
+import { getUsageStatus, formatUsageStatus } from "@/lib/ai-usage";
 
 // 일부러 "리포트 줘"만 단독으론 안 받는다 — "내 포트폴리오 리포트 줘"처럼
 // 개인 자산 쪽을 묻는 말까지 여기로 끌어오면 안 되니(그건 golgoo-chat의
@@ -30,6 +31,10 @@ const REPORT_RE = /모닝\s*리포트|오늘\s*(브리핑|시황)|브리핑\s*�
 // 알려준다(lib/learning-push.ts의 pullTodayMaterial).
 const MISSION_RE = /학습\s*자료|공부\s*자료|오늘\s*미션|오늘의\s*미션|미션\s*다시|오늘\s*(학습\s*)?주제\s*(뭐|알려)/;
 const SUNDAY_REVIEW_RE = /주간\s*복습|복습\s*체크리스트|일요일\s*복습/;
+
+// "몇 번 남았어" — 이 질문 자체가 Claude를 한 번 더 쓰면 모순이라(남은
+// 호출 수를 확인하려고 호출을 쓰는 꼴) LLM 없이 바로 집계해서 답한다.
+const USAGE_QUERY_RE = /몇\s*번\s*남았|ai\s*사용량|사용량\s*(알려|어때|확인)|호출\s*몇\s*번|호출\s*(횟수|얼마)/i;
 
 async function formatBriefing(date: string): Promise<{ text: string; isToday: boolean } | null> {
   let slots = await getBriefingSlotsForDate(date);
@@ -69,6 +74,12 @@ export async function handleTelegramText(userId: string, chatId: string, text: s
 
   if (SUNDAY_REVIEW_RE.test(text)) {
     await sendTelegramMessage(chatId, SUNDAY_REVIEW_TEXT);
+    return;
+  }
+
+  if (USAGE_QUERY_RE.test(text)) {
+    const status = await getUsageStatus();
+    await sendTelegramMessage(chatId, formatUsageStatus(status));
     return;
   }
 

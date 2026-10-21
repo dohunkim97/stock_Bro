@@ -39,7 +39,7 @@ import {
   removeIncomeRecord,
 } from "@/lib/finance-engine";
 import { checkBudgetAndAlert, setCategoryBudget, removeCategoryBudget, computeBudgetStatus, computeMonthOverview } from "@/lib/budget-engine";
-import { logAiCall, isOverDailyBudget, DAILY_BUDGET_MESSAGE } from "@/lib/ai-usage";
+import { logAiCall, getUsageStatus, formatOverLimitMessage } from "@/lib/ai-usage";
 import { computeSpendingTrend, getRecurringExpenseCandidates } from "@/lib/spending-insights";
 import { MIN_INSTALLMENT_MONTHS, MAX_INSTALLMENT_MONTHS } from "@/lib/installment";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "@/lib/finance-constants";
@@ -1430,10 +1430,13 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   // user 턴을 하나 꽂아 순서만 맞춘다.
   if (anthropicMessages[0]?.role !== "user") anthropicMessages.unshift({ role: "user", content: "(계속)" });
 
-  // 일일 AI 예산(섹션 6) — 넘었으면 아예 Claude를 안 부르고 정해진 문구로
-  // 끝낸다. 체크 자체는 아주 가벼운 집계 쿼리 하나뿐.
-  if (await isOverDailyBudget()) {
-    return { replyText: DAILY_BUDGET_MESSAGE };
+  // 일일 AI 한도(섹션 6, 2026-10-21 "호출 6번으로 제한") — 호출 횟수(기본
+  // 5회, 6번째부터 차단)가 기본 한도고 토큰 예산은 보조 안전장치. 넘었으면
+  // 아예 Claude를 안 부르고 정해진 문구로 끝낸다. 체크 자체는 가벼운
+  // 집계 쿼리 하나뿐.
+  const usageStatus = await getUsageStatus();
+  if (usageStatus.overLimit) {
+    return { replyText: formatOverLimitMessage(usageStatus) };
   }
 
   const channel: "web" | "telegram" = cards !== undefined ? "web" : "telegram";
