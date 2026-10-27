@@ -176,6 +176,39 @@ export async function fetchRecentDilutionFilings(corpCode: string, deadlineAt: n
   }
 }
 
+// 최근 N일 전체 공시 목록(제목만) — 둥지 알림의 "중요 공시"용. 어떤 공시가
+// 중요한지는 lib/holding-context.ts classifyFilings가 제목으로 가른다.
+// fetchRecentDilutionFilings와 같은 list.json 호출이지만, "공시 없음"과 "조회
+// 실패"를 구분해야 해서(실패를 "중요 공시 없음"으로 단정하지 않게) ok를 같이
+// 돌려준다. status "013"은 DART가 "조회된 데이터 없음"에 쓰는 코드라 성공이다.
+export async function fetchRecentFilingsResult(
+  corpCode: string,
+  deadlineAt: number,
+  days = 30
+): Promise<{ ok: boolean; filings: DilutionFiling[] }> {
+  const key = apiKey();
+  if (!key) return { ok: false, filings: [] };
+  const end = todayKst();
+  const bgnDate = new Date();
+  bgnDate.setDate(bgnDate.getDate() - days);
+  const bgn = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(bgnDate).replaceAll("-", "");
+
+  try {
+    const params = new URLSearchParams({ crtfc_key: key, corp_code: corpCode, bgn_de: bgn, end_de: end, page_count: "100" });
+    const res = await fetch(`${DART_BASE}/list.json?${params.toString()}`, { signal: AbortSignal.timeout(remainingMs(deadlineAt)) });
+    if (!res.ok) return { ok: false, filings: [] };
+    const json = await res.json();
+    if (json.status === "013") return { ok: true, filings: [] };
+    if (json.status !== "000" || !Array.isArray(json.list)) return { ok: false, filings: [] };
+    const filings = (json.list as Array<{ report_nm: string; rcept_no: string; rcept_dt: string }>)
+      .sort((a, b) => (a.rcept_dt < b.rcept_dt ? 1 : -1))
+      .map((r) => ({ rceptNo: r.rcept_no, reportName: r.report_nm.trim(), reportDate: r.rcept_dt }));
+    return { ok: true, filings };
+  } catch {
+    return { ok: false, filings: [] };
+  }
+}
+
 export function dartDocumentUrl(rceptNo: string): string {
   return `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${rceptNo}`;
 }

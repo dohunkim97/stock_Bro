@@ -18,7 +18,18 @@ import { getAssessmentReport, type AssessmentReport } from "@/lib/holding-assess
 import { sendTelegramMessage } from "@/lib/telegram-send";
 import { saveAssistantBroadcast } from "@/lib/chat-history";
 import { STATE_RANK, type AssessmentState } from "@/lib/holding-assessment";
-import { decideAlert, formatAlertMessage, formatStockAlert, type AlertKind, type ImprovedHolding } from "@/lib/holding-alert-format";
+import { decideAlert, deepLossLine, formatAlertMessage, formatStockAlert, pickReasons, type AlertKind, type ImprovedHolding } from "@/lib/holding-alert-format";
+import { fetchMarketIndexMap, gatherHoldingContext } from "@/lib/holding-context-store";
+import { buildScenarios } from "@/lib/holding-context";
+import {
+  ANALYSIS_VERSION,
+  buildPortfolioSnapshot,
+  kstLabel,
+  serializePayload,
+  summaryKeyboard,
+  type AlertRecordPayload,
+  type DataQualityItem,
+} from "@/lib/holding-alert-detail";
 import { computeBudgetStatus, computeMonthOverview } from "@/lib/budget-engine";
 import { computeSpendingTrend, getRecurringExpenseCandidates } from "@/lib/spending-insights";
 
@@ -145,7 +156,16 @@ export async function sendWeeklyPortfolioDigest(): Promise<AlertRunSummary> {
   return { usersChecked, messagesSent };
 }
 
-type PlannedAlert = { code: string; state: AssessmentState; name: string; kind: AlertKind; text: string };
+export type PlannedAlert = {
+  code: string;
+  state: AssessmentState;
+  name: string;
+  kind: AlertKind;
+  text: string;
+  previousState: AssessmentState | null;
+  previousScore: number | null;
+  changedReasons: string[];
+};
 
 // 어제(바로 전 기록일)와 비교해 오늘 실제로 나빠진 종목만 고른다. 예전엔
 // lastChange("마지막으로 상태가 달랐던 날")와 비교해서, 한 번 악화되면 같은
@@ -169,10 +189,122 @@ async function planAlerts(userId: string, report: AssessmentReport): Promise<{ a
       name: a.name,
       kind,
       text: formatStockAlert({ kind, assessment: a, price: report.prices[a.code], previousState: prev?.state ?? null, changedReasons: prev?.reasons ?? [] }),
+      previousState: prev?.state ?? null,
+      previousScore: prev?.totalScore ?? null,
+      changedReasons: prev?.reasons ?? [],
     });
   }
   return { alerts, improved };
 }
+
+// 알림 보낼 종목마다 "보낸 그 시점" 스냅샷을 남긴다(HoldingAlertRecord) — 텔레그램
+// 상세 버튼은 이 기록으로만 그린다(lib/holding-alert-detail.ts). 뉴스·공시·업종처럼
+// 무거운 조회는 여기서, 알림 대상 종목에만 한다. 한 종목이 실패해도(기록 저장 실패
+// 등) 그 종목 버튼만 빠지고 알림 자체는 나간다.
+type RecordShared = {
+  deadlineAt: number;
+  portfolioDataAsOf: string;
+  indices: Awaited<ReturnType<typeof fetchMarketIndexMap>>;
+  portfolio: ReturnType<typeof buildPortfolioSnapshot>;
+};
+
+export async function recordShared(report: AssessmentReport): Promise<RecordShared> {
+  return {
+    deadlineAt: Date.now() + 20_000, // 크론 60초 한도 안에서 다른 작업 몫을 남긴다
+    portfolioDataAsOf: new Date().toISOString(),
+    indices: await fetchMarketIndexMap(),
+    portfolio: buildPortfolioSnapshot({
+      asOf: report.asOf,
+      session: report.session,
+      totalValuation: report.totalValuation,
+      assessments: report.assessments,
+      prices: report.prices,
+      flags: report.flags.map((f) => f.text),
+    }),
+  };
+}
+
+// HoldingAlertRecord 한 행에 들어갈 값(저장은 안 함) — 미리보기 스크립트도 이걸 쓴다.
+export async function buildAlertRecordData(userId: string, report: AssessmentReport, alert: PlannedAlert, shared: RecordShared) {
+  const { deadlineAt, portfolioDataAsOf, indices, portfolio } = shared;
+  const a = report.assessments.find((x) => x.code === alert.code);
+  if (!a) return null;
+  const price = report.prices[a.code] ?? null;
+  const detail = report.details[a.code] ?? null;
+  const ctx = await gatherHoldingContext({
+    userId,
+    code: a.code,
+    name: a.name,
+    stockPct: price?.changePct ?? null,
+    market: price?.market,
+    indices,
+    deadlineAt,
+  }).catch(() => null);
+
+  const dataQuality: DataQualityItem[] = [
+    { item: "시세", ok: !!price?.live, note: price ? (price.live ? "실시간" : "일봉 대체") : "없음" },
+    { item: "수급", ok: (detail?.flow.days ?? 0) > 0, note: detail?.flow.asOfDate ? `${detail.flow.asOfDate}까지` : "" },
+    { item: "뉴스", ok: ctx?.news.ok ?? false, note: "" },
+    { item: "공시", ok: ctx?.filings.ok ?? false, note: "" },
+    { item: "지수", ok: indices.ok, note: "" },
+    { item: "업종", ok: !!ctx?.move.sector, note: !ctx?.theme ? "분류 없음" : ctx.move.sector ? `${kstLabel(ctx.move.sector.asOf)} 집계` : "비교 종목 부족" },
+    { item: "재무", ok: (detail?.financials.length ?? 0) > 0, note: "연간만" },
+  ];
+  const payload: AlertRecordPayload = {
+    technical: { price, chart: detail?.chart ?? null },
+    volume: detail?.volume ?? null,
+    flow: detail?.flow ?? null,
+    financial: { years: detail?.financials ?? [], signalNote: a.signals.find((s) => s.key === "financial")?.note ?? null },
+    sector: { theme: ctx?.theme ?? null, move: ctx?.move ?? null },
+    news: { news: ctx?.news ?? { ok: false, items: [] }, filings: ctx?.filings ?? { ok: false, items: [], total: 0 } },
+    trigger: { reasons: pickReasons(a, alert.changedReasons), signals: a.signals, stateNote: a.stateNote, deepLoss: deepLossLine(a) },
+    action: { scenarios: buildScenarios(detail?.chart ?? null, detail?.volume ?? null), thesis: ctx?.thesis ?? null },
+    portfolio,
+    dataQuality,
+  };
+
+  return {
+    userId,
+    stockCode: a.code,
+    stockName: a.name,
+    alertType: alert.kind,
+    marketDataAsOf: price?.asOf ?? null,
+    portfolioDataAsOf,
+    previousSeverity: alert.previousState,
+    currentSeverity: a.state,
+    previousRiskScore: alert.previousScore,
+    currentRiskScore: a.totalScore,
+    currentPrice: a.currentPrice,
+    previousClose: price?.prevClose ?? null,
+    dailyChangePct: price?.changePct ?? null,
+    avgBuyPrice: a.avgBuyPrice,
+    holdingQuantity: a.quantity,
+    unrealizedReturnPct: a.changePct,
+    portfolioWeight: a.weightPct,
+    analysisVersion: ANALYSIS_VERSION,
+    ...serializePayload(payload),
+  };
+}
+
+async function createAlertRecords(userId: string, report: AssessmentReport, alerts: PlannedAlert[]): Promise<{ id: string; name: string }[]> {
+  const shared = await recordShared(report);
+  const created = await Promise.all(
+    alerts.map(async (alert) => {
+      try {
+        const data = await buildAlertRecordData(userId, report, alert, shared);
+        if (!data) return null;
+        const row = await prisma.holdingAlertRecord.create({ data, select: { id: true } });
+        return { id: row.id, name: data.stockName };
+      } catch (e) {
+        console.error("[portfolio-alerts] alert record save failed", alert.code, e);
+        return null;
+      }
+    })
+  );
+  return created.filter((x): x is { id: string; name: string } => x !== null);
+}
+
+
 
 export async function sendPortfolioAlerts(): Promise<AlertRunSummary> {
   const users = await prisma.user.findMany({
@@ -194,15 +326,25 @@ export async function sendPortfolioAlerts(): Promise<AlertRunSummary> {
       const { alerts, improved } = await planAlerts(user.id, report);
       if (alerts.length === 0) continue;
 
+      const records = await createAlertRecords(user.id, report, alerts).catch((e) => {
+        console.error("[portfolio-alerts] alert records failed", e);
+        return [] as { id: string; name: string }[];
+      });
       const message = formatAlertMessage({
         asOf: report.asOf,
         session: report.session,
         analyzedCount: report.assessments.length,
         stockBlocks: alerts.map((x) => ({ name: x.name, kind: x.kind, text: x.text })),
         improved,
+        hasButtons: records.length > 0,
       });
-      const sent = await sendTelegramMessage(user.telegramChatId, message);
-      if (!sent) continue; // 기록을 안 남겨야 다음 정시에 다시 시도한다
+      const sent = await sendTelegramMessage(user.telegramChatId, message, records.length > 0 ? { replyMarkup: summaryKeyboard(records) } : {});
+      if (records.length > 0) {
+        await prisma.holdingAlertRecord
+          .updateMany({ where: { id: { in: records.map((r) => r.id) }, userId: user.id }, data: { deliveryStatus: sent ? "sent" : "failed" } })
+          .catch(() => {});
+      }
+      if (!sent) continue; // 중복 방지 기록을 안 남겨야 다음 정시에 다시 시도한다
 
       messagesSent++;
       await Promise.all(

@@ -16,6 +16,14 @@ export type TelegramUpdate = {
     forward_from_chat?: { title?: string };
     forward_sender_name?: string;
   };
+  // 인라인 버튼을 눌렀을 때(둥지 알림 상세 보기 — lib/holding-alert-callback.ts).
+  // data는 사용자가 조작할 수 있는 값이라 그대로 믿지 않는다.
+  callback_query?: {
+    id: string;
+    from: { id: number };
+    data?: string;
+    message?: { message_id: number; chat: { id: number | string } };
+  };
 };
 
 // webhook(app/api/telegram/webhook)이 "기사 링크면 제보, 아니면 대화"로

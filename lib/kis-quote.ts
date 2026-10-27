@@ -29,7 +29,18 @@ export type KisQuote = {
   eps?: string;
   bps?: string;
   sector?: string; // e.g. "전기·전자" — KRX's own broad industry grouping
+  // 소속 시장 — rprs_mrkt_kor_name("KOSPI200"/"KOSDAQ"/"KSQ150" 등, 2026-10-27 실제
+  // 응답으로 확인)에서 코스피/코스닥만 가려낸다. 둥지 알림이 "시장 전체 하락
+  // 영향인지"를 볼 때 비교할 지수를 고르는 데 쓴다. 모르는 값이면 undefined.
+  market?: "코스피" | "코스닥";
 };
+
+function marketOf(raw: unknown): "코스피" | "코스닥" | undefined {
+  const s = String(raw ?? "").toUpperCase();
+  if (/KOSDAQ|KSQ/.test(s)) return "코스닥";
+  if (/KOSPI/.test(s)) return "코스피";
+  return undefined;
+}
 
 function toNumber(v: unknown): number {
   const n = Number(v);
@@ -110,6 +121,7 @@ export async function fetchKisQuote(code: string): Promise<KisQuote | null> {
               eps: cleanStat(o.eps),
               bps: cleanStat(o.bps),
               sector: String(o.bstp_kor_isnm ?? "").trim() || undefined,
+              market: marketOf(o.rprs_mrkt_kor_name),
             };
           }
         }

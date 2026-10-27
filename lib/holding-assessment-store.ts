@@ -40,6 +40,7 @@ export type StateChange = {
 export type PreviousDayComparison = {
   date: string;
   state: AssessmentState;
+  totalScore: number | null; // 그날 신호 합계(저장된 신호로 다시 계산) — 알림 기록의 previous_risk_score
   reasons: string[]; // 점수가 바뀐 신호, 변화 폭이 큰 순
 };
 
@@ -131,7 +132,13 @@ function buildHistory(
     }
     const yesterday = older[0];
     if (yesterday) {
-      previousDay = { date: yesterday.date, state: yesterday.state as AssessmentState, reasons: changedSignals(current.signals, yesterday.signals) };
+      const ySignals = parseSignals(yesterday.signals);
+      previousDay = {
+        date: yesterday.date,
+        state: yesterday.state as AssessmentState,
+        totalScore: ySignals.length > 0 ? stateFromSignals(ySignals).totalScore : null,
+        reasons: changedSignals(current.signals, yesterday.signals),
+      };
     }
   }
   return { code, entries, lastChange, previousDay };
@@ -195,6 +202,7 @@ async function build(userId: string): Promise<AssessmentReport> {
       chart: computeChartDetail(inp.candles, currentPrice),
       volume: computeVolumeDetail(inp.candles, { lastCandlePartial, quote: inp.quote, minutesSinceOpen }),
       flow: computeFlowDetail(inp.flows, inp.candles),
+      financials: inp.financials,
     };
   }
 

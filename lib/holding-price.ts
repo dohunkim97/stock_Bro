@@ -17,6 +17,7 @@ export type PriceSnapshot = {
   source: string;
   tradingHalted: boolean;
   statusLabel: string | null;
+  market?: "코스피" | "코스닥"; // 시장 지수와 비교할 때(실시간 시세에서만 앎)
 };
 
 type CandleLike = { date: string; close: number };
@@ -47,6 +48,7 @@ export function buildPriceSnapshot(quote: KisQuote | null, candles: CandleLike[]
       source: "KIS 실시간 시세",
       tradingHalted: quote.tradingHalted,
       statusLabel: quote.statusLabel,
+      market: quote.market,
     };
   }
 

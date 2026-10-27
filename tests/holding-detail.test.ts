@@ -10,7 +10,7 @@ function day(i: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function candlesFromCloses(closes: number[], volume = (i: number) => 1000): ChartCandle[] {
+function candlesFromCloses(closes: number[], volume: (i: number) => number = () => 1000): ChartCandle[] {
   return closes.map((c, i) => ({ date: day(i), open: c, high: c, low: c, close: c, volume: volume(i), tradingValue: c * volume(i) }));
 }
 

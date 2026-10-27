@@ -543,6 +543,7 @@ model User {
   financialSnapshots FinancialSnapshot[]
   portfolioAssessments PortfolioAssessment[]
   portfolioAlertLogs   PortfolioAlertLog[]
+  holdingAlertRecords  HoldingAlertRecord[]
   chatMessages         ChatMessage[]
   holdingTheses        HoldingThesis[]
   learningProgress      LearningProgress?
@@ -693,6 +694,51 @@ model PortfolioAlertLog {
   createdAt DateTime @default(now())
 
   @@unique([userId, code, date])
+}
+
+// 둥지 텔레그램 알림 1건(종목 하나)의 "보낸 그 시점" 스냅샷 — 사용자 스펙
+// (2026-10-27) 12번 알림 기록. 텔레그램 상세 버튼(📊💰📰⚠️📈)은 이 기록으로만
+// 그린다: 버튼 누를 때 다시 조회하면 알림 문구와 상세 숫자가 어긋날 수 있고,
+// 웹훅에서 KIS·DART를 다시 부르면 느려서. 버튼 콜백은 chat id → User를 다시
+// 찾고 그 User의 기록인지 확인한 뒤에만 보여준다(callback_data는 믿지 않음).
+// PortfolioAlertLog(하루 중복 방지)는 그대로 두고 별도로 쌓는다.
+// *Snapshot/newsEvidence/triggerReasons/actionScenarios/dataQuality는 JSON 문자열
+// (PortfolioAssessment.signals와 같은 방식).
+model HoldingAlertRecord {
+  id                  String   @id @default(cuid())
+  userId              String
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stockCode           String
+  stockName           String
+  alertType           String // worsened | new-risky
+  generatedAt         DateTime @default(now())
+  marketDataAsOf      String? // 시세 기준 시각(ISO). 실시간 시세 실패 시 일봉 날짜
+  portfolioDataAsOf   String // 둥지 보유 데이터(평단·수량)를 읽은 시각(ISO)
+  previousSeverity    String?
+  currentSeverity     String
+  previousRiskScore   Int? // 신호 합계(등급 판정 내부값)
+  currentRiskScore    Int
+  currentPrice        Float
+  previousClose       Float?
+  dailyChangePct      Float?
+  avgBuyPrice         Float
+  holdingQuantity     Float
+  unrealizedReturnPct Float?
+  portfolioWeight     Float? // 전체 자산(현금·채권 포함) 대비 %
+  technicalSnapshot   String
+  volumeSnapshot      String
+  flowSnapshot        String
+  financialSnapshot   String
+  sectorSnapshot      String
+  newsEvidence        String
+  triggerReasons      String
+  actionScenarios     String
+  portfolioSnapshot   String // 📈 전체 자산 영향 버튼용
+  dataQuality         String
+  analysisVersion     String
+  deliveryStatus      String   @default("pending") // pending | sent | failed
+
+  @@index([userId, generatedAt])
 }
 
 // 둥지 "AI 골구 종목 진단"(lib/holding-assessment.ts)의 하루 한 건 판정 기록 —

@@ -112,6 +112,7 @@ export function formatAlertMessage(p: {
   analyzedCount: number;
   stockBlocks: { name: string; kind: AlertKind; text: string }[];
   improved: ImprovedHolding[];
+  hasButtons?: boolean; // 종목별 상세 버튼이 붙는지(알림 기록 저장에 실패하면 버튼 없이 나간다)
 }): string {
   const worsened = p.stockBlocks.filter((b) => b.kind === "worsened").length;
   const newRisky = p.stockBlocks.length - worsened;
@@ -131,7 +132,9 @@ export function formatAlertMessage(p: {
     "※ 등급은 차트·수급·거래량·재무 신호로 정해서 지금 수익/손실과는 별개야 — 수익 중이어도 신호가 꺾이면 올라가.",
     "※ 시세: KIS · 손익: 둥지에 입력한 평단·수량 기준(세금·수수료 미반영)",
     "",
-    "더 자세히 물어봐도 돼, 아니면 둥지에서 확인해줘."
+    p.hasButtons
+      ? "아래 버튼으로 종목별 차트·보유정보·뉴스·대응 시나리오를 볼 수 있어. 더 물어봐도 돼."
+      : "더 자세히 물어봐도 돼, 아니면 둥지에서 확인해줘."
   );
   return lines.join("\n");
 }

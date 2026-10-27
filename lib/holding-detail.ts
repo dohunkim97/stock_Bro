@@ -9,6 +9,7 @@
 import type { ChartCandle } from "@/lib/kis-chart";
 import type { InvestorTrendRow } from "@/lib/kis-investor-trend";
 import type { KisQuote } from "@/lib/kis-quote";
+import type { FinancialYear } from "@/lib/holding-assessment";
 import { computeBollinger, percentBZone, type BandReentryEvent, type BollingerSlope, type PercentBZone } from "@/lib/bollinger";
 import { rsi } from "@/lib/prediction-features";
 import { findSupportResistanceLevels, nearestSupportResistance } from "@/lib/technical-signals";
@@ -366,4 +367,5 @@ export type HoldingDetail = {
   chart: ChartDetail | null;
   volume: VolumeDetail | null;
   flow: FlowDetail;
+  financials: FinancialYear[]; // KRX 연간 재무(최근 3개년) — 등급의 재무 신호와 같은 원천
 };
