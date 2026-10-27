@@ -102,6 +102,7 @@ export type TechMetrics = {
   ma20: number | null;
   ma60: number | null;
   volumeRatio: number | null; // 최근 5거래일 평균 / 그 직전 20거래일 평균
+  volumeExcludesToday: boolean; // 장중이라 덜 찬 오늘 일봉을 거래량 비교에서 뺐는지
 };
 
 function sma(values: number[], n: number): number | null {
@@ -116,16 +117,24 @@ function retOver(closes: number[], days: number): number | null {
   return past > 0 ? ((closes[closes.length - 1] - past) / past) * 100 : null;
 }
 
-export function computeTechMetrics(candles: Candle[]): TechMetrics {
+// lastCandlePartial: 장중엔 KIS 일봉의 마지막 캔들이 "오늘, 아직 진행 중"이라
+// 거래량이 하루치의 일부뿐이다. 그대로 최근 5일 평균에 넣으면 오전일수록
+// 거래량이 실제보다 적게 잡혀 "거래 위축"으로 오판한다 — 그래서 거래량
+// 비교에서만 오늘을 빼고 완결된 거래일끼리 비교한다(가격 지표는 오늘 시세가
+// 최신이라 그대로 쓴다). 같은 시각 누적치끼리 비교하려면 과거 분봉이 필요한데
+// 현재 분봉 API(lib/kis-minute-chart.ts)는 당일만 줘서 그 방식은 못 쓴다.
+export function computeTechMetrics(candles: Candle[], opts: { lastCandlePartial?: boolean } = {}): TechMetrics {
   const closes = candles.map((c) => c.close);
   const last = closes[closes.length - 1];
   const window = candles.slice(-250);
   const high = window.length > 0 ? Math.max(...window.map((c) => c.high)) : null;
 
+  const volumeExcludesToday = opts.lastCandlePartial === true && candles.length > 0;
+  const volCandles = volumeExcludesToday ? candles.slice(0, -1) : candles;
   let volumeRatio: number | null = null;
-  if (candles.length >= 25) {
-    const recent = candles.slice(-5).reduce((s, c) => s + c.volume, 0) / 5;
-    const base = candles.slice(-25, -5).reduce((s, c) => s + c.volume, 0) / 20;
+  if (volCandles.length >= 25) {
+    const recent = volCandles.slice(-5).reduce((s, c) => s + c.volume, 0) / 5;
+    const base = volCandles.slice(-25, -5).reduce((s, c) => s + c.volume, 0) / 20;
     volumeRatio = base > 0 ? recent / base : null;
   }
 
@@ -137,6 +146,7 @@ export function computeTechMetrics(candles: Candle[]): TechMetrics {
     ma20: sma(closes, 20),
     ma60: sma(closes, 60),
     volumeRatio,
+    volumeExcludesToday,
   };
 }
 
@@ -169,15 +179,19 @@ function flowSignal(rows: FlowRow[]): Signal {
   return { key: "flow", label, score: 0, note: "최근 5거래일 외국인·기관 수급이 엇갈림" };
 }
 
-// 거래량: 줄면 관심 이탈(-1), 크게 늘었는데 차트가 양호하면 +1. 하락 중 거래량 증가는
-// 오히려 매도세일 수 있어 점수를 주지 않는다.
+// 거래량: 줄면 -1, 크게 늘었는데 차트가 양호하면 +1. 하락 중 거래량 증가는
+// 오히려 매도세일 수 있어 점수를 주지 않는다. 문구에 비교 기준을 같이 적는다
+// — 예전 "평소 대비 -53.8%"는 무엇과 비교했는지 알 수 없었다(2026-10-27
+// 사용자 지적). "관심 이탈"이라고 단정하던 표현도 거래 감소만으로는 근거가
+// 부족해(가격 조정기엔 거래가 원래 줄어든다) "거래 위축"으로 낮췄다.
 function volumeSignal(m: TechMetrics, chartScore: number | null): Signal {
   const label = "거래량";
   if (m.volumeRatio === null) return { key: "volume", label, score: null, note: "거래량을 비교할 데이터가 부족해요" };
   const pct = (m.volumeRatio - 1) * 100;
-  if (m.volumeRatio <= 0.7) return { key: "volume", label, score: -1, note: `평소 대비 ${fmtPct(pct)} — 관심 이탈` };
-  if (m.volumeRatio >= 1.5 && chartScore !== null && chartScore > 0) return { key: "volume", label, score: 1, note: `평소 대비 ${fmtPct(pct)} — 상승 추세에 거래 증가` };
-  return { key: "volume", label, score: 0, note: `평소 대비 ${fmtPct(pct)}` };
+  const basis = `최근 5거래일 평균이 직전 20거래일 평균 대비 ${fmtPct(pct)}${m.volumeExcludesToday ? "(장중이라 오늘 제외)" : ""}`;
+  if (m.volumeRatio <= 0.7) return { key: "volume", label, score: -1, note: `${basis} — 거래 위축` };
+  if (m.volumeRatio >= 1.5 && chartScore !== null && chartScore > 0) return { key: "volume", label, score: 1, note: `${basis} — 상승 추세에 거래 증가` };
+  return { key: "volume", label, score: 0, note: basis };
 }
 
 // 재무: 최근 완결 연도 기준 영업이익·순이익 흑자 여부, 자본총계 0 이하(자본잠식)는 최우선.
@@ -205,6 +219,7 @@ export type AssessmentInput = {
   portfolioValuation: number; // 전체 포트폴리오 평가액(현금·채권 포함) — 비중 계산 기준
   holdingDays?: number | null; // 첫 매수일부터 오늘까지 — 판정에는 쓰지 않고 보여주기만 한다
   firstBuyDate?: string | null;
+  lastCandlePartial?: boolean; // 장중이라 candles 마지막이 진행 중인 오늘 일봉인지(computeTechMetrics 주석)
 };
 
 export type HoldingAssessment = {
@@ -236,7 +251,7 @@ const up = (s: AssessmentState): AssessmentState => ORDER[Math.min(ORDER.length 
 //   -50% 이하 깊은 손실이면 한 단계 위험쪽으로(손실률만으로 매도 판정은 하지 않되,
 //   회복에 필요한 수익률이 커서 "더 보수적으로 점검"하라는 뜻)
 export function assessHolding(input: AssessmentInput): HoldingAssessment {
-  const tech = computeTechMetrics(input.candles);
+  const tech = computeTechMetrics(input.candles, { lastCandlePartial: input.lastCandlePartial });
   const chart = chartSignal(input.currentPrice, tech);
   const signals: Signal[] = [
     chart,

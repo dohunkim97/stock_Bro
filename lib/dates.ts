@@ -164,7 +164,7 @@ export type MarketStatus = { isOpen: boolean; label: string };
 // 09:00–15:30 KST. Safe to call from the browser (client components):
 // it derives Asia/Seoul time explicitly rather than relying on the
 // viewer's local timezone, which would misreport the session outside Korea.
-export function currentMarketStatus(): MarketStatus {
+function seoulDayAndMinutes(now: Date): { iso: string; minutes: number } {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Seoul",
     year: "numeric",
@@ -173,14 +173,29 @@ export function currentMarketStatus(): MarketStatus {
     hour: "2-digit",
     minute: "2-digit",
     hourCycle: "h23",
-  }).formatToParts(new Date());
+  }).formatToParts(now);
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-  const iso = `${get("year")}-${get("month")}-${get("day")}`;
-  const minutesNow = Number(get("hour")) * 60 + Number(get("minute"));
+  return { iso: `${get("year")}-${get("month")}-${get("day")}`, minutes: Number(get("hour")) * 60 + Number(get("minute")) };
+}
 
+export function currentMarketStatus(): MarketStatus {
+  const { iso, minutes } = seoulDayAndMinutes(new Date());
   const tradingDay = !isMarketClosed(fromISO(iso));
-  const withinHours = minutesNow >= MARKET_OPEN_MINUTES && minutesNow <= MARKET_CLOSE_MINUTES;
+  const withinHours = minutes >= MARKET_OPEN_MINUTES && minutes <= MARKET_CLOSE_MINUTES;
   const isOpen = tradingDay && withinHours;
 
   return { isOpen, label: isOpen ? "KRX 장중" : "장종료" };
+}
+
+// 시세를 "현재가"로 부를지 "종가"로 부를지, 오늘 일봉 거래량이 아직 덜 찬
+// 상태인지를 가르는 데 쓴다 — currentMarketStatus의 isOpen 하나로는 장전과
+// 장 마감을 구분할 수 없다. now를 받는 건 테스트용.
+export type MarketSession = "장전" | "장중" | "장 마감" | "휴장";
+
+export function marketSession(now: Date = new Date()): MarketSession {
+  const { iso, minutes } = seoulDayAndMinutes(now);
+  if (isMarketClosed(fromISO(iso))) return "휴장";
+  if (minutes < MARKET_OPEN_MINUTES) return "장전";
+  if (minutes <= MARKET_CLOSE_MINUTES) return "장중";
+  return "장 마감";
 }

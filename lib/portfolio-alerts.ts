@@ -17,7 +17,8 @@ import { getHoldings } from "@/lib/portfolio";
 import { getAssessmentReport, type AssessmentReport } from "@/lib/holding-assessment-store";
 import { sendTelegramMessage } from "@/lib/telegram-send";
 import { saveAssistantBroadcast } from "@/lib/chat-history";
-import { STATE_ICON, STATE_RANK, type AssessmentState } from "@/lib/holding-assessment";
+import { STATE_RANK, type AssessmentState } from "@/lib/holding-assessment";
+import { decideAlert, formatAlertMessage, formatStockAlert, type AlertKind, type ImprovedHolding } from "@/lib/holding-alert-format";
 import { computeBudgetStatus, computeMonthOverview } from "@/lib/budget-engine";
 import { computeSpendingTrend, getRecurringExpenseCandidates } from "@/lib/spending-insights";
 
@@ -144,41 +145,33 @@ export async function sendWeeklyPortfolioDigest(): Promise<AlertRunSummary> {
   return { usersChecked, messagesSent };
 }
 
-async function alertLinesFor(userId: string, report: AssessmentReport): Promise<string[]> {
-  const date = report.date;
-  const lines: string[] = [];
+type PlannedAlert = { code: string; state: AssessmentState; name: string; kind: AlertKind; text: string };
+
+// 어제(바로 전 기록일)와 비교해 오늘 실제로 나빠진 종목만 고른다. 예전엔
+// lastChange("마지막으로 상태가 달랐던 날")와 비교해서, 한 번 악화되면 같은
+// 등급이 유지돼도 매일 다시 알림이 갔다(2026-10-27 수정, decideAlert 주석).
+async function planAlerts(userId: string, report: AssessmentReport): Promise<{ alerts: PlannedAlert[]; improved: ImprovedHolding[] }> {
+  const logs = await prisma.portfolioAlertLog.findMany({ where: { userId, date: report.date } });
+  const alertedToday = new Map(logs.map((l) => [l.code, l.toState as AssessmentState]));
+
+  const alerts: PlannedAlert[] = [];
+  const improved: ImprovedHolding[] = [];
 
   for (const a of report.assessments) {
-    const hist = report.history[a.code];
-    const change = hist?.lastChange ?? null;
-    const isNewRisky = !change && (hist?.entries.length ?? 0) <= 1 && STATE_RANK[a.state] >= STATE_RANK["축소검토"];
-    const worsened = change !== null && STATE_RANK[a.state] > STATE_RANK[change.fromState as AssessmentState];
-    if (!worsened && !isNewRisky) continue;
+    const prev = report.history[a.code]?.previousDay ?? null;
+    if (prev && STATE_RANK[a.state] < STATE_RANK[prev.state]) improved.push({ name: a.name, from: prev.state, to: a.state });
 
-    const existing = await prisma.portfolioAlertLog.findUnique({
-      where: { userId_code_date: { userId, code: a.code, date } },
+    const kind = decideAlert({ state: a.state, previousState: prev?.state ?? null, alreadyAlertedState: alertedToday.get(a.code) ?? null });
+    if (!kind) continue;
+    alerts.push({
+      code: a.code,
+      state: a.state,
+      name: a.name,
+      kind,
+      text: formatStockAlert({ kind, assessment: a, price: report.prices[a.code], previousState: prev?.state ?? null, changedReasons: prev?.reasons ?? [] }),
     });
-    if (existing && existing.toState === a.state) continue; // 오늘 이미 이 상태로 알림
-
-    await prisma.portfolioAlertLog.upsert({
-      where: { userId_code_date: { userId, code: a.code, date } },
-      create: { userId, code: a.code, date, toState: a.state },
-      update: { toState: a.state },
-    });
-
-    const fromLabel = change ? `${STATE_ICON[change.fromState as AssessmentState]}${change.fromState}` : "신규 진단";
-    // 변화 이력이 있으면(기존 로직) 바뀐 신호만 뽑고, 신규 진단(비교할
-    // 어제 기록이 없는 경우)은 change.reasons가 항상 빈 배열이라 아예
-    // 이유 없이 "신규 진단 → 축소검토"만 나가고 있었다(2026-10-21 사용자
-    // 확인: "왜 축소하라는지 모르겠다, 오류인 거 같다" — 실제로는 오류가
-    // 아니라 이유가 그냥 안 보였던 것. 평가손익과 무관하게 '지금 신호가
-    // 안 좋다'는 뜻인데, 그 신호 자체를 안 보여줬으니 당연히 이상해 보임).
-    // 이 경우 이번 판정의 음수 신호를 직접 이유로 보여준다.
-    const reasons = change ? change.reasons : a.signals.filter((s) => s.score !== null && s.score < 0).map((s) => `${s.label}: ${s.note}`);
-    const reasonNote = reasons.length > 0 ? ` (${reasons.join(", ")})` : "";
-    lines.push(`**${a.name}**: ${fromLabel} → **${STATE_ICON[a.state]}${a.state}**${reasonNote}`);
   }
-  return lines;
+  return { alerts, improved };
 }
 
 export async function sendPortfolioAlerts(): Promise<AlertRunSummary> {
@@ -198,15 +191,30 @@ export async function sendPortfolioAlerts(): Promise<AlertRunSummary> {
 
     try {
       const report = await getAssessmentReport(user.id);
-      const lines = await alertLinesFor(user.id, report);
-      if (lines.length === 0) continue;
+      const { alerts, improved } = await planAlerts(user.id, report);
+      if (alerts.length === 0) continue;
 
-      const message = `⚠️ 둥지 알림 (${report.date})\n${lines.join("\n")}\n\n※ 차트·수급·거래량·재무 신호 기준 판정이라 지금 수익/손실 여부와는 별개야 — 수익 중이어도 신호가 꺾이면 축소검토로 떠.\n\n더 자세히 물어봐도 돼, 아니면 둥지에서 확인해줘.`;
+      const message = formatAlertMessage({
+        asOf: report.asOf,
+        session: report.session,
+        analyzedCount: report.assessments.length,
+        stockBlocks: alerts.map((x) => ({ name: x.name, kind: x.kind, text: x.text })),
+        improved,
+      });
       const sent = await sendTelegramMessage(user.telegramChatId, message);
-      if (sent) {
-        messagesSent++;
-        await saveAssistantBroadcast(user.id, report.date, message);
-      }
+      if (!sent) continue; // 기록을 안 남겨야 다음 정시에 다시 시도한다
+
+      messagesSent++;
+      await Promise.all(
+        alerts.map((x) =>
+          prisma.portfolioAlertLog.upsert({
+            where: { userId_code_date: { userId: user.id, code: x.code, date: report.date } },
+            create: { userId: user.id, code: x.code, date: report.date, toState: x.state },
+            update: { toState: x.state },
+          })
+        )
+      );
+      await saveAssistantBroadcast(user.id, report.date, message);
     } catch (e) {
       console.error("[portfolio-alerts] failed for user", user.id, e);
     }

@@ -9,7 +9,8 @@ import { fetchKisChart } from "@/lib/kis-chart";
 import { fetchInvestorTrend } from "@/lib/kis-investor-trend";
 import { fetchFinancialHistoryByCode } from "@/lib/krx-financials";
 import { getPortfolioSettings, getHoldings } from "@/lib/portfolio";
-import { todayISO, nowSeoulTimeLabel } from "@/lib/dates";
+import { todayISO, nowSeoulTimeLabel, marketSession, type MarketSession } from "@/lib/dates";
+import { buildPriceSnapshot, type PriceSnapshot } from "@/lib/holding-price";
 import {
   aggregateHoldings,
   assessHolding,
@@ -30,16 +31,29 @@ export type StateChange = {
   reasons: string[]; // 두 날짜 사이에 점수가 달라진 신호들
 };
 
+// 바로 전 기록일(보통 전 거래일)과의 비교 — lastChange는 "상태가 마지막으로
+// 달랐던 날"까지 거슬러 올라가서, 월요일에 악화된 뒤 같은 등급이 이어져도
+// 화·수·목요일마다 계속 "악화"로 보였다(알림이 매일 반복된 원인). 알림은
+// 이걸 써서 "어제와 비교해 오늘 실제로 바뀌었는지"만 본다.
+export type PreviousDayComparison = {
+  date: string;
+  state: AssessmentState;
+  reasons: string[]; // 점수가 바뀐 신호, 변화 폭이 큰 순
+};
+
 export type HoldingHistory = {
   code: string;
   entries: { date: string; state: AssessmentState }[]; // 최신순, 오늘 포함
   lastChange: StateChange | null;
+  previousDay: PreviousDayComparison | null;
 };
 
 export type AssessmentReport = {
   date: string;
   asOf: string; // 이 판정이 실제로 계산된 시각(장중 가격이 계속 바뀌므로 date와 별개) — "데이터 기준 시각" 표시용
+  session: MarketSession;
   assessments: HoldingAssessment[]; // 우선순위 정렬 완료
+  prices: Record<string, PriceSnapshot>; // 종목코드별 오늘 등락(전일 종가 대비) — 평단 대비 손익과 별개
   flags: PortfolioFlag[];
   history: Record<string, HoldingHistory>;
   totalValuation: number;
@@ -65,6 +79,21 @@ function parseSignals(raw: string): Signal[] {
   }
 }
 
+// 두 기록 사이 점수가 바뀐 신호 — 변화 폭이 큰 순(알림의 "핵심 원인 1~3개"가
+// 앞에서부터 자르기만 하면 되게).
+function changedSignals(nowRaw: string, prevRaw: string): string[] {
+  const nowSignals = parseSignals(nowRaw);
+  const prevSignals = parseSignals(prevRaw);
+  const changed: { text: string; delta: number }[] = [];
+  for (const n of nowSignals) {
+    const p = prevSignals.find((s) => s.key === n.key);
+    if (p && p.score !== n.score) {
+      changed.push({ text: `${n.label}: ${n.note}`, delta: Math.abs((n.score ?? 0) - (p.score ?? 0)) });
+    }
+  }
+  return changed.sort((a, b) => b.delta - a.delta).map((c) => c.text);
+}
+
 function buildHistory(
   code: string,
   today: string,
@@ -74,27 +103,26 @@ function buildHistory(
   const entries = sorted.slice(0, 8).map((r) => ({ date: r.date, state: r.state as AssessmentState }));
 
   let lastChange: StateChange | null = null;
+  let previousDay: PreviousDayComparison | null = null;
   const current = sorted.find((r) => r.date === today) ?? sorted[0];
   if (current) {
     const older = sorted.filter((r) => r.date < current.date);
     // 상태가 실제로 달라진 가장 최근 시점을 찾는다 — 같은 상태가 며칠 이어졌으면 그 앞의 다른 상태까지 거슬러 올라감
     const prev = older.find((r) => r.state !== current.state);
     if (prev) {
-      const nowSignals = parseSignals(current.signals);
-      const prevSignals = parseSignals(prev.signals);
-      const reasons: string[] = [];
-      for (const n of nowSignals) {
-        const p = prevSignals.find((s) => s.key === n.key);
-        if (p && p.score !== n.score) reasons.push(`${n.label}: ${n.note}`);
-      }
-      lastChange = { fromState: prev.state as AssessmentState, fromDate: prev.date, reasons };
+      lastChange = { fromState: prev.state as AssessmentState, fromDate: prev.date, reasons: changedSignals(current.signals, prev.signals) };
+    }
+    const yesterday = older[0];
+    if (yesterday) {
+      previousDay = { date: yesterday.date, state: yesterday.state as AssessmentState, reasons: changedSignals(current.signals, yesterday.signals) };
     }
   }
-  return { code, entries, lastChange };
+  return { code, entries, lastChange, previousDay };
 }
 
 async function build(userId: string): Promise<AssessmentReport> {
   const date = todayISO();
+  const session = marketSession();
   const [settings, rows] = await Promise.all([getPortfolioSettings(userId), getHoldings(userId)]);
   const aggregated = aggregateHoldings(rows);
 
@@ -133,9 +161,16 @@ async function build(userId: string): Promise<AssessmentReport> {
         portfolioValuation: totalValuation,
         firstBuyDate: h.firstBuyDate,
         holdingDays: h.firstBuyDate ? daysBetween(h.firstBuyDate, date) : null,
+        lastCandlePartial: session === "장중" && inp.candles.length > 0 && inp.candles[inp.candles.length - 1].date === date,
       })
     )
   );
+
+  const prices: Record<string, PriceSnapshot> = {};
+  for (const { h, inp } of priced) {
+    const snap = buildPriceSnapshot(inp.quote, inp.candles, session);
+    if (snap) prices[h.code] = snap;
+  }
 
   // 하루 한 행 — 오늘 다시 열면 덮어쓴다(가격이 장중에 바뀌므로 마지막 계산이 그날의 기록)
   await Promise.all(
@@ -198,7 +233,7 @@ async function build(userId: string): Promise<AssessmentReport> {
         })
       : [];
 
-  return { date, asOf: nowSeoulTimeLabel(), assessments, flags, history, totalValuation };
+  return { date, asOf: nowSeoulTimeLabel(), session, assessments, prices, flags, history, totalValuation };
 }
 
 // 둥지 페이지가 열릴 때 진단 카드와 AI 어드바이저 카드가 동시에 이 함수를 부르는데,
