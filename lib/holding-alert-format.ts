@@ -67,9 +67,17 @@ export function pickReasons(a: HoldingAssessment, changed: string[]): string[] {
           .filter((s) => s.score !== null && s.score < 0)
           .sort((x, y) => (x.score as number) - (y.score as number))
           .map((s) => `${s.label}: ${s.note}`);
-  const out = reasons.slice(0, 3);
-  if (a.stateNote.includes("보수적으로 조정")) out.push("평가손실 -50% 이하라 한 단계 보수적으로 조정됨");
-  return out;
+  return reasons.slice(0, 3);
+}
+
+// 깊은 손실 경고 — 등급에는 반영하지 않고(lib/holding-assessment.ts stateFromSignals
+// 주석) 따로 한 줄로 보여준다. -50%부터는 원금 회복에 +100% 이상이 필요해서
+// 같은 등급이라도 대응 여지가 다르다는 걸 알려주는 용도.
+export const DEEP_LOSS_PCT = -50;
+
+export function deepLossLine(a: HoldingAssessment): string | null {
+  if (a.changePct === null || a.changePct > DEEP_LOSS_PCT || a.recoveryNeededPct === null) return null;
+  return `⚠️ 손실 ${signedPct(a.changePct, 1)} — 원금 회복까지 +${a.recoveryNeededPct.toFixed(1)}% 필요(등급과 별개)`;
 }
 
 export function formatStockAlert(p: {
@@ -91,6 +99,8 @@ export function formatStockAlert(p: {
   const reasons = pickReasons(a, p.changedReasons);
   const lines = [head, formatPriceLine(a, p.price)];
   lines.push(reasons.length > 0 ? `원인: ${reasons.join(" / ")}` : `원인: ${a.stateNote}`);
+  const deep = deepLossLine(a);
+  if (deep) lines.push(deep);
   return lines.join("\n");
 }
 

@@ -3,8 +3,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { dailyChange, buildPriceSnapshot } from "@/lib/holding-price";
-import { decideAlert, formatPriceLine, formatStockAlert } from "@/lib/holding-alert-format";
-import { assessHolding, computeTechMetrics, type Candle } from "@/lib/holding-assessment";
+import { decideAlert, deepLossLine, formatPriceLine, formatStockAlert } from "@/lib/holding-alert-format";
+import { assessHolding, computeTechMetrics, stateFromSignals, type Candle } from "@/lib/holding-assessment";
 import { marketSession } from "@/lib/dates";
 import { splitForTelegram } from "@/lib/telegram-send";
 import type { KisQuote } from "@/lib/kis-quote";
@@ -113,6 +113,29 @@ test("종목 알림은 등급 변화·가격·원인 3줄이고 원인은 최대
   assert.equal(lines.length, 3);
   assert.match(lines[0], /🟡관찰 → \*\*/);
   assert.equal(lines[2].split(" / ").length, 3);
+});
+
+test("손익률이 마이너스라는 이유만으로 등급을 올리지 않는다(-50% 규칙 삭제)", () => {
+  const base = { name: "t", code: "1", quantity: 10, currentPrice: 10_000, candles: flatCandles(30), flows: [{ foreign: -1, institution: 1 }], financials: [], portfolioValuation: 100_000 };
+  const deepLoss = assessHolding({ ...base, avgBuyPrice: 30_000 }); // -66.7%
+  const profit = assessHolding({ ...base, avgBuyPrice: 8_000 }); // +25%
+  assert.equal(deepLoss.state, profit.state);
+  assert.equal(deepLoss.stateNote, profit.stateNote);
+});
+
+test("깊은 손실은 등급 대신 별도 경고 줄로 보여준다", () => {
+  const base = { name: "t", code: "1", quantity: 10, currentPrice: 10_000, candles: flatCandles(30), flows: [], financials: [], portfolioValuation: 100_000 };
+  const deep = assessHolding({ ...base, avgBuyPrice: 40_000 }); // -75%
+  assert.match(deepLossLine(deep)!, /손실 -75\.0% — 원금 회복까지 \+300\.0% 필요\(등급과 별개\)/);
+  assert.equal(deepLossLine(assessHolding({ ...base, avgBuyPrice: 16_000 })), null); // -37.5%
+  const text = formatStockAlert({ kind: "worsened", assessment: deep, price: buildPriceSnapshot(quote(), [], "장중")!, previousState: "관찰", changedReasons: ["차트: x"] });
+  assert.equal(text.split("\n").length, 4);
+});
+
+test("과거 기록 등급은 저장된 신호 점수로 지금 규칙에 맞춰 다시 매긴다", () => {
+  // 예전 규칙으로 '정밀점검'(축소검토 + 손실 가중)이 저장된 날의 신호 — 지금 규칙으론 축소검토
+  assert.equal(stateFromSignals([{ score: -2 }, { score: -1 }, { score: 0 }, { score: 1 }]).state, "축소검토");
+  assert.equal(stateFromSignals([{ score: -2 }, { score: null }]).state, "관찰"); // 신호 2개 미만
 });
 
 test("시장 상태: 장전/장중/장 마감/휴장", () => {

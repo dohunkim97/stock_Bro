@@ -18,13 +18,23 @@ export type InvestorTrendRow = {
   individual: number; // 개인 순매수 거래대금 (원)
   foreign: number; // 외국인 순매수 거래대금 (원)
   institution: number; // 기관계 순매수 거래대금 (원)
+  // 순매수 수량(주) — 거래대금은 백만원 단위로 반올림돼 와서 소형주는 "3백만원"처럼
+  // 거칠게 보이므로, 정확한 값이 필요한 곳(둥지 알림 수급 상세)은 수량을 같이 쓴다.
+  individualQty: number;
+  foreignQty: number;
+  institutionQty: number;
 };
 
 function toISO(yyyymmdd: string): string {
   return yyyymmdd.length === 8 ? `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}` : yyyymmdd;
 }
 
-export async function fetchInvestorTrend(code: string, count = 10): Promise<InvestorTrendRow[]> {
+// opts.skipUnreported: 장중엔 오늘 행이 오긴 오는데 값이 전부 빈 문자열이다(장
+// 마감 후 집계 — 2026-10-27 11:07 실제 응답으로 확인). 그대로 두면 Number("")=0이라
+// "오늘 순매수 0원"처럼 읽혀서, 최근 5거래일 합계가 실제로는 4일치가 된다. 둥지
+// 진단·알림은 이 옵션으로 아직 집계 안 된 행을 뺀다. 다른 화면(종목 상세 수급표
+// 등)은 동작을 바꾸지 않으려고 기본값은 기존 그대로(false).
+export async function fetchInvestorTrend(code: string, count = 10, opts: { skipUnreported?: boolean } = {}): Promise<InvestorTrendRow[]> {
   const appKey = process.env.KIS_APP_KEY;
   const appSecret = process.env.KIS_APP_SECRET;
   if (!appKey || !appSecret) return [];
@@ -54,11 +64,15 @@ export async function fetchInvestorTrend(code: string, count = 10): Promise<Inve
     const rows: Record<string, unknown>[] = Array.isArray(json.output) ? json.output : [];
 
     return rows
+      .filter((r) => !opts.skipUnreported || String(r.frgn_ntby_tr_pbmn ?? "").trim() !== "")
       .map((r) => ({
         date: toISO(String(r.stck_bsop_date ?? "")),
         individual: (Number(r.prsn_ntby_tr_pbmn) || 0) * TR_PBMN_UNIT,
         foreign: (Number(r.frgn_ntby_tr_pbmn) || 0) * TR_PBMN_UNIT,
         institution: (Number(r.orgn_ntby_tr_pbmn) || 0) * TR_PBMN_UNIT,
+        individualQty: Number(r.prsn_ntby_qty) || 0,
+        foreignQty: Number(r.frgn_ntby_qty) || 0,
+        institutionQty: Number(r.orgn_ntby_qty) || 0,
       }))
       .filter((r) => r.date.length === 10)
       .slice(0, count);

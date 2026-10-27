@@ -242,14 +242,26 @@ export type HoldingAssessment = {
   stateNote: string; // 왜 이 상태인지 한 줄
 };
 
-const ORDER: AssessmentState[] = ["유지", "관찰", "축소검토", "정밀점검"];
-const up = (s: AssessmentState): AssessmentState => ORDER[Math.min(ORDER.length - 1, ORDER.indexOf(s) + 1)];
-
 // 상태 판정 규칙(초안):
 //   신호 합계(차트·수급·거래량·재무, 각 -2~+2) → ≥2 유지 / 0~1 관찰 / -1~-3 축소검토 / ≤-4 정밀점검
 //   신호가 2개 미만이면 판단 근거가 부족해 관찰
-//   -50% 이하 깊은 손실이면 한 단계 위험쪽으로(손실률만으로 매도 판정은 하지 않되,
-//   회복에 필요한 수익률이 커서 "더 보수적으로 점검"하라는 뜻)
+// 등급은 신호 점수만으로 정한다 — 예전엔 "평가손실 -50% 이하면 한 단계 위험쪽으로"
+// 규칙이 있었는데, 같은 차트·수급이라도 내가 언제 샀느냐에 따라 등급이 달라져
+// "손익률이 마이너스라는 이유만으로 위험등급을 올리지 않는다"(사용자 스펙
+// 2026-10-27)와 충돌해서 뺐다(사용자 결정). 깊은 손실은 등급 대신 알림에 별도
+// 경고 줄(lib/holding-alert-format.ts deepLossLine)로 보여준다.
+// 저장된 신호(PortfolioAssessment.signals)만으로 다시 계산할 수 있어야 해서 따로
+// 뺐다 — 규칙이 바뀌어도 과거 기록을 같은 규칙으로 다시 매겨 비교할 수 있게.
+export function stateFromSignals(signals: Pick<Signal, "score">[]): { state: AssessmentState; stateNote: string; totalScore: number } {
+  const scored = signals.filter((s) => s.score !== null);
+  const totalScore = scored.reduce((sum, s) => sum + (s.score as number), 0);
+  if (scored.length < 2) return { state: "관찰", stateNote: "판단에 쓸 수 있는 신호가 2개 미만이라 관찰로 둬요", totalScore };
+  if (totalScore >= 2) return { state: "유지", stateNote: `신호 합계 +${totalScore}`, totalScore };
+  if (totalScore >= 0) return { state: "관찰", stateNote: `신호 합계 +${totalScore} — 뚜렷한 방향 없음`, totalScore };
+  if (totalScore >= -3) return { state: "축소검토", stateNote: `신호 합계 ${totalScore} — 약세 신호 우세`, totalScore };
+  return { state: "정밀점검", stateNote: `신호 합계 ${totalScore} — 약세 신호가 겹침`, totalScore };
+}
+
 export function assessHolding(input: AssessmentInput): HoldingAssessment {
   const tech = computeTechMetrics(input.candles, { lastCandlePartial: input.lastCandlePartial });
   const chart = chartSignal(input.currentPrice, tech);
@@ -260,33 +272,8 @@ export function assessHolding(input: AssessmentInput): HoldingAssessment {
     financialSignal(input.financials),
   ];
 
-  const scored = signals.filter((s) => s.score !== null);
-  const totalScore = scored.reduce((sum, s) => sum + (s.score as number), 0);
+  const { state, stateNote, totalScore } = stateFromSignals(signals);
   const changePct = input.avgBuyPrice > 0 ? ((input.currentPrice - input.avgBuyPrice) / input.avgBuyPrice) * 100 : null;
-
-  let state: AssessmentState;
-  let stateNote: string;
-  if (scored.length < 2) {
-    state = "관찰";
-    stateNote = "판단에 쓸 수 있는 신호가 2개 미만이라 관찰로 둬요";
-  } else if (totalScore >= 2) {
-    state = "유지";
-    stateNote = `신호 합계 ${totalScore >= 0 ? "+" : ""}${totalScore}`;
-  } else if (totalScore >= 0) {
-    state = "관찰";
-    stateNote = `신호 합계 ${totalScore >= 0 ? "+" : ""}${totalScore} — 뚜렷한 방향 없음`;
-  } else if (totalScore >= -3) {
-    state = "축소검토";
-    stateNote = `신호 합계 ${totalScore} — 약세 신호 우세`;
-  } else {
-    state = "정밀점검";
-    stateNote = `신호 합계 ${totalScore} — 약세 신호가 겹침`;
-  }
-
-  if (changePct !== null && changePct <= -50 && state !== "정밀점검") {
-    state = up(state);
-    stateNote += ` · 손실 ${fmtPct(changePct)}로 깊어 한 단계 보수적으로 조정`;
-  }
 
   const valuation = input.currentPrice * input.quantity;
   return {

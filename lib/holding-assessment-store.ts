@@ -9,14 +9,16 @@ import { fetchKisChart } from "@/lib/kis-chart";
 import { fetchInvestorTrend } from "@/lib/kis-investor-trend";
 import { fetchFinancialHistoryByCode } from "@/lib/krx-financials";
 import { getPortfolioSettings, getHoldings } from "@/lib/portfolio";
-import { todayISO, nowSeoulTimeLabel, marketSession, type MarketSession } from "@/lib/dates";
+import { todayISO, nowSeoulTimeLabel, marketSession, kstDateParts, type MarketSession } from "@/lib/dates";
 import { buildPriceSnapshot, type PriceSnapshot } from "@/lib/holding-price";
+import { computeChartDetail, computeFlowDetail, computeVolumeDetail, type HoldingDetail } from "@/lib/holding-detail";
 import {
   aggregateHoldings,
   assessHolding,
   daysBetween,
   portfolioFlags,
   sortByPriority,
+  stateFromSignals,
   type AssessmentState,
   type HoldingAssessment,
   type PortfolioFlag,
@@ -54,6 +56,7 @@ export type AssessmentReport = {
   session: MarketSession;
   assessments: HoldingAssessment[]; // 우선순위 정렬 완료
   prices: Record<string, PriceSnapshot>; // 종목코드별 오늘 등락(전일 종가 대비) — 평단 대비 손익과 별개
+  details: Record<string, HoldingDetail>; // 종목코드별 차트·거래량·수급 상세(보여주기용, 등급엔 안 씀)
   flags: PortfolioFlag[];
   history: Record<string, HoldingHistory>;
   totalValuation: number;
@@ -64,7 +67,10 @@ async function fetchInputs(code: string) {
   const [quote, candles, flows, financials] = await Promise.all([
     fetchKisQuote(code),
     fetchKisChart(code, "D"),
-    fetchInvestorTrend(code, 5),
+    // 30행(KIS가 한 번에 주는 최대치, 같은 1회 호출) — 상세의 20거래일 누적용.
+    // 등급의 수급 신호는 여전히 앞의 5거래일만 본다(flowSignal의 slice(0, 5)).
+    // skipUnreported: 장중에 빈 값으로 오는 오늘 행을 "순매수 0"으로 세지 않게.
+    fetchInvestorTrend(code, 30, { skipUnreported: true }),
     fetchFinancialHistoryByCode(code, [nowYear - 3, nowYear - 2, nowYear - 1]),
   ]);
   return { quote, candles, flows, financials };
@@ -94,11 +100,22 @@ function changedSignals(nowRaw: string, prevRaw: string): string[] {
   return changed.sort((a, b) => b.delta - a.delta).map((c) => c.text);
 }
 
+// 과거 기록의 등급을 "지금 규칙"으로 다시 매긴다 — 판정 규칙이 바뀌면(2026-10-27
+// -50% 손실 가중 규칙 삭제) 저장된 state는 옛 규칙 결과라, 그대로 비교하면 시장은
+// 그대로인데 "위험 감소"로 보이는 가짜 변화가 생긴다. 신호 점수는 그대로 저장돼
+// 있어서 같은 규칙으로 다시 계산할 수 있다. DB의 기록 자체는 고치지 않는다.
+// 신호를 못 읽는 옛 행이면 저장된 state를 그대로 쓴다.
+function restate(r: { state: string; signals: string }): AssessmentState {
+  const signals = parseSignals(r.signals);
+  return signals.length > 0 ? stateFromSignals(signals).state : (r.state as AssessmentState);
+}
+
 function buildHistory(
   code: string,
   today: string,
-  rows: { date: string; state: string; signals: string }[]
+  rawRows: { date: string; state: string; signals: string }[]
 ): HoldingHistory {
+  const rows = rawRows.map((r) => ({ ...r, state: restate(r) }));
   const sorted = [...rows].sort((a, b) => b.date.localeCompare(a.date));
   const entries = sorted.slice(0, 8).map((r) => ({ date: r.date, state: r.state as AssessmentState }));
 
@@ -167,9 +184,18 @@ async function build(userId: string): Promise<AssessmentReport> {
   );
 
   const prices: Record<string, PriceSnapshot> = {};
-  for (const { h, inp } of priced) {
+  const details: Record<string, HoldingDetail> = {};
+  const { hour, minute } = kstDateParts(new Date());
+  const minutesSinceOpen = session === "장중" ? hour * 60 + minute - 9 * 60 : null;
+  for (const { h, inp, currentPrice } of priced) {
     const snap = buildPriceSnapshot(inp.quote, inp.candles, session);
     if (snap) prices[h.code] = snap;
+    const lastCandlePartial = session === "장중" && inp.candles.length > 0 && inp.candles[inp.candles.length - 1].date === date;
+    details[h.code] = {
+      chart: computeChartDetail(inp.candles, currentPrice),
+      volume: computeVolumeDetail(inp.candles, { lastCandlePartial, quote: inp.quote, minutesSinceOpen }),
+      flow: computeFlowDetail(inp.flows, inp.candles),
+    };
   }
 
   // 하루 한 행 — 오늘 다시 열면 덮어쓴다(가격이 장중에 바뀌므로 마지막 계산이 그날의 기록)
@@ -233,7 +259,7 @@ async function build(userId: string): Promise<AssessmentReport> {
         })
       : [];
 
-  return { date, asOf: nowSeoulTimeLabel(), session, assessments, prices, flags, history, totalValuation };
+  return { date, asOf: nowSeoulTimeLabel(), session, assessments, prices, details, flags, history, totalValuation };
 }
 
 // 둥지 페이지가 열릴 때 진단 카드와 AI 어드바이저 카드가 동시에 이 함수를 부르는데,

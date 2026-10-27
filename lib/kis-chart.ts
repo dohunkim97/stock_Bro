@@ -12,6 +12,7 @@ export type ChartCandle = {
   low: number;
   close: number;
   volume: number;
+  tradingValue?: number; // 거래대금(원, acml_tr_pbmn) — 일봉 API만 채운다. 원 단위인 건 거래대금÷거래량≈종가로 확인(2026-10-27)
 };
 
 function toYYYYMMDD(d: Date): string {
@@ -68,6 +69,7 @@ async function fetchPage(
         low: Number(r.stck_lwpr) || 0,
         close: Number(r.stck_clpr) || 0,
         volume: Number(r.acml_vol) || 0,
+        tradingValue: Number(r.acml_tr_pbmn) || 0,
       }))
       .filter((c) => c.date.length === 10 && c.close > 0)
       .reverse();
