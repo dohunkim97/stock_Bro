@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { href: "/market", label: "Market" },
   { href: "/stock", label: "종목 상세" },
   { href: "/bro", label: "Golgoo" },
+  { href: "/golgoo2", label: "골구2" },
   { href: "/nest", label: "둥지" },
 ];
 
