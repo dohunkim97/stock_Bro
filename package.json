@@ -7,6 +7,7 @@
     "build": "prisma migrate deploy && next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "tsx --test \"tests/*.test.ts\"",
     "seed": "tsx prisma/seed.ts",
     "watch:company-analysis": "tsx scripts/watch-company-analysis.ts",
     "export-today-picks": "tsx scripts/export-today-picks.ts",

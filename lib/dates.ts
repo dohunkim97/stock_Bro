@@ -70,6 +70,16 @@ function fromISO(iso: string): Date {
   return new Date(y, m - 1, d);
 }
 
+// 순수 달력일 오프셋 — prevBusinessDay/nextBusinessDay와 달리 주말·휴장일을
+// 건너뛰지 않는다("어제"는 항상 어제지, 어제가 토요일이면 금요일로 당겨질
+// 이유가 없다 — 소비는 주말에도 일어난다). lib/expense-parser.ts가 "어제
+// 저녁 18000원" 같은 상대 날짜를 풀 때 쓴다.
+export function offsetCalendarDays(iso: string, days: number): string {
+  const d = fromISO(iso);
+  d.setDate(d.getDate() + days);
+  return toISO(d);
+}
+
 export function formatDateLabel(iso: string): string {
   const d = fromISO(iso);
   const y = d.getFullYear();
@@ -154,7 +164,7 @@ export type MarketStatus = { isOpen: boolean; label: string };
 // 09:00–15:30 KST. Safe to call from the browser (client components):
 // it derives Asia/Seoul time explicitly rather than relying on the
 // viewer's local timezone, which would misreport the session outside Korea.
-export function currentMarketStatus(): MarketStatus {
+function seoulDayAndMinutes(now: Date): { iso: string; minutes: number } {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Seoul",
     year: "numeric",
@@ -163,14 +173,29 @@ export function currentMarketStatus(): MarketStatus {
     hour: "2-digit",
     minute: "2-digit",
     hourCycle: "h23",
-  }).formatToParts(new Date());
+  }).formatToParts(now);
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-  const iso = `${get("year")}-${get("month")}-${get("day")}`;
-  const minutesNow = Number(get("hour")) * 60 + Number(get("minute"));
+  return { iso: `${get("year")}-${get("month")}-${get("day")}`, minutes: Number(get("hour")) * 60 + Number(get("minute")) };
+}
 
+export function currentMarketStatus(): MarketStatus {
+  const { iso, minutes } = seoulDayAndMinutes(new Date());
   const tradingDay = !isMarketClosed(fromISO(iso));
-  const withinHours = minutesNow >= MARKET_OPEN_MINUTES && minutesNow <= MARKET_CLOSE_MINUTES;
+  const withinHours = minutes >= MARKET_OPEN_MINUTES && minutes <= MARKET_CLOSE_MINUTES;
   const isOpen = tradingDay && withinHours;
 
   return { isOpen, label: isOpen ? "KRX 장중" : "장종료" };
+}
+
+// 시세를 "현재가"로 부를지 "종가"로 부를지, 오늘 일봉 거래량이 아직 덜 찬
+// 상태인지를 가르는 데 쓴다 — currentMarketStatus의 isOpen 하나로는 장전과
+// 장 마감을 구분할 수 없다. now를 받는 건 테스트용.
+export type MarketSession = "장전" | "장중" | "장 마감" | "휴장";
+
+export function marketSession(now: Date = new Date()): MarketSession {
+  const { iso, minutes } = seoulDayAndMinutes(now);
+  if (isMarketClosed(fromISO(iso))) return "휴장";
+  if (minutes < MARKET_OPEN_MINUTES) return "장전";
+  if (minutes <= MARKET_CLOSE_MINUTES) return "장중";
+  return "장 마감";
 }

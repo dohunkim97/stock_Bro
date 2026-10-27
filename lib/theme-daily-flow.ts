@@ -24,7 +24,12 @@ async function resolveMissingCodes(): Promise<void> {
   const rows = await prisma.stockTheme.findMany({ where: { code: null } });
   for (const r of rows) {
     const stock = await resolveStock(r.name);
-    if (stock?.code) {
+    // resolveStock은 정확히 일치하는 이름이 없으면 contains로 느슨하게
+    // 대체한다 — "LG"로 찾다가 "LG에너지솔루션"이 걸려 완전히 다른 회사
+    // 코드가 영구 저장된 사고가 실제로 있었다(2026-10-21, lib/theme-
+    // search.ts 작업 중 발견). 여기 쓰는 값은 DB에 그대로 박히니(다음
+    // 조회 때마다 다시 틀리게 나옴) 이름이 정확히 같을 때만 받아들인다.
+    if (stock?.code && stock.name === r.name) {
       await prisma.stockTheme.update({ where: { name: r.name }, data: { code: stock.code } }).catch(() => {});
     }
   }

@@ -543,11 +543,45 @@ model User {
   financialSnapshots FinancialSnapshot[]
   portfolioAssessments PortfolioAssessment[]
   portfolioAlertLogs   PortfolioAlertLog[]
+  holdingAlertRecords  HoldingAlertRecord[]
+  holdingEventLogs     HoldingEventLog[]
   chatMessages         ChatMessage[]
   holdingTheses        HoldingThesis[]
   learningProgress      LearningProgress?
   learningJournalEntries LearningJournalEntry[]
   tradeJournalEntries  TradeJournalEntry[]
+  categoryBudgets      CategoryBudget[]
+  budgetAlertLogs      BudgetAlertLog[]
+}
+
+// 카테고리별 월 예산 한도 — 채팅으로 설정("식비 예산 50만원으로 해줘",
+// lib/golgoo-chat.ts의 set_category_budget 도구). 사용자 요청(2026-10-21)
+// 3번 "자동 예산 감시 엔진": 지출 기록 직후 이 한도 대비 사용률을 계산해서
+// (lib/budget-engine.ts) 넘으면 LLM 없이 미리 정한 문구로 경고한다.
+model CategoryBudget {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category     String // EXPENSE_CATEGORIES 중 하나
+  monthlyLimit Float
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, category])
+}
+
+// 예산 경고 발송 기록 — 같은 달, 같은 카테고리, 같은 단계(80%/100%)는 한
+// 번만 보내게 막는 쿨다운/상태 관리(lib/portfolio-alertLog와 같은 패턴).
+model BudgetAlertLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category  String
+  level     Int // 80 | 100
+  month     String // YYYY-MM
+  createdAt DateTime @default(now())
+
+  @@unique([userId, category, level, month])
 }
 
 // 매매일지 — 채팅으로 "매수했어"/"매도했어"라고 보고하면 한 행씩 쌓인다.
@@ -663,6 +697,73 @@ model PortfolioAlertLog {
   @@unique([userId, code, date])
 }
 
+// 둥지 텔레그램 알림 1건(종목 하나)의 "보낸 그 시점" 스냅샷 — 사용자 스펙
+// (2026-10-27) 12번 알림 기록. 텔레그램 상세 버튼(📊💰📰⚠️📈)은 이 기록으로만
+// 그린다: 버튼 누를 때 다시 조회하면 알림 문구와 상세 숫자가 어긋날 수 있고,
+// 웹훅에서 KIS·DART를 다시 부르면 느려서. 버튼 콜백은 chat id → User를 다시
+// 찾고 그 User의 기록인지 확인한 뒤에만 보여준다(callback_data는 믿지 않음).
+// PortfolioAlertLog(하루 중복 방지)는 그대로 두고 별도로 쌓는다.
+// *Snapshot/newsEvidence/triggerReasons/actionScenarios/dataQuality는 JSON 문자열
+// (PortfolioAssessment.signals와 같은 방식).
+model HoldingAlertRecord {
+  id                  String   @id @default(cuid())
+  userId              String
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stockCode           String
+  stockName           String
+  alertType           String // worsened | new-risky
+  generatedAt         DateTime @default(now())
+  marketDataAsOf      String? // 시세 기준 시각(ISO). 실시간 시세 실패 시 일봉 날짜
+  portfolioDataAsOf   String // 둥지 보유 데이터(평단·수량)를 읽은 시각(ISO)
+  previousSeverity    String?
+  currentSeverity     String
+  previousRiskScore   Int? // 신호 합계(등급 판정 내부값)
+  currentRiskScore    Int
+  currentPrice        Float
+  previousClose       Float?
+  dailyChangePct      Float?
+  avgBuyPrice         Float
+  holdingQuantity     Float
+  unrealizedReturnPct Float?
+  portfolioWeight     Float? // 전체 자산(현금·채권 포함) 대비 %
+  technicalSnapshot   String
+  volumeSnapshot      String
+  flowSnapshot        String
+  financialSnapshot   String
+  sectorSnapshot      String
+  newsEvidence        String
+  triggerReasons      String
+  actionScenarios     String
+  portfolioSnapshot   String // 📈 전체 자산 영향 버튼용
+  dataQuality         String
+  analysisVersion     String
+  deliveryStatus      String   @default("pending") // pending | sent | failed
+
+  @@index([userId, generatedAt])
+}
+
+// 둥지 알림의 사건(거래정지·공시·20일 최저가 이탈·수급 변화 등, lib/holding-events.ts)
+// 중복 방지·해소 기록 + 등급 히스테리시스 대기("grade-pending:" 키). 같은 사건은
+// eventKey 하나로 한 번만 보내고, 상태형 사건은 조건이 풀리면 resolvedAt을 찍어 다시
+// 생겼을 때만 또 보낸다. sentAt이 비어 있으면 아직 못 보낸 것(보내기 실패·대기 중).
+model HoldingEventLog {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code        String
+  eventType   String
+  eventKey    String
+  severity    String // 긴급 | 주의 | 참고 (grade-pending은 대상 등급)
+  title       String
+  firstSeenAt DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  sentAt      DateTime?
+  resolvedAt  DateTime?
+
+  @@unique([userId, eventKey])
+  @@index([userId, code])
+}
+
 // 둥지 "AI 골구 종목 진단"(lib/holding-assessment.ts)의 하루 한 건 판정 기록 —
 // 종목 하나당 하루 한 행(같은 날 다시 계산하면 덮어씀). 나중에 "지난달 골구가 뭐라고
 // 했고 실제로 어땠나"를 보여주려면 판단과 그 근거(신호별 점수)를 그때그때 남겨둬야
@@ -688,4 +789,22 @@ model PortfolioAssessment {
 
   @@unique([userId, code, date])
   @@index([userId, date])
+}
+
+// 골구 AI(Claude) 호출 1건당 토큰 사용량 로그 — 사용자 요청(2026-10-21) 6번
+// "AI 호출별 토큰·비용·실행 이유를 로그로 남김". User로의 관계는 일부러
+// 안 건다(비로그인 웹 채팅도 호출될 수 있어 userId가 없을 수 있고, 이건
+// 순수 집계/감사 로그라 User가 지워져도 기록은 남아있는 게 맞다).
+model AiCallLog {
+  id               String   @id @default(cuid())
+  userId           String? // 비로그인 웹 채팅이면 null
+  channel          String // "web" | "telegram"
+  trigger          String // 이 호출을 일으킨 사용자 메시지 앞부분(실행 이유 추적용)
+  inputTokens      Int
+  outputTokens     Int
+  cacheReadTokens  Int      @default(0)
+  cacheWriteTokens Int      @default(0)
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
 }

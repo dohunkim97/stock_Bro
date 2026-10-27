@@ -37,9 +37,20 @@ function domainOf(url: string): string {
 // 하나와 가장 비슷한 기사 1건을 찾을 때, 예: KIS 헤드라인 텍스트로 그 기사
 // 실제 링크를 역으로 찾는 lib/kis-ranking.ts의 resolveIssueUrl).
 export async function fetchNews(query: string, display = 8, sort: "date" | "sim" = "date"): Promise<NewsItem[]> {
+  return (await fetchNewsResult(query, display, sort)).items;
+}
+
+// fetchNews와 같은 호출인데 "뉴스가 없음"과 "조회 실패"를 구분해서 돌려준다 —
+// 둥지 알림이 실패를 "관련 뉴스 없음"으로 단정하지 않게(사용자 스펙 2026-10-27
+// 6번). 기존 fetchNews 호출부는 그대로 빈 배열만 받는다.
+export async function fetchNewsResult(
+  query: string,
+  display = 8,
+  sort: "date" | "sim" = "date"
+): Promise<{ ok: boolean; items: NewsItem[] }> {
   const clientId = process.env.NAVER_CLIENT_ID;
   const clientSecret = process.env.NAVER_CLIENT_SECRET;
-  if (!clientId || !clientSecret || !query.trim()) return [];
+  if (!clientId || !clientSecret || !query.trim()) return { ok: false, items: [] };
 
   const url = new URL(NEWS_URL);
   url.searchParams.set("query", query);
@@ -54,11 +65,12 @@ export async function fetchNews(query: string, display = 8, sort: "date" | "sim"
       },
       signal: AbortSignal.timeout(PER_REQUEST_TIMEOUT_MS),
     });
-    if (!res.ok) return [];
+    if (!res.ok) return { ok: false, items: [] };
     const json = await res.json();
-    const items = Array.isArray(json?.items) ? json.items : [];
+    if (!Array.isArray(json?.items)) return { ok: false, items: [] };
+    const items: Record<string, unknown>[] = json.items;
 
-    return items.map((it: Record<string, unknown>) => {
+    const mapped = items.map((it) => {
       const link = String(it.originallink || it.link || "");
       const parsedDate = new Date(String(it.pubDate ?? ""));
       return {
@@ -69,7 +81,8 @@ export async function fetchNews(query: string, display = 8, sort: "date" | "sim"
         source: domainOf(link),
       };
     });
+    return { ok: true, items: mapped };
   } catch {
-    return [];
+    return { ok: false, items: [] };
   }
 }

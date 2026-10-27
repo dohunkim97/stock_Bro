@@ -18,6 +18,7 @@ import {
 } from "lightweight-charts";
 import { useGolgoo } from "./golgoo-context";
 import type { SupportResistanceLevel } from "@/lib/technical-signals";
+import { computeBollinger, percentBZone, type BollingerPoint } from "@/lib/bollinger";
 
 type ChartPeriod = "D" | "W" | "M";
 const PERIOD_LABEL: Record<ChartPeriod, string> = { D: "일봉", W: "주봉", M: "월봉" };
@@ -30,6 +31,7 @@ type HoverInfo = {
   prevClose: number | null;
   volume: number;
   mas: Record<number, number | undefined>;
+  bollinger?: BollingerPoint;
 };
 
 type HoverState = { info: HoverInfo; x: number; y: number };
@@ -51,6 +53,12 @@ type MaConfig = { period: number; color: string };
 const MA_COLOR_PALETTE = ["#f59e0b", "#22c55e", "#9ca3af", "#a78bfa", "#f472b6", "#22d3ee", "#fb7185", "#84cc16"];
 const DEFAULT_MA_PERIODS = [5, 60, 200];
 const MA_STORAGE_KEY = "golgoo-chart-ma-periods";
+
+// 볼린저밴드 on/off + 설정(기간·표준편차 배수) — 사용자가 실제 쓰는 기본값
+// 20/2(사용자 요청 "주도주 눌림목 전략" Phase 1). 이평선과 같은 패턴으로
+// 브라우저에 저장(계정/서버 저장 아님, 이 기기 이 브라우저 한정).
+const BOLLINGER_STORAGE_KEY = "golgoo-chart-bollinger";
+const DEFAULT_BOLLINGER = { on: false, period: 20, stdDev: 2 };
 
 function defaultMaList(): MaConfig[] {
   return DEFAULT_MA_PERIODS.map((period, i) => ({ period, color: MA_COLOR_PALETTE[i % MA_COLOR_PALETTE.length] }));
@@ -297,6 +305,57 @@ export function PriceChart({ code }: { code: string }) {
     persistMaList(next);
   }
 
+  // 볼린저밴드 설정 — localStorage에서 복원, 바뀔 때마다 저장. 이평선
+  // 설정과 똑같은 패턴.
+  const [bollingerOn, setBollingerOn] = useState(DEFAULT_BOLLINGER.on);
+  const [bollingerPeriod, setBollingerPeriod] = useState(DEFAULT_BOLLINGER.period);
+  const [bollingerStdDev, setBollingerStdDev] = useState(DEFAULT_BOLLINGER.stdDev);
+  const [bollingerEditing, setBollingerEditing] = useState(false);
+  const [bollingerPeriodInput, setBollingerPeriodInput] = useState("");
+  const [bollingerStdDevInput, setBollingerStdDevInput] = useState("");
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(BOLLINGER_STORAGE_KEY);
+      if (!raw) return;
+      const saved: unknown = JSON.parse(raw);
+      if (!saved || typeof saved !== "object") return;
+      const s = saved as { on?: unknown; period?: unknown; stdDev?: unknown };
+      if (typeof s.on === "boolean") setBollingerOn(s.on);
+      if (typeof s.period === "number" && s.period > 1 && s.period <= 200) setBollingerPeriod(s.period);
+      if (typeof s.stdDev === "number" && s.stdDev > 0 && s.stdDev <= 5) setBollingerStdDev(s.stdDev);
+    } catch {
+      // localStorage unavailable — 기본값 그대로
+    }
+  }, []);
+
+  function persistBollinger(next: { on: boolean; period: number; stdDev: number }) {
+    try {
+      window.localStorage.setItem(BOLLINGER_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // best-effort
+    }
+  }
+
+  function toggleBollinger() {
+    const next = !bollingerOn;
+    setBollingerOn(next);
+    persistBollinger({ on: next, period: bollingerPeriod, stdDev: bollingerStdDev });
+  }
+
+  function applyBollingerSettings() {
+    const period = Number(bollingerPeriodInput);
+    const stdDev = Number(bollingerStdDevInput);
+    const nextPeriod = Number.isInteger(period) && period > 1 && period <= 200 ? period : bollingerPeriod;
+    const nextStdDev = Number.isFinite(stdDev) && stdDev > 0 && stdDev <= 5 ? stdDev : bollingerStdDev;
+    setBollingerPeriod(nextPeriod);
+    setBollingerStdDev(nextStdDev);
+    persistBollinger({ on: bollingerOn, period: nextPeriod, stdDev: nextStdDev });
+    setBollingerEditing(false);
+    setBollingerPeriodInput("");
+    setBollingerStdDevInput("");
+  }
+
   // 골구 근거 토글 상태 + 시그널/지지·저항 데이터 — GolgooPanel이 불러오는
   // 대로 여기로 흘러들어와서, 켜져 있으면 아래 overlay effect가 차트 위에
   // 그려준다. 이 페이지에 GolgooProvider가 없으면 useGolgoo가 던지므로,
@@ -484,6 +543,48 @@ export function PriceChart({ code }: { code: string }) {
           }
         }
 
+        // 볼린저밴드 — 상단·하단은 점선(캔들을 덜 가리게), 중심선은 실선
+        // 얇게. 켜져 있을 때만 series를 만들고, 호버 범례용으로 날짜별
+        // %B/BandWidth도 같이 모아둔다.
+        const bollingerByDate = new Map<string, BollingerPoint>();
+        if (bollingerOn) {
+          const bb = computeBollinger(candles, bollingerPeriod, bollingerStdDev);
+          if (bb.series.length > 0) {
+            const bandColor = cssVar("--accent", "#e0aa3e");
+            const midColor = cssVar("--faint", "#8a92a3");
+            const upperSeries = chart.addSeries(LineSeries, {
+              color: bandColor,
+              lineWidth: 1,
+              lineStyle: LineStyle.Dashed,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              crosshairMarkerVisible: false,
+              priceFormat: { type: "custom", formatter: priceFormatter, minMove: 1 },
+            });
+            const midSeries = chart.addSeries(LineSeries, {
+              color: midColor,
+              lineWidth: 1,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              crosshairMarkerVisible: false,
+              priceFormat: { type: "custom", formatter: priceFormatter, minMove: 1 },
+            });
+            const lowerSeries = chart.addSeries(LineSeries, {
+              color: bandColor,
+              lineWidth: 1,
+              lineStyle: LineStyle.Dashed,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              crosshairMarkerVisible: false,
+              priceFormat: { type: "custom", formatter: priceFormatter, minMove: 1 },
+            });
+            upperSeries.setData(bb.series.map((p) => ({ time: p.date, value: p.upper })));
+            midSeries.setData(bb.series.map((p) => ({ time: p.date, value: p.middle })));
+            lowerSeries.setData(bb.series.map((p) => ({ time: p.date, value: p.lower })));
+            for (const p of bb.series) bollingerByDate.set(p.date, p);
+          }
+        }
+
         // 거래량은 캔들과 같은 판(pane)에 눌러 담던 것에서 아예 별도 판으로
         // 분리 — layout.panes.enableResize 덕에 둘 사이 경계를 마우스로
         // 드래그해서 비율을 바꿀 수 있다(전체 차트 높이는 CHART_HEIGHT로 고정).
@@ -522,6 +623,7 @@ export function PriceChart({ code }: { code: string }) {
             prevClose: i > 0 ? candles[i - 1].close : null,
             volume: c.volume,
             mas: maByDate.get(c.date) ?? {},
+            bollinger: bollingerByDate.get(c.date),
           };
         };
 
@@ -582,7 +684,7 @@ export function PriceChart({ code }: { code: string }) {
     return () => {
       cancelled = true;
     };
-  }, [code, period, maList]);
+  }, [code, period, maList, bollingerOn, bollingerPeriod, bollingerStdDev]);
 
   // Unmount cleanup only — separate from the fetch effect above so a period
   // switch doesn't tear down and immediately recreate on every keystroke of
@@ -813,6 +915,69 @@ export function PriceChart({ code }: { code: string }) {
               </button>
             )}
           </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button
+              onClick={toggleBollinger}
+              title="볼린저밴드 켜기/끄기"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                fontFamily: "var(--mono)",
+                fontSize: 11,
+                fontWeight: 700,
+                color: bollingerOn ? "var(--accent)" : "var(--faint)",
+                background: bollingerOn ? "var(--accent-soft)" : "var(--panel2)",
+                border: `1px solid ${bollingerOn ? "var(--accent)" : "var(--border)"}`,
+                borderRadius: 20,
+                padding: "3px 10px",
+                cursor: "pointer",
+              }}
+            >
+              볼린저 {bollingerPeriod}/{bollingerStdDev}
+            </button>
+            {bollingerOn &&
+              (bollingerEditing ? (
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <input
+                    autoFocus
+                    type="number"
+                    min={2}
+                    max={200}
+                    value={bollingerPeriodInput}
+                    onChange={(e) => setBollingerPeriodInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && applyBollingerSettings()}
+                    placeholder={String(bollingerPeriod)}
+                    style={{ width: 48, fontSize: 11, padding: "4px 6px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--panel2)", color: "var(--text)" }}
+                  />
+                  <input
+                    type="number"
+                    min={0.5}
+                    max={5}
+                    step={0.5}
+                    value={bollingerStdDevInput}
+                    onChange={(e) => setBollingerStdDevInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && applyBollingerSettings()}
+                    placeholder={String(bollingerStdDev)}
+                    style={{ width: 48, fontSize: 11, padding: "4px 6px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--panel2)", color: "var(--text)" }}
+                  />
+                  <button
+                    onClick={applyBollingerSettings}
+                    style={{ fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6, border: "none", background: "var(--accent)", color: "#0a0d13", cursor: "pointer" }}
+                  >
+                    확인
+                  </button>
+                </span>
+              ) : (
+                <button
+                  onClick={() => setBollingerEditing(true)}
+                  title="볼린저밴드 설정(기간·표준편차 배수)"
+                  style={{ fontSize: 11, fontWeight: 700, padding: "4px 9px", borderRadius: 20, border: "1px dashed var(--border2)", background: "transparent", color: "var(--faint)", cursor: "pointer" }}
+                >
+                  설정
+                </button>
+              ))}
+          </div>
         </div>
         <div style={{ display: "flex", gap: 2, background: "var(--panel2)", border: "1px solid var(--border)", borderRadius: 9, padding: 2 }}>
           {(Object.keys(PERIOD_LABEL) as ChartPeriod[]).map((p) => (
@@ -922,7 +1087,8 @@ export function PriceChart({ code }: { code: string }) {
 
         {hover && !loading && !empty && (() => {
           const BOX_WIDTH = 172;
-          const BOX_HEIGHT = 26 * (3 + maList.length) + 20;
+          const bollingerRows = bollingerOn && hover.info.bollinger ? 2 : 0;
+          const BOX_HEIGHT = 26 * (3 + maList.length + bollingerRows) + 20;
           const containerWidth = containerRef.current?.clientWidth ?? 600;
           const containerHeight = containerRef.current?.clientHeight ?? CHART_HEIGHT;
           const flipX = hover.x > containerWidth - BOX_WIDTH - 20;
@@ -977,6 +1143,18 @@ export function PriceChart({ code }: { code: string }) {
                   </div>
                 );
               })}
+              {bollingerOn && info.bollinger && (
+                <>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
+                    <span style={{ color: "var(--accent)" }}>%B</span>
+                    <span style={{ fontWeight: 700 }}>{info.bollinger.percentB === null ? "데이터 예외" : info.bollinger.percentB.toFixed(2)}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
+                    <span style={{ color: "var(--accent)" }}>BandWidth</span>
+                    <span style={{ fontWeight: 700 }}>{info.bollinger.bandWidthPct.toFixed(1)}%</span>
+                  </div>
+                </>
+              )}
             </div>
           );
         })()}

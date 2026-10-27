@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { saveTelegramMessage, extractLink, type TelegramUpdate } from "@/lib/telegram-news";
-import { sendTelegramMessage } from "@/lib/telegram-send";
+import { answerCallbackQuery, sendTelegramMessage } from "@/lib/telegram-send";
+import { handleHoldingAlertCallback } from "@/lib/holding-alert-callback";
 import { handleTelegramText, handleTelegramVoice, handleTelegramPhoto } from "@/lib/telegram-chat";
 import { prisma } from "@/lib/prisma";
 
@@ -61,6 +62,17 @@ export async function POST(req: NextRequest) {
   const update = (await req.json().catch(() => null)) as TelegramUpdate | null;
   if (!(await claimUpdateOnce(update?.update_id))) {
     return NextResponse.json({ ok: true }); // 재전송 — 이미 처리함
+  }
+
+  // 인라인 버튼(둥지 알림 상세 보기) — 메시지가 아니라 따로 온다. 권한 확인은
+  // handleHoldingAlertCallback 안에서 chat id → 계정 → 기록 소유자 순으로 한다.
+  if (update?.callback_query) {
+    const handled = await handleHoldingAlertCallback(update.callback_query).catch((e) => {
+      console.error("[telegram-webhook] callback failed", e);
+      return false;
+    });
+    if (!handled) await answerCallbackQuery(update.callback_query.id);
+    return NextResponse.json({ ok: true });
   }
 
   const message = update?.message;

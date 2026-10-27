@@ -27,7 +27,7 @@ function sma(values: number[], period: number): number | null {
   return slice.reduce((s, v) => s + v, 0) / period;
 }
 
-function rsi(closes: number[], period = 14): number | null {
+export function rsi(closes: number[], period = 14): number | null {
   if (closes.length < period + 1) return null;
   let gain = 0;
   let loss = 0;

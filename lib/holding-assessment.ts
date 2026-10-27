@@ -102,6 +102,7 @@ export type TechMetrics = {
   ma20: number | null;
   ma60: number | null;
   volumeRatio: number | null; // 최근 5거래일 평균 / 그 직전 20거래일 평균
+  volumeExcludesToday: boolean; // 장중이라 덜 찬 오늘 일봉을 거래량 비교에서 뺐는지
 };
 
 function sma(values: number[], n: number): number | null {
@@ -116,16 +117,24 @@ function retOver(closes: number[], days: number): number | null {
   return past > 0 ? ((closes[closes.length - 1] - past) / past) * 100 : null;
 }
 
-export function computeTechMetrics(candles: Candle[]): TechMetrics {
+// lastCandlePartial: 장중엔 KIS 일봉의 마지막 캔들이 "오늘, 아직 진행 중"이라
+// 거래량이 하루치의 일부뿐이다. 그대로 최근 5일 평균에 넣으면 오전일수록
+// 거래량이 실제보다 적게 잡혀 "거래 위축"으로 오판한다 — 그래서 거래량
+// 비교에서만 오늘을 빼고 완결된 거래일끼리 비교한다(가격 지표는 오늘 시세가
+// 최신이라 그대로 쓴다). 같은 시각 누적치끼리 비교하려면 과거 분봉이 필요한데
+// 현재 분봉 API(lib/kis-minute-chart.ts)는 당일만 줘서 그 방식은 못 쓴다.
+export function computeTechMetrics(candles: Candle[], opts: { lastCandlePartial?: boolean } = {}): TechMetrics {
   const closes = candles.map((c) => c.close);
   const last = closes[closes.length - 1];
   const window = candles.slice(-250);
   const high = window.length > 0 ? Math.max(...window.map((c) => c.high)) : null;
 
+  const volumeExcludesToday = opts.lastCandlePartial === true && candles.length > 0;
+  const volCandles = volumeExcludesToday ? candles.slice(0, -1) : candles;
   let volumeRatio: number | null = null;
-  if (candles.length >= 25) {
-    const recent = candles.slice(-5).reduce((s, c) => s + c.volume, 0) / 5;
-    const base = candles.slice(-25, -5).reduce((s, c) => s + c.volume, 0) / 20;
+  if (volCandles.length >= 25) {
+    const recent = volCandles.slice(-5).reduce((s, c) => s + c.volume, 0) / 5;
+    const base = volCandles.slice(-25, -5).reduce((s, c) => s + c.volume, 0) / 20;
     volumeRatio = base > 0 ? recent / base : null;
   }
 
@@ -137,6 +146,7 @@ export function computeTechMetrics(candles: Candle[]): TechMetrics {
     ma20: sma(closes, 20),
     ma60: sma(closes, 60),
     volumeRatio,
+    volumeExcludesToday,
   };
 }
 
@@ -169,15 +179,19 @@ function flowSignal(rows: FlowRow[]): Signal {
   return { key: "flow", label, score: 0, note: "최근 5거래일 외국인·기관 수급이 엇갈림" };
 }
 
-// 거래량: 줄면 관심 이탈(-1), 크게 늘었는데 차트가 양호하면 +1. 하락 중 거래량 증가는
-// 오히려 매도세일 수 있어 점수를 주지 않는다.
+// 거래량: 줄면 -1, 크게 늘었는데 차트가 양호하면 +1. 하락 중 거래량 증가는
+// 오히려 매도세일 수 있어 점수를 주지 않는다. 문구에 비교 기준을 같이 적는다
+// — 예전 "평소 대비 -53.8%"는 무엇과 비교했는지 알 수 없었다(2026-10-27
+// 사용자 지적). "관심 이탈"이라고 단정하던 표현도 거래 감소만으로는 근거가
+// 부족해(가격 조정기엔 거래가 원래 줄어든다) "거래 위축"으로 낮췄다.
 function volumeSignal(m: TechMetrics, chartScore: number | null): Signal {
   const label = "거래량";
   if (m.volumeRatio === null) return { key: "volume", label, score: null, note: "거래량을 비교할 데이터가 부족해요" };
   const pct = (m.volumeRatio - 1) * 100;
-  if (m.volumeRatio <= 0.7) return { key: "volume", label, score: -1, note: `평소 대비 ${fmtPct(pct)} — 관심 이탈` };
-  if (m.volumeRatio >= 1.5 && chartScore !== null && chartScore > 0) return { key: "volume", label, score: 1, note: `평소 대비 ${fmtPct(pct)} — 상승 추세에 거래 증가` };
-  return { key: "volume", label, score: 0, note: `평소 대비 ${fmtPct(pct)}` };
+  const basis = `최근 5거래일 평균이 직전 20거래일 평균 대비 ${fmtPct(pct)}${m.volumeExcludesToday ? "(장중이라 오늘 제외)" : ""}`;
+  if (m.volumeRatio <= 0.7) return { key: "volume", label, score: -1, note: `${basis} — 거래 위축` };
+  if (m.volumeRatio >= 1.5 && chartScore !== null && chartScore > 0) return { key: "volume", label, score: 1, note: `${basis} — 상승 추세에 거래 증가` };
+  return { key: "volume", label, score: 0, note: basis };
 }
 
 // 재무: 최근 완결 연도 기준 영업이익·순이익 흑자 여부, 자본총계 0 이하(자본잠식)는 최우선.
@@ -205,6 +219,7 @@ export type AssessmentInput = {
   portfolioValuation: number; // 전체 포트폴리오 평가액(현금·채권 포함) — 비중 계산 기준
   holdingDays?: number | null; // 첫 매수일부터 오늘까지 — 판정에는 쓰지 않고 보여주기만 한다
   firstBuyDate?: string | null;
+  lastCandlePartial?: boolean; // 장중이라 candles 마지막이 진행 중인 오늘 일봉인지(computeTechMetrics 주석)
 };
 
 export type HoldingAssessment = {
@@ -227,16 +242,28 @@ export type HoldingAssessment = {
   stateNote: string; // 왜 이 상태인지 한 줄
 };
 
-const ORDER: AssessmentState[] = ["유지", "관찰", "축소검토", "정밀점검"];
-const up = (s: AssessmentState): AssessmentState => ORDER[Math.min(ORDER.length - 1, ORDER.indexOf(s) + 1)];
-
 // 상태 판정 규칙(초안):
 //   신호 합계(차트·수급·거래량·재무, 각 -2~+2) → ≥2 유지 / 0~1 관찰 / -1~-3 축소검토 / ≤-4 정밀점검
 //   신호가 2개 미만이면 판단 근거가 부족해 관찰
-//   -50% 이하 깊은 손실이면 한 단계 위험쪽으로(손실률만으로 매도 판정은 하지 않되,
-//   회복에 필요한 수익률이 커서 "더 보수적으로 점검"하라는 뜻)
+// 등급은 신호 점수만으로 정한다 — 예전엔 "평가손실 -50% 이하면 한 단계 위험쪽으로"
+// 규칙이 있었는데, 같은 차트·수급이라도 내가 언제 샀느냐에 따라 등급이 달라져
+// "손익률이 마이너스라는 이유만으로 위험등급을 올리지 않는다"(사용자 스펙
+// 2026-10-27)와 충돌해서 뺐다(사용자 결정). 깊은 손실은 등급 대신 알림에 별도
+// 경고 줄(lib/holding-alert-format.ts deepLossLine)로 보여준다.
+// 저장된 신호(PortfolioAssessment.signals)만으로 다시 계산할 수 있어야 해서 따로
+// 뺐다 — 규칙이 바뀌어도 과거 기록을 같은 규칙으로 다시 매겨 비교할 수 있게.
+export function stateFromSignals(signals: Pick<Signal, "score">[]): { state: AssessmentState; stateNote: string; totalScore: number } {
+  const scored = signals.filter((s) => s.score !== null);
+  const totalScore = scored.reduce((sum, s) => sum + (s.score as number), 0);
+  if (scored.length < 2) return { state: "관찰", stateNote: "판단에 쓸 수 있는 신호가 2개 미만이라 관찰로 둬요", totalScore };
+  if (totalScore >= 2) return { state: "유지", stateNote: `신호 합계 +${totalScore}`, totalScore };
+  if (totalScore >= 0) return { state: "관찰", stateNote: `신호 합계 +${totalScore} — 뚜렷한 방향 없음`, totalScore };
+  if (totalScore >= -3) return { state: "축소검토", stateNote: `신호 합계 ${totalScore} — 약세 신호 우세`, totalScore };
+  return { state: "정밀점검", stateNote: `신호 합계 ${totalScore} — 약세 신호가 겹침`, totalScore };
+}
+
 export function assessHolding(input: AssessmentInput): HoldingAssessment {
-  const tech = computeTechMetrics(input.candles);
+  const tech = computeTechMetrics(input.candles, { lastCandlePartial: input.lastCandlePartial });
   const chart = chartSignal(input.currentPrice, tech);
   const signals: Signal[] = [
     chart,
@@ -245,33 +272,8 @@ export function assessHolding(input: AssessmentInput): HoldingAssessment {
     financialSignal(input.financials),
   ];
 
-  const scored = signals.filter((s) => s.score !== null);
-  const totalScore = scored.reduce((sum, s) => sum + (s.score as number), 0);
+  const { state, stateNote, totalScore } = stateFromSignals(signals);
   const changePct = input.avgBuyPrice > 0 ? ((input.currentPrice - input.avgBuyPrice) / input.avgBuyPrice) * 100 : null;
-
-  let state: AssessmentState;
-  let stateNote: string;
-  if (scored.length < 2) {
-    state = "관찰";
-    stateNote = "판단에 쓸 수 있는 신호가 2개 미만이라 관찰로 둬요";
-  } else if (totalScore >= 2) {
-    state = "유지";
-    stateNote = `신호 합계 ${totalScore >= 0 ? "+" : ""}${totalScore}`;
-  } else if (totalScore >= 0) {
-    state = "관찰";
-    stateNote = `신호 합계 ${totalScore >= 0 ? "+" : ""}${totalScore} — 뚜렷한 방향 없음`;
-  } else if (totalScore >= -3) {
-    state = "축소검토";
-    stateNote = `신호 합계 ${totalScore} — 약세 신호 우세`;
-  } else {
-    state = "정밀점검";
-    stateNote = `신호 합계 ${totalScore} — 약세 신호가 겹침`;
-  }
-
-  if (changePct !== null && changePct <= -50 && state !== "정밀점검") {
-    state = up(state);
-    stateNote += ` · 손실 ${fmtPct(changePct)}로 깊어 한 단계 보수적으로 조정`;
-  }
 
   const valuation = input.currentPrice * input.quantity;
   return {

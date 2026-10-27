@@ -38,6 +38,9 @@ import {
   removeExpenseRecord,
   removeIncomeRecord,
 } from "@/lib/finance-engine";
+import { checkBudgetAndAlert, setCategoryBudget, removeCategoryBudget, computeBudgetStatus, computeMonthOverview } from "@/lib/budget-engine";
+import { logAiCall, getUsageStatus, formatOverLimitMessage } from "@/lib/ai-usage";
+import { computeSpendingTrend, getRecurringExpenseCandidates } from "@/lib/spending-insights";
 import { MIN_INSTALLMENT_MONTHS, MAX_INSTALLMENT_MONTHS } from "@/lib/installment";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "@/lib/finance-constants";
 import { prisma } from "@/lib/prisma";
@@ -58,6 +61,7 @@ import {
 } from "@/lib/learning-journal";
 import { pullTodayMaterial } from "@/lib/learning-push";
 import { searchEncyclopedia } from "@/lib/naver-encyc";
+import { findThemeStocks, themeStockBlock } from "@/lib/theme-search";
 import { recordBuyJournal, recordSaleJournal } from "@/lib/trade-journal";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
@@ -319,6 +323,10 @@ const RECORD_EXPENSE_TOOL: Anthropic.Tool = {
         description: "가장 가까운 카테고리 하나를 골라. 애매하면 '기타'.",
       },
       memo: { type: "string", description: "무엇에 썼는지 짧은 메모(예: '스타벅스 커피'). 모르면 생략." },
+      date: {
+        type: "string",
+        description: "실제 지출한 날짜(YYYY-MM-DD). '어제'/'그제'처럼 말했으면 [오늘의 시장 데이터]에 보이는 오늘 날짜를 기준으로 계산해서 채워. 오늘이면 생략해도 돼.",
+      },
       installmentMonths: { type: "number", description: "할부 개월 수. 할부가 아니면 생략." },
       annualRatePct: { type: "number", description: "할부 연 이자율(%). 무이자거나 모르면 생략(0으로 처리)." },
     },
@@ -330,9 +338,18 @@ type RecordExpenseResult = { ok: boolean; message: string };
 
 // export됨 — lib/telegram-chat.ts가 영수증 사진 OCR(이미 구조화된 결과)을
 // 도구 왕복 없이 바로 기록할 때도 이 함수를 그대로 쓴다.
+// YYYY-MM-DD 형식이고 미래가 아닐 때만 받아들인다 — 모델이 날짜 계산을
+// 잘못해서 엉뚱한 미래 날짜를 보내는 경우(어제 계산을 실수로 내일로 하는
+// 등)에 대비해, 이상하면 조용히 오늘로 되돌린다(틀린 날짜로 기록하는
+// 것보다 오늘로 기록하는 게 덜 나쁘다).
+function safeDate(input: unknown): string {
+  if (typeof input !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(input)) return todayISO();
+  return input <= todayISO() ? input : todayISO();
+}
+
 export async function recordExpense(
   userId: string,
-  input: { amount?: unknown; category?: unknown; memo?: unknown; installmentMonths?: unknown; annualRatePct?: unknown }
+  input: { amount?: unknown; category?: unknown; memo?: unknown; date?: unknown; installmentMonths?: unknown; annualRatePct?: unknown }
 ): Promise<RecordExpenseResult> {
   const amount = typeof input.amount === "number" && input.amount > 0 ? Math.round(input.amount) : null;
   if (amount === null) return { ok: false, message: "얼마 썼는지 금액을 말해줄래?" };
@@ -341,6 +358,8 @@ export async function recordExpense(
     ? input.category
     : "기타";
   const memo = typeof input.memo === "string" && input.memo.trim() ? input.memo.trim() : undefined;
+  const date = safeDate(input.date);
+  const dateNote = date !== todayISO() ? ` (${date})` : "";
 
   const months = typeof input.installmentMonths === "number" ? Math.round(input.installmentMonths) : null;
   if (months !== null) {
@@ -348,18 +367,26 @@ export async function recordExpense(
       return { ok: false, message: `할부는 ${MIN_INSTALLMENT_MONTHS}~${MAX_INSTALLMENT_MONTHS}개월까지 가능해 — 다시 말해줄래?` };
     }
     const rate = typeof input.annualRatePct === "number" && input.annualRatePct >= 0 ? input.annualRatePct : 0;
-    const result = await addInstallmentExpense(userId, { startDate: todayISO(), category, totalAmount: amount, months, annualRatePct: rate, memo });
+    const result = await addInstallmentExpense(userId, { startDate: date, category, totalAmount: amount, months, annualRatePct: rate, memo });
     if (!result) return { ok: false, message: "할부를 계산하지 못했어 — 금액·개월을 다시 확인해줄래?" };
     const monthly = result.plan.payments[result.plan.payments.length - 1];
+    await checkBudgetAndAlert(userId, category);
     return {
       ok: true,
-      message: `✅ 할부 지출 기록했어: ${category} 총 **₩${amount.toLocaleString()}**, ${months}개월(매달 약 ₩${Math.round(monthly).toLocaleString()})${memo ? ` (${memo})` : ""}`,
+      message: `✅ 할부 지출 기록했어: ${category} 총 **₩${amount.toLocaleString()}**, ${months}개월(매달 약 ₩${Math.round(monthly).toLocaleString()})${memo ? ` (${memo})` : ""}${dateNote}`,
     };
   }
 
-  await addExpenseRecord(userId, { date: todayISO(), category, amount, memo });
+  await addExpenseRecord(userId, { date, category, amount, memo });
+  // 예산 감시 — 이 카테고리에 한도가 설정돼 있으면 사용률을 계산해서
+  // 80%/100% 선을 이번 달 처음 넘겼을 때만 별도 텔레그램 경고를 보낸다
+  // (lib/budget-engine.ts, 실패해도 이 확인 메시지는 그대로 나가게 내부에서
+  // 에러를 삼킨다). await하는 이유는 다른 곳과 같다 — Vercel 서버리스
+  // 함수는 응답을 보낸 직후 그대로 멈출 수 있어서 fire-and-forget이면
+  // 알림이 조용히 유실될 수 있다.
+  await checkBudgetAndAlert(userId, category);
 
-  return { ok: true, message: `✅ 지출 기록했어: ${category} **₩${amount.toLocaleString()}**${memo ? ` (${memo})` : ""}` };
+  return { ok: true, message: `✅ 지출 기록했어: ${category} **₩${amount.toLocaleString()}**${memo ? ` (${memo})` : ""}${dateNote}` };
 }
 
 // 일상 수입 보고("월급 300만원 들어왔어", "부업으로 20만원 벌었어")를 들었을 때
@@ -377,6 +404,10 @@ const RECORD_INCOME_TOOL: Anthropic.Tool = {
       amount: { type: "number", description: "수입 금액(원). 필수." },
       category: { type: "string", enum: [...INCOME_CATEGORIES], description: "가장 가까운 카테고리 하나. 애매하면 '기타'." },
       memo: { type: "string", description: "짧은 메모. 모르면 생략." },
+      date: {
+        type: "string",
+        description: "실제 들어온 날짜(YYYY-MM-DD). '어제'처럼 말했으면 [오늘의 시장 데이터]의 오늘 날짜 기준으로 계산해서 채워. 오늘이면 생략해도 돼.",
+      },
     },
     required: ["amount"],
   },
@@ -384,14 +415,21 @@ const RECORD_INCOME_TOOL: Anthropic.Tool = {
 
 type RecordIncomeResult = { ok: boolean; message: string };
 
-async function recordIncome(userId: string, input: { amount?: unknown; category?: unknown; memo?: unknown }): Promise<RecordIncomeResult> {
+// export됨 — lib/expense-parser.ts가 규칙 기반 파싱 성공 시(LLM 안 거치고)
+// 바로 기록할 때도 이 함수를 그대로 쓴다(recordExpense와 같은 이유).
+export async function recordIncome(
+  userId: string,
+  input: { amount?: unknown; category?: unknown; memo?: unknown; date?: unknown }
+): Promise<RecordIncomeResult> {
   const amount = typeof input.amount === "number" && input.amount > 0 ? Math.round(input.amount) : null;
   if (amount === null) return { ok: false, message: "얼마 들어왔는지 금액을 말해줄래?" };
   const category =
     typeof input.category === "string" && (INCOME_CATEGORIES as readonly string[]).includes(input.category) ? input.category : "기타";
   const memo = typeof input.memo === "string" && input.memo.trim() ? input.memo.trim() : undefined;
-  await addIncomeRecord(userId, { date: todayISO(), category, amount, memo });
-  return { ok: true, message: `✅ 수입 기록했어: ${category} **₩${amount.toLocaleString()}**${memo ? ` (${memo})` : ""}` };
+  const date = safeDate(input.date);
+  const dateNote = date !== todayISO() ? ` (${date})` : "";
+  await addIncomeRecord(userId, { date, category, amount, memo });
+  return { ok: true, message: `✅ 수입 기록했어: ${category} **₩${amount.toLocaleString()}**${memo ? ` (${memo})` : ""}${dateNote}` };
 }
 
 // 새 대출/빚이 생겼다는 보고("학자금 대출 500만원 받았어")를 들었을 때 호출 —
@@ -687,6 +725,98 @@ async function deleteLiabilityFromChat(userId: string, input: { liabilityName?: 
   return { ok: true, message: `✅ "${found.name}" 부채 기록 지웠어. 축하해! 🎉` };
 }
 
+// 카테고리별 월 예산 한도 설정 — 사용자 요청(2026-10-21) 3번 "자동 예산
+// 감시 엔진"의 설정 창구. 전용 설정 화면 대신 채팅으로 바로 되게(이
+// 앱에서 이미 쓰는 방식 — update_portfolio_settings 등과 같은 원칙).
+const SET_BUDGET_TOOL: Anthropic.Tool = {
+  name: "set_category_budget",
+  description:
+    "사용자가 카테고리별 월 지출 한도를 정하고 싶다고 하면 호출해(예: '식비 예산 50만원으로 해줘', '교통비 한도 10만원 잡아줘'). " +
+    "이 한도를 넘으면(80%/100%) 내가 알아서 텔레그램으로 경고해준다는 뜻이야. category는 반드시 지출 카테고리 중 하나.",
+  input_schema: {
+    type: "object",
+    properties: {
+      category: { type: "string", enum: [...EXPENSE_CATEGORIES], description: "예산을 설정할 지출 카테고리" },
+      monthlyLimit: { type: "number", description: "월 한도(원)" },
+    },
+    required: ["category", "monthlyLimit"],
+  },
+};
+
+type SetBudgetResult = { ok: boolean; message: string };
+
+async function setBudgetFromChat(userId: string, input: { category?: unknown; monthlyLimit?: unknown }): Promise<SetBudgetResult> {
+  const category = typeof input.category === "string" && (EXPENSE_CATEGORIES as readonly string[]).includes(input.category) ? input.category : null;
+  const monthlyLimit = typeof input.monthlyLimit === "number" && input.monthlyLimit > 0 ? Math.round(input.monthlyLimit) : null;
+  if (!category || monthlyLimit === null) return { ok: false, message: "어떤 카테고리에 얼마로 한도를 잡을지 다시 말해줄래?" };
+  await setCategoryBudget(userId, category, monthlyLimit);
+  return { ok: true, message: `✅ **${category}** 월 예산을 **₩${monthlyLimit.toLocaleString()}**로 설정했어 — 80%, 100% 넘으면 알려줄게.` };
+}
+
+const DELETE_BUDGET_TOOL: Anthropic.Tool = {
+  name: "delete_category_budget",
+  description: "사용자가 특정 카테고리 예산 설정을 없애고 싶다고 하면 호출해(예: '식비 예산 그만 추적해줘', '교통비 한도 없애줘').",
+  input_schema: {
+    type: "object",
+    properties: { category: { type: "string", enum: [...EXPENSE_CATEGORIES], description: "예산 설정을 지울 카테고리" } },
+    required: ["category"],
+  },
+};
+
+async function deleteBudgetFromChat(userId: string, input: { category?: unknown }): Promise<SetBudgetResult> {
+  const category = typeof input.category === "string" && (EXPENSE_CATEGORIES as readonly string[]).includes(input.category) ? input.category : null;
+  if (!category) return { ok: false, message: "어떤 카테고리 예산을 없앨지 다시 말해줄래?" };
+  await removeCategoryBudget(userId, category);
+  return { ok: true, message: `✅ **${category}** 예산 설정 지웠어 — 더 이상 경고 안 보낼게.` };
+}
+
+// "예산 어때", "이번 달 저축 가능해?" — 코드가 계산한 실제 숫자(카테고리별
+// 사용률·예상 월 지출, 목표 대비 저축 가능 여부)를 시스템 프롬프트에
+// 블록으로 넣어준다(portfolioBlock·expenseSummaryBlock과 같은 원칙 — LLM이
+// 어림잡지 않고 이 숫자를 그대로 인용). 예산을 하나도 안 정해놨으면
+// computeBudgetStatus가 빈 배열을 주니 그 경우는 블록 자체를 생략한다.
+const BUDGET_STATUS_RE = /예산\s*(어때|얼마|남았|현황|확인)|이번\s*달.*(저축|남|모을)|목표.*(달성\s*가능|충족)|과소비|고정\s*지출|구독.*(뭐|얼마|있)/;
+
+async function buildBudgetBlock(userId: string): Promise<string> {
+  const [statuses, overview, trend, recurring] = await Promise.all([
+    computeBudgetStatus(userId),
+    computeMonthOverview(userId),
+    computeSpendingTrend(userId),
+    getRecurringExpenseCandidates(userId),
+  ]);
+  const lines = ["\n\n[이번 달 예산·저축 현황 — 코드가 계산한 실제 숫자, 그대로 근거로 써]"];
+  if (statuses.length > 0) {
+    for (const s of statuses) {
+      lines.push(
+        `- ${s.category}: ₩${Math.round(s.spent).toLocaleString()} / ₩${s.limit.toLocaleString()} (${s.pctUsed.toFixed(0)}%)${s.willExceed ? " — 이대로면 이번 달 말 초과 예상" : ""}`
+      );
+    }
+  } else {
+    lines.push("- 설정된 카테고리 예산이 없음(사용자가 요청하면 set_category_budget로 만들어줄 수 있음)");
+  }
+  lines.push(
+    `이번 달 수입 ₩${Math.round(overview.income).toLocaleString()}, 지출 ₩${Math.round(overview.expense).toLocaleString()}(이대로면 월말 예상 ₩${Math.round(overview.projectedExpense).toLocaleString()}), 예상 저축 ₩${Math.round(overview.projectedSavings).toLocaleString()}`
+  );
+  if (overview.feasible !== null) {
+    lines.push(
+      `등록된 목표들의 월 투자금 합 ₩${Math.round(overview.requiredMonthlyContribution).toLocaleString()} — ${overview.feasible ? "이번 달 예상 저축으로 충족 가능" : "이번 달 예상 저축으로는 부족"}`
+    );
+  }
+  if (trend.length > 0) {
+    lines.push(
+      "과소비 패턴(지난달 같은 기간 대비 30%+ 증가):",
+      ...trend.slice(0, 3).map((t) => `- ${t.category}: ₩${Math.round(t.thisMonth).toLocaleString()}(지난달 ₩${Math.round(t.lastMonth).toLocaleString()} 대비 +${t.diffPct!.toFixed(0)}%)`)
+    );
+  }
+  if (recurring.length > 0) {
+    lines.push(
+      "정기·구독성 지출(최근 60일):",
+      ...recurring.slice(0, 5).map((r) => `- ${r.category}${r.memo ? ` · ${r.memo}` : ""}: ₩${Math.round(r.amount).toLocaleString()}`)
+    );
+  }
+  return lines.join("\n");
+}
+
 // module ③/⑩ — "왜 이 종목을 샀는지"를 말해주면 기록해둔다. 다음에 이
 // 종목에 대해 "보유 이유 아직 유효해?"라고 물으면(lib/golgoo-deep-dive.ts)
 // 이 기록과 지금 신호를 대조한다. 종목당 하나로 덮어쓴다(과거 버전 보관
@@ -943,6 +1073,19 @@ async function buildTermLookupBlock(text: string): Promise<string> {
   return lines.join("\n");
 }
 
+// "로봇 테마 추천해줘", "2차전지 관련주 뭐있어" — StockTheme 테이블 전체를
+// 훑어서(그날 거래량 랭킹에 없는 종목도 포함) 실제 시세와 함께 근거로
+// 준다. 2026-10-21 사용자 확인: 이 질문에 골구가 답을 못 했던 원인은
+// StockTheme 데이터가 없어서가 아니라(ETF 실보유 종목 기반으로 정상
+// 수집되고 있었음), 채팅 엔진이 그 테이블을 아예 조회하지 않았던 것.
+const THEME_QUERY_RE = /테마\s*(추천|종목|알려|찾아|뭐|주)|관련\s*(종목|기업|주)/;
+
+async function buildThemeBlock(text: string): Promise<string> {
+  const result = await findThemeStocks(text).catch(() => null);
+  if (!result) return "";
+  return themeStockBlock(result);
+}
+
 // "인형뽑기 5천원 지출했어"처럼 지출/수입 보고문에 나온 대상이 생소한
 // 상호명·신조어·활동명이어도 record_expense/record_income 호출을 주저하지
 // 않게, 동사 앞 대상을 뽑아 미리 네이버에서 찾아 넣어준다(사용자 요청:
@@ -1130,6 +1273,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   const wantsPortfolioInfo = !!lastUser && /포트폴리오|보유\s*종목|둥지|내\s*자산|수익률|평가\s*금액|리포트|계좌/.test(lastUser.content);
   const portfolioBlock = userId && wantsPortfolioInfo ? await buildPortfolioBlock(userId) : "";
   const expenseSummaryBlock = userId && lastUser ? await buildExpenseSummaryBlock(userId, lastUser.content) : "";
+  // "예산 어때", "이번 달 저축 가능해?" — module ⑫ 예산 감시 엔진 조회.
+  const budgetBlock = userId && lastUser && BUDGET_STATUS_RE.test(lastUser.content) ? await buildBudgetBlock(userId) : "";
 
   // module ③/④/⑤/⑦ — 보유종목 진단(lib/holding-assessment-store.ts)이
   // 이미 계산해둔 신호·판정을 그대로 재사용해 깊은 질문에 답한다. 네 질문
@@ -1196,6 +1341,9 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   const teacherModeBlock = lastUser ? await buildTeacherModeBlock(userId, lastUser.content) : "";
   // "~가 뭐야" 류 용어 질문엔 네이버 지식백과 검색 결과를 근거로 끼워준다.
   const termLookupBlock = lastUser ? await buildTermLookupBlock(lastUser.content) : "";
+  // "로봇 테마 추천해줘" — 그날 랭킹 top-N이 아니라 StockTheme 테이블
+  // 전체를 훑어야 거래가 뜸한 테마주도 찾을 수 있다(2026-10-21 버그 확인).
+  const themeBlock = lastUser && THEME_QUERY_RE.test(lastUser.content) ? await buildThemeBlock(lastUser.content) : "";
   // "인형뽑기 5천원 썼어" 같은 지출/수입 보고에서 대상이 생소하면 미리 찾아준다.
   const spendLookupBlock = lastUser ? await buildSpendLookupBlock(lastUser.content) : "";
 
@@ -1231,6 +1379,7 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
     (reports.length > 0 ? "\n\n" + stockContextBlock(reports) : "") +
     portfolioBlock +
     expenseSummaryBlock +
+    budgetBlock +
     deepDiveBlock +
     riskTopBlock +
     scenarioBlock +
@@ -1239,6 +1388,7 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
     predictionReviewBlock +
     teacherModeBlock +
     termLookupBlock +
+    themeBlock +
     spendLookupBlock +
     principlesBlock +
     loginNote +
@@ -1259,6 +1409,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       RECORD_INCOME_TOOL,
       RECORD_LIABILITY_TOOL,
       DELETE_LIABILITY_TOOL,
+      SET_BUDGET_TOOL,
+      DELETE_BUDGET_TOOL,
       ADD_GOAL_TOOL,
       UPDATE_GOAL_TOOL,
       DELETE_GOAL_TOOL,
@@ -1278,6 +1430,17 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
   // user 턴을 하나 꽂아 순서만 맞춘다.
   if (anthropicMessages[0]?.role !== "user") anthropicMessages.unshift({ role: "user", content: "(계속)" });
 
+  // 일일 AI 한도(섹션 6, 2026-10-21 "호출 6번으로 제한") — 호출 횟수(기본
+  // 5회, 6번째부터 차단)가 기본 한도고 토큰 예산은 보조 안전장치. 넘었으면
+  // 아예 Claude를 안 부르고 정해진 문구로 끝낸다. 체크 자체는 가벼운
+  // 집계 쿼리 하나뿐.
+  const usageStatus = await getUsageStatus();
+  if (usageStatus.overLimit) {
+    return { replyText: formatOverLimitMessage(usageStatus) };
+  }
+
+  const channel: "web" | "telegram" = cards !== undefined ? "web" : "telegram";
+
   let lastErr: unknown = null;
   for (let i = 0; i < 3; i++) {
     try {
@@ -1292,6 +1455,11 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
         messages: anthropicMessages,
         tools,
       });
+
+      // 호출별 토큰 로그(섹션 6) — await해서 응답이 끊기기 전에 반드시
+      // 기록되게 한다(다른 await들과 같은 이유, 서버리스는 응답 직후 멈출
+      // 수 있다). trigger는 이 호출을 일으킨 실제 사용자 메시지.
+      await logAiCall({ userId, channel, trigger: lastUser?.content ?? "", usage: response.usage });
 
       const text = response.content
         .filter((b): b is Anthropic.TextBlock => b.type === "text")
@@ -1325,6 +1493,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
       const incomeResults = await runAll(findAllTools("record_income"), recordIncome);
       const liabilityResults = await runAll(findAllTools("record_liability"), recordLiability);
       const deleteLiabilityResults = await runAll(findAllTools("delete_liability"), deleteLiabilityFromChat);
+      const setBudgetResults = await runAll(findAllTools("set_category_budget"), setBudgetFromChat);
+      const deleteBudgetResults = await runAll(findAllTools("delete_category_budget"), deleteBudgetFromChat);
       const goalResults = await runAll(findAllTools("add_financial_goal"), addGoalFromChat);
       const updateGoalResults = await runAll(findAllTools("update_financial_goal"), updateGoalFromChat);
       const deleteGoalResults = await runAll(findAllTools("delete_financial_goal"), deleteGoalFromChat);
@@ -1345,6 +1515,8 @@ export async function runChatTurn(params: RunChatTurnParams): Promise<RunChatTur
         joinMsgs(incomeResults) ??
         joinMsgs(liabilityResults) ??
         joinMsgs(deleteLiabilityResults) ??
+        joinMsgs(setBudgetResults) ??
+        joinMsgs(deleteBudgetResults) ??
         joinMsgs(goalResults) ??
         joinMsgs(updateGoalResults) ??
         joinMsgs(deleteGoalResults) ??
