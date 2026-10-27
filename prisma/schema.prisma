@@ -544,6 +544,7 @@ model User {
   portfolioAssessments PortfolioAssessment[]
   portfolioAlertLogs   PortfolioAlertLog[]
   holdingAlertRecords  HoldingAlertRecord[]
+  holdingEventLogs     HoldingEventLog[]
   chatMessages         ChatMessage[]
   holdingTheses        HoldingThesis[]
   learningProgress      LearningProgress?
@@ -739,6 +740,28 @@ model HoldingAlertRecord {
   deliveryStatus      String   @default("pending") // pending | sent | failed
 
   @@index([userId, generatedAt])
+}
+
+// 둥지 알림의 사건(거래정지·공시·20일 최저가 이탈·수급 변화 등, lib/holding-events.ts)
+// 중복 방지·해소 기록 + 등급 히스테리시스 대기("grade-pending:" 키). 같은 사건은
+// eventKey 하나로 한 번만 보내고, 상태형 사건은 조건이 풀리면 resolvedAt을 찍어 다시
+// 생겼을 때만 또 보낸다. sentAt이 비어 있으면 아직 못 보낸 것(보내기 실패·대기 중).
+model HoldingEventLog {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code        String
+  eventType   String
+  eventKey    String
+  severity    String // 긴급 | 주의 | 참고 (grade-pending은 대상 등급)
+  title       String
+  firstSeenAt DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  sentAt      DateTime?
+  resolvedAt  DateTime?
+
+  @@unique([userId, eventKey])
+  @@index([userId, code])
 }
 
 // 둥지 "AI 골구 종목 진단"(lib/holding-assessment.ts)의 하루 한 건 판정 기록 —

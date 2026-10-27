@@ -134,6 +134,124 @@ export function sectorAverage(peers: { code: string; changePct: number }[], self
   return { avgPct: others.reduce((s, p) => s + p.changePct, 0) / others.length, peers: others.length };
 }
 
+// ---------------------------------------------------------------- 분기 실적·현금흐름
+
+// DART 단일회사 전체 재무제표(fnlttSinglAcntAll.json) 한 행 — 쓰는 필드만.
+// 분기·반기 보고서에서 손익계산서의 thstrm_amount는 "그 분기 3개월", thstrm_add_amount는
+// "연초부터 누적", frmtrm_q_amount/frmtrm_add_amount는 전년 같은 기간. 현금흐름표는
+// 원래 누적이라 thstrm_amount가 누적이고 전년 같은 기간은 frmtrm_q_amount(분기·반기)
+// 또는 frmtrm_amount(사업보고서)에 온다 — 2026-10-27 실제 응답(아티스트스튜디오·
+// 삼천당제약 반기보고서)으로 확인.
+export type DartFsRow = {
+  sj_div: string;
+  account_id: string;
+  account_nm: string;
+  thstrm_amount?: string;
+  thstrm_add_amount?: string;
+  frmtrm_amount?: string;
+  frmtrm_q_amount?: string;
+  frmtrm_add_amount?: string;
+};
+
+export type ReportCode = "11013" | "11012" | "11014" | "11011"; // 1분기·반기·3분기·사업보고서
+const REPORT_LABEL: Record<ReportCode, { report: string; quarter: string | null; cumulative: string }> = {
+  "11013": { report: "1분기보고서", quarter: "1분기", cumulative: "1분기" },
+  "11012": { report: "반기보고서", quarter: "2분기", cumulative: "상반기 누적" },
+  "11014": { report: "3분기보고서", quarter: "3분기", cumulative: "1~3분기 누적" },
+  "11011": { report: "사업보고서", quarter: null, cumulative: "연간" },
+};
+
+export type Amount = { current: number | null; priorYear: number | null };
+export type QuarterlyFinancials = {
+  year: number;
+  reportCode: ReportCode;
+  reportName: string; // "2026년 반기보고서"
+  fsLabel: "연결" | "별도";
+  quarterLabel: string | null; // "2분기" — 사업보고서면 null
+  cumulativeLabel: string; // "상반기 누적" / "연간"
+  quarter: { revenue: Amount; operatingIncome: Amount; netIncome: Amount } | null;
+  cumulative: { revenue: Amount; operatingIncome: Amount; netIncome: Amount };
+  operatingCashFlow: Amount; // 누적
+  notes: string[]; // 규칙 해석
+};
+
+const num = (v: string | undefined): number | null => {
+  if (v === undefined || v === null) return null;
+  const s = String(v).replace(/,/g, "").trim();
+  if (s === "" || s === "-") return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+};
+
+// 손익은 IS(손익계산서)가 따로 있으면 그걸, 없으면 CIS(포괄손익계산서)에서.
+function findRow(rows: DartFsRow[], ids: string[], names: RegExp, sj: string[]): DartFsRow | null {
+  for (const s of sj) {
+    const inSj = rows.filter((r) => r.sj_div === s);
+    const byId = inSj.find((r) => ids.includes(r.account_id));
+    if (byId) return byId;
+    const byName = inSj.find((r) => names.test(r.account_nm.replace(/\s/g, "")));
+    if (byName) return byName;
+  }
+  return null;
+}
+
+export function parseQuarterlyFinancials(rows: DartFsRow[], year: number, reportCode: ReportCode, fsLabel: "연결" | "별도"): QuarterlyFinancials | null {
+  const IS = ["IS", "CIS"];
+  const revenue = findRow(rows, ["ifrs-full_Revenue"], /^(매출액|수익\(매출액\)|영업수익|매출|수익)$/, IS);
+  const op = findRow(rows, ["dart_OperatingIncomeLoss"], /^영업이익(\(손실\))?$/, IS);
+  const net = findRow(rows, ["ifrs-full_ProfitLoss"], /^(당기|분기|반기)?순이익(\(손실\))?$/, IS);
+  const ocf = findRow(rows, ["ifrs-full_CashFlowsFromUsedInOperatingActivities"], /^영업활동(으로인한)?현금흐름$/, ["CF"]);
+  if (!revenue && !op && !net) return null;
+
+  const annual = reportCode === "11011";
+  const quarterAmt = (r: DartFsRow | null): Amount => ({ current: num(r?.thstrm_amount), priorYear: num(r?.frmtrm_q_amount) });
+  const cumAmt = (r: DartFsRow | null): Amount =>
+    annual
+      ? { current: num(r?.thstrm_amount), priorYear: num(r?.frmtrm_amount) }
+      : // 1분기는 분기 = 누적이라 add가 비어 있을 수 있다
+        { current: num(r?.thstrm_add_amount) ?? num(r?.thstrm_amount), priorYear: num(r?.frmtrm_add_amount) ?? num(r?.frmtrm_q_amount) };
+  const label = REPORT_LABEL[reportCode];
+  const cumulative = { revenue: cumAmt(revenue), operatingIncome: cumAmt(op), netIncome: cumAmt(net) };
+  const operatingCashFlow: Amount = { current: num(ocf?.thstrm_amount), priorYear: annual ? num(ocf?.frmtrm_amount) : num(ocf?.frmtrm_q_amount) ?? num(ocf?.frmtrm_amount) };
+
+  // 해석은 부호 비교만(규칙) — "이익의 질" 같은 판단을 숫자 없이 하지 않는다
+  const notes: string[] = [];
+  const ni = cumulative.netIncome.current;
+  const oi = cumulative.operatingIncome.current;
+  const cf = operatingCashFlow.current;
+  if (ni !== null && cf !== null && ni > 0 && cf < 0) notes.push("순이익은 흑자인데 영업활동현금흐름은 마이너스 — 이익이 현금으로 들어오고 있는지 확인이 필요해요");
+  if (oi !== null && cf !== null && oi < 0 && cf < 0) notes.push("영업손실이면서 영업활동현금흐름도 마이너스 — 영업에서 현금이 빠져나가는 중이에요");
+  if (oi !== null && cf !== null && oi < 0 && cf > 0) notes.push("영업손실이지만 영업활동현금흐름은 플러스예요(운전자본 변동 등 일시 요인일 수 있음)");
+  const pOi = cumulative.operatingIncome.priorYear;
+  if (oi !== null && pOi !== null && oi > 0 && pOi < 0) notes.push("전년 같은 기간 적자에서 영업이익 흑자로 돌아섰어요");
+  if (oi !== null && pOi !== null && oi < 0 && pOi > 0) notes.push("전년 같은 기간 흑자에서 영업적자로 돌아섰어요");
+
+  return {
+    year,
+    reportCode,
+    reportName: `${year}년 ${label.report}`,
+    fsLabel,
+    quarterLabel: label.quarter,
+    cumulativeLabel: label.cumulative,
+    quarter: annual ? null : { revenue: quarterAmt(revenue), operatingIncome: quarterAmt(op), netIncome: quarterAmt(net) },
+    cumulative,
+    operatingCashFlow,
+    notes,
+  };
+}
+
+// 최신 보고서부터 찾을 순서 — 올해 3분기 → 반기 → 1분기 → 작년 사업보고서 → 작년 3분기.
+// 아직 안 나온 보고서는 DART가 "013 조회된 데이터 없음"으로 답해서 다음 후보로 넘어간다.
+export function reportCandidates(nowYear: number): { year: number; code: ReportCode }[] {
+  return [
+    { year: nowYear, code: "11014" },
+    { year: nowYear, code: "11012" },
+    { year: nowYear, code: "11013" },
+    { year: nowYear - 1, code: "11011" },
+    { year: nowYear - 1, code: "11014" },
+  ];
+}
+
 // ---------------------------------------------------------------- 시나리오
 
 export type Scenario = {

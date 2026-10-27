@@ -67,6 +67,9 @@ export type ChartDetail = {
   missingMas: MaPeriod[]; // 상장 기간이 짧아 계산 못 한 이평
   alignment: "정배열" | "역배열" | "혼조" | null; // 5·20·60·120 네 개가 다 있을 때만
   ranges: PriceRange[];
+  // 오늘(마지막 캔들)을 뺀 직전 20거래일 최저가 — "20거래일 최저가 이탈" 이벤트용.
+  // ranges의 20일 저점은 오늘을 포함해서 현재가가 그 아래로 갈 수 없다.
+  prior20Low: { price: number; date: string } | null;
   support: Level | null;
   resistance: Level | null;
   rsi14: number | null;
@@ -207,6 +210,13 @@ export function computeChartDetail(candles: ChartCandle[], price: number): Chart
   const toLevel = (l: { price: number; touches: number } | null): Level | null =>
     l ? { price: l.price, touches: l.touches, distancePct: ((l.price - price) / price) * 100 } : null;
 
+  const prior = candles.slice(-21, -1);
+  let prior20Low: ChartDetail["prior20Low"] = null;
+  if (prior.length === 20) {
+    const lo = prior.reduce((m, c) => (c.low <= m.low ? c : m), prior[0]);
+    prior20Low = { price: lo.low, date: lo.date };
+  }
+
   const atrValue = atr14(candles);
   return {
     asOfDate: candles[n - 1].date,
@@ -215,6 +225,7 @@ export function computeChartDetail(candles: ChartCandle[], price: number): Chart
     missingMas,
     alignment,
     ranges,
+    prior20Low,
     support: toLevel(near.support),
     resistance: toLevel(near.resistance),
     rsi14: rsi(closes),
@@ -311,10 +322,15 @@ export type InvestorFlow = {
   streak: { direction: "순매수" | "순매도"; days: number } | null; // 최신일부터 같은 방향이 이어진 거래일 수
 };
 
+// 외국인·기관이 "같은 날 둘 다" 같은 방향으로 판 날이 최신일부터 며칠 이어졌는지 —
+// 각자의 연속일수(InvestorFlow.streak)와 달리 동반 매도/매수만 센다.
+export type JointStreak = { direction: "동반 순매도" | "동반 순매수"; days: number; startDate: string; endDate: string };
+
 export type FlowDetail = {
   asOfDate: string | null; // 수급 데이터의 마지막 집계일(장중엔 보통 전 거래일)
   days: number; // 받아온 거래일 수
   investors: InvestorFlow[];
+  joint: JointStreak | null;
 };
 
 const QTY_KEY: Record<InvestorKey, "foreignQty" | "institutionQty" | "individualQty"> = {
@@ -360,7 +376,16 @@ export function computeFlowDetail(rows: InvestorTrendRow[], candles: ChartCandle
     };
   });
 
-  return { asOfDate: rows[0]?.date ?? null, days: rows.length, investors };
+  let joint: JointStreak | null = null;
+  const sideOf = (r: InvestorTrendRow) => (r.foreignQty < 0 && r.institutionQty < 0 ? -1 : r.foreignQty > 0 && r.institutionQty > 0 ? 1 : 0);
+  const side = rows[0] ? sideOf(rows[0]) : 0;
+  if (side !== 0) {
+    let n = 0;
+    while (n < rows.length && sideOf(rows[n]) === side) n++;
+    joint = { direction: side < 0 ? "동반 순매도" : "동반 순매수", days: n, startDate: rows[n - 1].date, endDate: rows[0].date };
+  }
+
+  return { asOfDate: rows[0]?.date ?? null, days: rows.length, investors, joint };
 }
 
 export type HoldingDetail = {

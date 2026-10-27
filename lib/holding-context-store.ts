@@ -8,9 +8,10 @@
 
 import { prisma } from "@/lib/prisma";
 import { fetchNewsResult, type NewsItem } from "@/lib/naver-news";
-import { fetchRecentFilingsResult, getCorpCode } from "@/lib/dart";
+import { fetchLatestQuarterlyFinancials, fetchRecentFilingsResult, getCorpCode } from "@/lib/dart";
 import { getMarketIndexQuotes } from "@/lib/kis-index-quote";
 import { getThesis } from "@/lib/holding-thesis";
+import { prevBusinessDay } from "@/lib/dates";
 import {
   decomposeMove,
   importantFilings,
@@ -18,6 +19,7 @@ import {
   sectorAverage,
   type ClassifiedFiling,
   type MoveDecomposition,
+  type QuarterlyFinancials,
 } from "@/lib/holding-context";
 
 export type MarketIndexMap = { 코스피: number | null; 코스닥: number | null; ok: boolean };
@@ -37,6 +39,7 @@ export async function fetchMarketIndexMap(): Promise<MarketIndexMap> {
 export type HoldingContext = {
   news: { ok: boolean; items: NewsItem[] };
   filings: { ok: boolean; items: ClassifiedFiling[]; total: number };
+  quarterly: { ok: boolean; data: QuarterlyFinancials | null };
   theme: string | null;
   move: MoveDecomposition;
   thesis: { reason: string; invalidation: string | null; updatedAt: string } | null;
@@ -71,13 +74,19 @@ export async function gatherHoldingContext(p: {
   deadlineAt: number;
 }): Promise<HoldingContext> {
   const now = Date.now();
-  const [newsRes, filingsRes, sector, thesis] = await Promise.all([
+  const corpPromise = getCorpCode(p.code, p.deadlineAt).catch(() => null);
+  const [newsRes, filingsRes, quarterly, sector, thesis] = await Promise.all([
     fetchNewsResult(p.name, 20, "date").catch(() => ({ ok: false, items: [] as NewsItem[] })),
     (async () => {
-      const corp = await getCorpCode(p.code, p.deadlineAt).catch(() => null);
+      const corp = await corpPromise;
       if (!corp) return { ok: false, filings: [] };
       return fetchRecentFilingsResult(corp, p.deadlineAt, 30);
     })().catch(() => ({ ok: false, filings: [] })),
+    (async () => {
+      const corp = await corpPromise;
+      if (!corp) return { ok: false, data: null };
+      return fetchLatestQuarterlyFinancials(corp, p.deadlineAt);
+    })().catch(() => ({ ok: false, data: null })),
     sectorFor(p.code).catch(() => ({ theme: null, sector: null })),
     getThesis(p.userId, p.code).catch(() => null),
   ]);
@@ -86,6 +95,7 @@ export async function gatherHoldingContext(p: {
   return {
     news: { ok: newsRes.ok, items: recentRelevantNews(p.name, newsRes.items, now) },
     filings: { ok: filingsRes.ok, items: importantFilings(filingsRes.filings), total: filingsRes.filings.length },
+    quarterly,
     theme: sector.theme,
     move: decomposeMove({
       stockPct: p.stockPct,
@@ -94,4 +104,25 @@ export async function gatherHoldingContext(p: {
     }),
     thesis: thesis ? { reason: thesis.reason, invalidation: thesis.invalidation, updatedAt: thesis.updatedAt.toISOString() } : null,
   };
+}
+
+// 사건 감지용(lib/holding-events.ts) — 보유 전 종목의 오늘·전 거래일 중요 공시를 정시마다
+// 본다. 등급과 무관하게 공시는 바로 알려야 해서 알림 대상 종목만이 아니라 전부. 조회에
+// 실패한 종목은 null(그 종목은 "공시 없음"으로 처리하지 않는다).
+export async function fetchRecentImportantFilings(codes: string[], date: string, deadlineAt: number): Promise<Map<string, ClassifiedFiling[] | null>> {
+  const since = prevBusinessDay(date).replaceAll("-", "");
+  const out = new Map<string, ClassifiedFiling[] | null>();
+  await Promise.all(
+    codes.map(async (code) => {
+      try {
+        const corp = await getCorpCode(code, deadlineAt);
+        if (!corp) return void out.set(code, null);
+        const res = await fetchRecentFilingsResult(corp, deadlineAt, 5);
+        out.set(code, res.ok ? importantFilings(res.filings.filter((f) => f.reportDate >= since), 20) : null);
+      } catch {
+        out.set(code, null);
+      }
+    })
+  );
+  return out;
 }

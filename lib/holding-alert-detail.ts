@@ -10,7 +10,7 @@ import { STATE_ICON, type AssessmentState, type FinancialYear, type HoldingAsses
 import type { PriceSnapshot } from "@/lib/holding-price";
 import type { ChartDetail, FlowDetail, InvestorFlow, VolumeDetail } from "@/lib/holding-detail";
 import { INVESTOR_LABEL } from "@/lib/holding-detail";
-import type { ClassifiedFiling, MoveDecomposition, Scenario } from "@/lib/holding-context";
+import type { Amount, ClassifiedFiling, MoveDecomposition, QuarterlyFinancials, Scenario } from "@/lib/holding-context";
 import type { NewsItem } from "@/lib/naver-news";
 import type { MarketSession } from "@/lib/dates";
 
@@ -97,10 +97,11 @@ export type AlertRecordPayload = {
   technical: { price: PriceSnapshot | null; chart: ChartDetail | null };
   volume: VolumeDetail | null;
   flow: FlowDetail | null;
-  financial: { years: FinancialYear[]; signalNote: string | null };
+  // quarterly는 E단계(2026-10-27)에 추가 — 그 전 기록엔 없다(없으면 "연결 전 기록"으로 표시)
+  financial: { years: FinancialYear[]; signalNote: string | null; quarterly?: { ok: boolean; data: QuarterlyFinancials | null } };
   sector: { theme: string | null; move: MoveDecomposition | null };
   news: { news: { ok: boolean; items: NewsItem[] }; filings: { ok: boolean; items: ClassifiedFiling[]; total: number } };
-  trigger: { reasons: string[]; signals: Signal[]; stateNote: string; deepLoss: string | null };
+  trigger: { reasons: string[]; signals: Signal[]; stateNote: string; deepLoss: string | null; events?: { severity: string; title: string }[] };
   action: { scenarios: Scenario[] | null; thesis: { reason: string; invalidation: string | null; updatedAt: string } | null };
   portfolio: PortfolioSnapshot | null;
   dataQuality: DataQualityItem[];
@@ -366,6 +367,32 @@ export function renderHoldSection(r: AlertRecordRow, p: AlertRecordPayload): str
 
 // ---------------------------------------------------------------- 📰 뉴스·공시
 
+function amountText(label: string, a: Amount): string {
+  if (a.current === null) return `${label} -`;
+  const yoy =
+    a.priorYear === null
+      ? ""
+      : a.priorYear > 0 && a.current > 0
+        ? `(전년 ${compactWon(a.priorYear)}, ${pct(((a.current - a.priorYear) / a.priorYear) * 100, 0)})`
+        : `(전년 ${compactWon(a.priorYear)})`; // 적자가 끼면 증감률이 뜻이 없어 금액만
+  return `${label} ${compactWon(a.current)}${yoy}`;
+}
+
+function quarterlyLines(q: { ok: boolean; data: QuarterlyFinancials | null } | undefined): string[] {
+  if (!q) return ["분기 실적·영업현금흐름: 이 알림 시점엔 아직 연결 전이었어요"];
+  if (!q.ok) return ["분기 실적: DART 조회 실패 — 실적이 없다는 뜻은 아니에요"];
+  const d = q.data;
+  if (!d) return ["분기 실적: DART에서 최근 보고서를 찾지 못했어요"];
+  const out = [`[분기 실적] DART ${d.reportName}(${d.fsLabel})`];
+  if (d.quarter && d.quarterLabel) {
+    out.push(`${d.quarterLabel}(3개월): ${amountText("매출", d.quarter.revenue)} · ${amountText("영업이익", d.quarter.operatingIncome)} · ${amountText("순이익", d.quarter.netIncome)}`);
+  }
+  out.push(`${d.cumulativeLabel}: ${amountText("매출", d.cumulative.revenue)} · ${amountText("영업이익", d.cumulative.operatingIncome)} · ${amountText("순이익", d.cumulative.netIncome)}`);
+  out.push(`영업활동현금흐름(${d.cumulativeLabel}): ${d.operatingCashFlow.current === null ? "-" : compactWon(d.operatingCashFlow.current, true)}${d.operatingCashFlow.priorYear !== null ? `(전년 같은 기간 ${compactWon(d.operatingCashFlow.priorYear, true)})` : ""}`);
+  for (const n of d.notes) out.push(`→ ${n}`);
+  return out;
+}
+
 const SEVERITY_ICON = { 긴급: "🚨", 주의: "⚠️", 참고: "ℹ️" } as const;
 
 export function renderNewsSection(r: AlertRecordRow, p: AlertRecordPayload): string {
@@ -397,7 +424,7 @@ export function renderNewsSection(r: AlertRecordRow, p: AlertRecordPayload): str
   for (const y of years) {
     lines.push(`${y.year}년 영업이익 ${compactWon(y.operatingProfit)} · 순이익 ${compactWon(y.netIncome)} · 자본총계 ${compactWon(y.totalEquity)}`);
   }
-  lines.push("분기 실적·영업현금흐름: 아직 연결 안 됨(DART에서 직접 확인)");
+  lines.push(...quarterlyLines(p.financial.quarterly));
   lines.push("", "※ 공시는 제목으로 분류해서 정정·취소 공시도 섞일 수 있어요. 영향은 원문으로 확인해줘");
   return fit(lines);
 }
@@ -428,6 +455,9 @@ export function renderRiskSection(r: AlertRecordRow, p: AlertRecordPayload): str
   for (const s of p.trigger.signals) lines.push(`${s.label} ${s.score === null ? "제외" : score(s.score)}: ${s.note}`);
   if (p.trigger.reasons.length > 0) lines.push(`바뀐 핵심 원인: ${p.trigger.reasons.join(" / ")}`);
   if (p.trigger.deepLoss) lines.push(p.trigger.deepLoss);
+  if (p.trigger.events && p.trigger.events.length > 0) {
+    lines.push("", "[이번 알림의 이벤트]", ...p.trigger.events.map((e) => `${e.severity === "긴급" ? "🚨" : e.severity === "주의" ? "📌" : "ℹ️"} ${e.title}`));
+  }
 
   lines.push("", "[오늘 움직임 원인 분리]");
   if (p.sector.move) lines.push(...moveLine(p.sector.move));

@@ -12,14 +12,16 @@
 // 막되, 같은 날 더 나빠지면(toState가 바뀌면) 다시 보낸다.
 
 import { prisma } from "@/lib/prisma";
-import { todayISO } from "@/lib/dates";
+import { kstDateParts, todayISO } from "@/lib/dates";
 import { getHoldings } from "@/lib/portfolio";
 import { getAssessmentReport, type AssessmentReport } from "@/lib/holding-assessment-store";
 import { sendTelegramMessage } from "@/lib/telegram-send";
 import { saveAssistantBroadcast } from "@/lib/chat-history";
-import { STATE_RANK, type AssessmentState } from "@/lib/holding-assessment";
-import { decideAlert, deepLossLine, formatAlertMessage, formatStockAlert, pickReasons, type AlertKind, type ImprovedHolding } from "@/lib/holding-alert-format";
-import { fetchMarketIndexMap, gatherHoldingContext } from "@/lib/holding-context-store";
+import { STATE_ICON, STATE_RANK, type AssessmentState } from "@/lib/holding-assessment";
+import { decideAlert, deepLossLine, formatAlertMessage, formatPriceLine, formatStockAlert, pickReasons, type AlertKind, type ImprovedHolding } from "@/lib/holding-alert-format";
+import { fetchMarketIndexMap, fetchRecentImportantFilings, gatherHoldingContext } from "@/lib/holding-context-store";
+import { getAllTheses } from "@/lib/holding-thesis";
+import { decideGradeDelivery, detectHoldingEvents, gradePendingKey, planEventDelivery } from "@/lib/holding-events";
 import { buildScenarios } from "@/lib/holding-context";
 import {
   ANALYSIS_VERSION,
@@ -160,11 +162,12 @@ export type PlannedAlert = {
   code: string;
   state: AssessmentState;
   name: string;
-  kind: AlertKind;
+  kind: AlertKind | "event"; // event = 등급은 그대로인데 사건(lib/holding-events.ts)만 있는 종목
   text: string;
   previousState: AssessmentState | null;
   previousScore: number | null;
   changedReasons: string[];
+  events?: { severity: string; title: string }[]; // 이 종목의 이번 알림 사건(상세 ⚠️ 화면용)
 };
 
 // 어제(바로 전 기록일)와 비교해 오늘 실제로 나빠진 종목만 고른다. 예전엔
@@ -225,7 +228,7 @@ export async function recordShared(report: AssessmentReport): Promise<RecordShar
 }
 
 // HoldingAlertRecord 한 행에 들어갈 값(저장은 안 함) — 미리보기 스크립트도 이걸 쓴다.
-export async function buildAlertRecordData(userId: string, report: AssessmentReport, alert: PlannedAlert, shared: RecordShared) {
+export async function buildAlertRecordData(userId: string, report: AssessmentReport, alert: PlannedAlert, shared: RecordShared, alertType: string = alert.kind) {
   const { deadlineAt, portfolioDataAsOf, indices, portfolio } = shared;
   const a = report.assessments.find((x) => x.code === alert.code);
   if (!a) return null;
@@ -248,16 +251,27 @@ export async function buildAlertRecordData(userId: string, report: AssessmentRep
     { item: "공시", ok: ctx?.filings.ok ?? false, note: "" },
     { item: "지수", ok: indices.ok, note: "" },
     { item: "업종", ok: !!ctx?.move.sector, note: !ctx?.theme ? "분류 없음" : ctx.move.sector ? `${kstLabel(ctx.move.sector.asOf)} 집계` : "비교 종목 부족" },
-    { item: "재무", ok: (detail?.financials.length ?? 0) > 0, note: "연간만" },
+    { item: "연간 재무", ok: (detail?.financials.length ?? 0) > 0, note: "" },
+    { item: "분기 실적", ok: !!ctx?.quarterly.data, note: ctx?.quarterly.data ? ctx.quarterly.data.reportName : ctx?.quarterly.ok ? "보고서 없음" : "" },
   ];
   const payload: AlertRecordPayload = {
     technical: { price, chart: detail?.chart ?? null },
     volume: detail?.volume ?? null,
     flow: detail?.flow ?? null,
-    financial: { years: detail?.financials ?? [], signalNote: a.signals.find((s) => s.key === "financial")?.note ?? null },
+    financial: {
+      years: detail?.financials ?? [],
+      signalNote: a.signals.find((s) => s.key === "financial")?.note ?? null,
+      quarterly: ctx?.quarterly ?? { ok: false, data: null },
+    },
     sector: { theme: ctx?.theme ?? null, move: ctx?.move ?? null },
     news: { news: ctx?.news ?? { ok: false, items: [] }, filings: ctx?.filings ?? { ok: false, items: [], total: 0 } },
-    trigger: { reasons: pickReasons(a, alert.changedReasons), signals: a.signals, stateNote: a.stateNote, deepLoss: deepLossLine(a) },
+    trigger: {
+      reasons: alert.kind === "event" ? [] : pickReasons(a, alert.changedReasons),
+      signals: a.signals,
+      stateNote: a.stateNote,
+      deepLoss: deepLossLine(a),
+      events: alert.events ?? [],
+    },
     action: { scenarios: buildScenarios(detail?.chart ?? null, detail?.volume ?? null), thesis: ctx?.thesis ?? null },
     portfolio,
     dataQuality,
@@ -267,7 +281,7 @@ export async function buildAlertRecordData(userId: string, report: AssessmentRep
     userId,
     stockCode: a.code,
     stockName: a.name,
-    alertType: alert.kind,
+    alertType,
     marketDataAsOf: price?.asOf ?? null,
     portfolioDataAsOf,
     previousSeverity: alert.previousState,
@@ -286,12 +300,12 @@ export async function buildAlertRecordData(userId: string, report: AssessmentRep
   };
 }
 
-async function createAlertRecords(userId: string, report: AssessmentReport, alerts: PlannedAlert[]): Promise<{ id: string; name: string }[]> {
+async function createAlertRecords(userId: string, report: AssessmentReport, alerts: PlannedAlert[], alertType?: string): Promise<{ id: string; name: string }[]> {
   const shared = await recordShared(report);
   const created = await Promise.all(
     alerts.map(async (alert) => {
       try {
-        const data = await buildAlertRecordData(userId, report, alert, shared);
+        const data = await buildAlertRecordData(userId, report, alert, shared, alertType ?? alert.kind);
         if (!data) return null;
         const row = await prisma.holdingAlertRecord.create({ data, select: { id: true } });
         return { id: row.id, name: data.stockName };
@@ -304,7 +318,149 @@ async function createAlertRecords(userId: string, report: AssessmentReport, aler
   return created.filter((x): x is { id: string; name: string } => x !== null);
 }
 
+const MAX_DETAIL_BUTTONS = 8; // 버튼이 너무 많으면 화면을 덮는다 — 우선순위 높은 종목부터
 
+// 한 사용자 몫의 한 정시 처리: 등급 악화 + 사건을 모아 한 메시지로.
+//   1) 사건 감지(lib/holding-events.ts) → 이미 보낸 사건은 빼고(HoldingEventLog)
+//   2) 등급 악화 후보 → 히스테리시스(직전 정시에도 나빴는지)로 보낼지/보류할지
+//   3) 보낼 게 있으면 종목별 상세 기록 + 버튼과 함께 발송
+//   4) 발송에 성공했을 때만 "보냄" 기록 — 실패하면 다음 정시에 다시 시도
+async function runAlertsForUser(userId: string, chatId: string): Promise<boolean> {
+  const report = await getAssessmentReport(userId);
+  const now = new Date();
+  const lastRunOfDay = kstDateParts(now).hour >= 15; // 15시 정시가 그날 마지막 실행(vercel.json)
+  const codes = report.assessments.map((a) => a.code);
+
+  const [eventLogs, theses, filings] = await Promise.all([
+    prisma.holdingEventLog.findMany({ where: { userId } }),
+    getAllTheses(userId).catch(() => []),
+    fetchRecentImportantFilings(codes, report.date, Date.now() + 10_000).catch(() => new Map()),
+  ]);
+
+  // 1) 사건
+  const detected = report.assessments.map((a) =>
+    detectHoldingEvents({
+      date: report.date,
+      assessment: a,
+      price: report.prices[a.code] ?? null,
+      detail: report.details[a.code] ?? null,
+      filings: filings.get(a.code) ?? null,
+      thesisInvalidation: theses.find((t) => t.code === a.code)?.invalidation ?? null,
+    })
+  );
+  const eventPlan = planEventDelivery({
+    events: detected.flatMap((d) => d.events),
+    clearPrefixes: detected.flatMap((d) => d.clearPrefixes),
+    logs: eventLogs.filter((l) => !l.eventKey.startsWith("grade-pending:")),
+    seedOnly: eventLogs.length === 0,
+  });
+
+  // 2) 등급 — 히스테리시스
+  const { alerts: candidates, improved } = await planAlerts(userId, report);
+  const urgentCodes = new Set(eventPlan.send.filter((e) => e.severity === "긴급").map((e) => e.code));
+  const gradeAlerts: PlannedAlert[] = [];
+  const holds: { key: string; code: string; state: AssessmentState; reset: boolean }[] = [];
+  for (const g of candidates) {
+    const key = gradePendingKey(g.code, report.date, g.state);
+    const log = eventLogs.find((l) => l.eventKey === key);
+    const decision = decideGradeDelivery({
+      state: g.state,
+      previousState: g.previousState,
+      pending: log ? { firstSeenAt: log.firstSeenAt, lastSeenAt: log.lastSeenAt } : null,
+      now,
+      lastRunOfDay,
+      hasUrgentEvent: urgentCodes.has(g.code),
+    });
+    if (decision.action === "send") gradeAlerts.push(g);
+    else holds.push({ key, code: g.code, state: g.state, reset: decision.resetPending });
+  }
+
+  // 보내든 안 보내든 남겨야 하는 기록: 해소된 사건, 보류 중인 등급 악화, 첫 실행의 기존 상태
+  await Promise.all([
+    eventPlan.resolveKeys.length > 0
+      ? prisma.holdingEventLog.updateMany({ where: { userId, eventKey: { in: eventPlan.resolveKeys } }, data: { resolvedAt: now } })
+      : null,
+    ...holds.map((h) =>
+      prisma.holdingEventLog.upsert({
+        where: { userId_eventKey: { userId, eventKey: h.key } },
+        create: { userId, code: h.code, eventType: "grade-pending", eventKey: h.key, severity: h.state, title: `${h.state} 악화 확인 대기`, firstSeenAt: now, lastSeenAt: now },
+        update: h.reset ? { firstSeenAt: now, lastSeenAt: now } : { lastSeenAt: now },
+      })
+    ),
+    ...eventPlan.seed.map((e) =>
+      prisma.holdingEventLog.upsert({
+        where: { userId_eventKey: { userId, eventKey: e.key } },
+        create: { userId, code: e.code, eventType: e.type, eventKey: e.key, severity: e.severity, title: e.title, sentAt: now },
+        update: {},
+      })
+    ),
+  ]);
+
+  if (gradeAlerts.length === 0 && eventPlan.send.length === 0) return false;
+
+  // 3) 상세 기록 — 등급 악화 종목 먼저, 그다음 사건만 있는 종목(긴급 먼저)
+  const eventsByCode = new Map<string, { severity: string; title: string }[]>();
+  for (const e of eventPlan.send) eventsByCode.set(e.code, [...(eventsByCode.get(e.code) ?? []), { severity: e.severity, title: e.title }]);
+  const recordTargets: PlannedAlert[] = gradeAlerts.map((g) => ({ ...g, events: eventsByCode.get(g.code) ?? [] }));
+  for (const e of eventPlan.send) {
+    if (recordTargets.some((t) => t.code === e.code)) continue;
+    const a = report.assessments.find((x) => x.code === e.code);
+    if (!a) continue;
+    const prev = report.history[a.code]?.previousDay ?? null;
+    recordTargets.push({
+      code: a.code,
+      state: a.state,
+      name: a.name,
+      kind: "event",
+      text: "",
+      previousState: prev?.state ?? null,
+      previousScore: prev?.totalScore ?? null,
+      changedReasons: [],
+      events: eventsByCode.get(a.code) ?? [],
+    });
+  }
+  const records = await createAlertRecords(userId, report, recordTargets.slice(0, MAX_DETAIL_BUTTONS)).catch((e) => {
+    console.error("[portfolio-alerts] alert records failed", e);
+    return [] as { id: string; name: string }[];
+  });
+
+  const message = formatAlertMessage({
+    asOf: report.asOf,
+    session: report.session,
+    analyzedCount: report.assessments.length,
+    stockBlocks: gradeAlerts.map((x) => ({ name: x.name, kind: x.kind as AlertKind, text: x.text })),
+    improved,
+    events: eventPlan.send.map((e) => ({ name: e.name, code: e.code, severity: e.severity, title: e.title })),
+    hasButtons: records.length > 0,
+  });
+  const sent = await sendTelegramMessage(chatId, message, records.length > 0 ? { replyMarkup: summaryKeyboard(records) } : {});
+  if (records.length > 0) {
+    await prisma.holdingAlertRecord
+      .updateMany({ where: { id: { in: records.map((r) => r.id) }, userId }, data: { deliveryStatus: sent ? "sent" : "failed" } })
+      .catch(() => {});
+  }
+  if (!sent) return false; // 중복 방지 기록을 안 남겨야 다음 정시에 다시 시도한다
+
+  // 4) 보낸 것 기록
+  await Promise.all([
+    ...gradeAlerts.map((x) =>
+      prisma.portfolioAlertLog.upsert({
+        where: { userId_code_date: { userId, code: x.code, date: report.date } },
+        create: { userId, code: x.code, date: report.date, toState: x.state },
+        update: { toState: x.state },
+      })
+    ),
+    ...eventPlan.send.map((e) =>
+      prisma.holdingEventLog.upsert({
+        where: { userId_eventKey: { userId, eventKey: e.key } },
+        create: { userId, code: e.code, eventType: e.type, eventKey: e.key, severity: e.severity, title: e.title, firstSeenAt: now, lastSeenAt: now, sentAt: now },
+        update: { severity: e.severity, title: e.title, lastSeenAt: now, sentAt: now, resolvedAt: null },
+      })
+    ),
+  ]);
+  await saveAssistantBroadcast(userId, report.date, message);
+  return true;
+}
 
 export async function sendPortfolioAlerts(): Promise<AlertRunSummary> {
   const users = await prisma.user.findMany({
@@ -322,45 +478,55 @@ export async function sendPortfolioAlerts(): Promise<AlertRunSummary> {
     usersChecked++;
 
     try {
-      const report = await getAssessmentReport(user.id);
-      const { alerts, improved } = await planAlerts(user.id, report);
-      if (alerts.length === 0) continue;
-
-      const records = await createAlertRecords(user.id, report, alerts).catch((e) => {
-        console.error("[portfolio-alerts] alert records failed", e);
-        return [] as { id: string; name: string }[];
-      });
-      const message = formatAlertMessage({
-        asOf: report.asOf,
-        session: report.session,
-        analyzedCount: report.assessments.length,
-        stockBlocks: alerts.map((x) => ({ name: x.name, kind: x.kind, text: x.text })),
-        improved,
-        hasButtons: records.length > 0,
-      });
-      const sent = await sendTelegramMessage(user.telegramChatId, message, records.length > 0 ? { replyMarkup: summaryKeyboard(records) } : {});
-      if (records.length > 0) {
-        await prisma.holdingAlertRecord
-          .updateMany({ where: { id: { in: records.map((r) => r.id) }, userId: user.id }, data: { deliveryStatus: sent ? "sent" : "failed" } })
-          .catch(() => {});
-      }
-      if (!sent) continue; // 중복 방지 기록을 안 남겨야 다음 정시에 다시 시도한다
-
-      messagesSent++;
-      await Promise.all(
-        alerts.map((x) =>
-          prisma.portfolioAlertLog.upsert({
-            where: { userId_code_date: { userId: user.id, code: x.code, date: report.date } },
-            create: { userId: user.id, code: x.code, date: report.date, toState: x.state },
-            update: { toState: x.state },
-          })
-        )
-      );
-      await saveAssistantBroadcast(user.id, report.date, message);
+      if (await runAlertsForUser(user.id, user.telegramChatId)) messagesSent++;
     } catch (e) {
       console.error("[portfolio-alerts] failed for user", user.id, e);
     }
   }
 
   return { usersChecked, messagesSent };
+}
+
+// 상세 버튼 동작 확인용 테스트 알림(scripts/send-test-holding-alert.ts) — 실제 알림과
+// 같은 경로로 기록·버튼을 만들되, 맨 위에 "실제 등급 변화가 아님"을 밝힌다. 하루 중복
+// 방지 기록(PortfolioAlertLog)과 채팅 기록은 남기지 않는다(실제 알림이 막히지 않게,
+// 골구가 테스트 문구를 대화 맥락으로 착각하지 않게). 기록은 alertType "test"로 구분.
+export async function sendTestPortfolioAlert(userId: string, maxStocks = 2): Promise<{ sent: boolean; records: { id: string; name: string }[] }> {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { telegramChatId: true } });
+  if (!user?.telegramChatId) throw new Error("텔레그램 chat id가 연결되지 않은 계정이에요");
+  const report = await getAssessmentReport(userId);
+  const picks = report.assessments.slice(0, maxStocks); // 위험한 순으로 정렬돼 있음
+
+  const alerts: PlannedAlert[] = picks.map((a) => {
+    const prev = report.history[a.code]?.previousDay ?? null;
+    const reasons = pickReasons(a, []);
+    return {
+      code: a.code,
+      state: a.state,
+      name: a.name,
+      kind: "new-risky",
+      text: [
+        `**${a.name}**(${a.code}) 지금 등급 **${STATE_ICON[a.state]}${a.state}**`,
+        formatPriceLine(a, report.prices[a.code]),
+        reasons.length > 0 ? `약한 신호: ${reasons.join(" / ")}` : `판정: ${a.stateNote}`,
+      ].join("\n"),
+      previousState: prev?.state ?? null,
+      previousScore: prev?.totalScore ?? null,
+      changedReasons: prev?.reasons ?? [],
+    };
+  });
+  const records = await createAlertRecords(userId, report, alerts, "test");
+  const message = [
+    `🧪 **테스트 알림** · ${report.asOf} 기준(${report.session})`,
+    "실제 등급 변화가 아니라 상세 버튼이 잘 되는지 보려고 보낸 거야. 위험한 순으로 2종목.",
+    "",
+    alerts.map((a) => a.text).join("\n\n"),
+    "",
+    records.length > 0 ? "아래 🔎 버튼을 누르면 상세가 새 메시지로 뜨고, 그 안에서 📊💰📰⚠️📈 탭을 바꿔볼 수 있어." : "⚠️ 상세 기록 저장에 실패해서 버튼 없이 보냈어.",
+  ].join("\n");
+  const sent = await sendTelegramMessage(user.telegramChatId, message, records.length > 0 ? { replyMarkup: summaryKeyboard(records) } : {});
+  if (records.length > 0) {
+    await prisma.holdingAlertRecord.updateMany({ where: { id: { in: records.map((r) => r.id) }, userId }, data: { deliveryStatus: sent ? "sent" : "failed" } });
+  }
+  return { sent, records };
 }

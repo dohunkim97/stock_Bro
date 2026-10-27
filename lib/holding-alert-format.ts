@@ -106,24 +106,44 @@ export function formatStockAlert(p: {
 
 export type ImprovedHolding = { name: string; from: AssessmentState; to: AssessmentState };
 
+// 사건 한 줄(lib/holding-events.ts) — 등급 변화와 별개로 알리는 일.
+export type EventLine = { name: string; code: string; severity: "긴급" | "주의" | "참고"; title: string };
+
+const eventLine = (e: EventLine) => `- **${e.name}** ${e.title}`;
+
 export function formatAlertMessage(p: {
   asOf: string;
   session: MarketSession;
   analyzedCount: number;
   stockBlocks: { name: string; kind: AlertKind; text: string }[];
   improved: ImprovedHolding[];
+  events?: EventLine[]; // 심각도 순으로 정렬돼 있어야 한다
   hasButtons?: boolean; // 종목별 상세 버튼이 붙는지(알림 기록 저장에 실패하면 버튼 없이 나간다)
 }): string {
+  const events = p.events ?? [];
+  const urgent = events.filter((e) => e.severity === "긴급");
+  const caution = events.filter((e) => e.severity === "주의");
+  const info = events.filter((e) => e.severity === "참고");
   const worsened = p.stockBlocks.filter((b) => b.kind === "worsened").length;
   const newRisky = p.stockBlocks.length - worsened;
-  const counts = [`위험 상승 ${worsened}`, ...(newRisky > 0 ? [`신규 진단 위험 ${newRisky}`] : []), `위험 감소 ${p.improved.length}`];
+  const counts = [
+    `위험 상승 ${worsened}`,
+    ...(newRisky > 0 ? [`신규 진단 위험 ${newRisky}`] : []),
+    `위험 감소 ${p.improved.length}`,
+    ...(events.length > 0 ? [`이벤트 ${events.length}${urgent.length > 0 ? `(긴급 ${urgent.length})` : ""}`] : []),
+  ];
 
   const lines = [
-    `⚠️ 둥지 알림 · ${p.asOf} 기준(${p.session})`,
+    `${urgent.length > 0 ? "🚨" : "⚠️"} 둥지 알림 · ${p.asOf} 기준(${p.session})`,
     `보유 ${p.analyzedCount}종목 분석 — ${counts.join(" · ")}`,
   ];
-  if (p.stockBlocks.length > 0) lines.push(`우선 확인: **${p.stockBlocks[0].name}**`);
-  lines.push("", p.stockBlocks.map((b) => b.text).join("\n\n"));
+  // 우선 확인: 긴급 사건 → 등급 악화 → 주의 사건 순
+  const first = urgent[0]?.name ?? p.stockBlocks[0]?.name ?? caution[0]?.name ?? null;
+  if (first) lines.push(`우선 확인: **${first}**`);
+  if (urgent.length > 0) lines.push("", "🚨 긴급", ...urgent.map(eventLine));
+  if (p.stockBlocks.length > 0) lines.push("", p.stockBlocks.map((b) => b.text).join("\n\n"));
+  if (caution.length > 0) lines.push("", "📌 확인할 변화", ...caution.map(eventLine));
+  if (info.length > 0) lines.push("", "ℹ️ 참고", ...info.map(eventLine));
   if (p.improved.length > 0) {
     lines.push("", `위험 감소: ${p.improved.map((i) => `${i.name}(${STATE_ICON[i.from]}→${STATE_ICON[i.to]}${i.to})`).join(", ")}`);
   }
