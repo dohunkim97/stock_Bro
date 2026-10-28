@@ -224,14 +224,27 @@ export function sortEvents(events: HoldingEvent[]): HoldingEvent[] {
 // ---------------------------------------------------------------- 등급 히스테리시스
 
 // 등급 판정의 차트 신호(현재가가 20일선·60일선 위냐 아래냐)는 장중 가격이 이평 근처에서
-// 오르내리면 정시마다 뒤집힐 수 있다. 그래서 "나빠졌다"를 처음 본 정시엔 보류하고, 다음
-// 정시(약 1시간 뒤)에도 그대로면 보낸다. 등급 규칙 자체는 바꾸지 않는다(보내는 시점만).
+// 오르내리면 정시마다 뒤집힐 수 있다. 그래서 "나빠졌다"를 처음 본 실행엔 보류하고, 바로
+// 다음 실행에도 그대로면 보낸다. 등급 규칙 자체는 바꾸지 않는다(보내는 시점만).
 // 바로 보내는 경우: 한 번에 2단계 이상 악화, 같은 종목에 긴급 사건, 그날 마지막 정시(15시 —
 // 다음 확인 기회가 없다).
+//
+// "바로 다음 실행"을 시간 간격으로 재면 안 된다 — Vercel Hobby 크론은 정시가 아니라 슬롯마다
+// 정해진 분에 돈다(실측 2026-10-16~10-28: 09:25·10:50·12:35·13:20·14:54·15:54, 간격 45~94분).
+// 그래서 매 실행마다 더 이상 나쁘지 않은 종목의 보류 기록을 해소하고(stalePendingKeys),
+// 해소 안 된 보류 기록 = 직전 실행에서도 봤다는 뜻으로 쓴다. 시간 상한은 실행이 한 번
+// 통째로 빠졌을 때만 걸리는 안전장치.
 export const GRADE_CONFIRM_MIN_MS = 30 * 60 * 1000; // 처음 본 지 30분 이상 지났고
-export const GRADE_CONSECUTIVE_MAX_MS = 75 * 60 * 1000; // 바로 직전 정시에도 봤어야 "연속"
+export const GRADE_CONSECUTIVE_MAX_MS = 150 * 60 * 1000; // 마지막으로 본 지 2시간 30분 이내
 
+// pending: 해소 안 된 보류 기록만 넘긴다(해소된 건 null — 연속이 끊김).
 export type GradePending = { firstSeenAt: Date; lastSeenAt: Date };
+
+// 이번 실행에서 보류·발송 후보가 아닌 등급 보류 기록(좋아졌거나 이미 보냈거나 지난 날짜) —
+// 해소 처리해서 다음에 다시 나빠지면 처음부터 다시 재게 한다.
+export function stalePendingKeys(logs: { eventKey: string; resolvedAt: Date | null }[], activeKeys: Set<string>): string[] {
+  return logs.filter((l) => l.eventKey.startsWith("grade-pending:") && !l.resolvedAt && !activeKeys.has(l.eventKey)).map((l) => l.eventKey);
+}
 
 export function decideGradeDelivery(p: {
   state: AssessmentState;

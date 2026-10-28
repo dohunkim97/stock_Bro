@@ -7,6 +7,7 @@ import {
   detectHoldingEvents,
   parseThesisConditions,
   planEventDelivery,
+  stalePendingKeys,
   type DetectInput,
   type HoldingEvent,
 } from "@/lib/holding-events";
@@ -127,16 +128,34 @@ test("첫 실행엔 원래부터 이어지던 주의 상태는 조용히 기록�
 
 const at = (hhmm: string) => new Date(`2026-10-27T${hhmm}:00+09:00`);
 
-test("등급 악화를 처음 본 정시엔 보류하고, 다음 정시에도 그대로면 보낸다", () => {
+test("등급 악화를 처음 본 실행엔 보류하고, 다음 실행에도 그대로면 보낸다(실제 크론 시각 간격)", () => {
   const base = { state: "축소검토" as const, previousState: "관찰" as const, lastRunOfDay: false, hasUrgentEvent: false };
-  assert.deepEqual(decideGradeDelivery({ ...base, pending: null, now: at("10:00") }), { action: "hold", resetPending: true });
-  assert.equal(decideGradeDelivery({ ...base, pending: { firstSeenAt: at("10:00"), lastSeenAt: at("10:00") }, now: at("11:00") }).action, "send");
+  assert.deepEqual(decideGradeDelivery({ ...base, pending: null, now: at("09:25") }), { action: "hold", resetPending: true });
+  // Hobby 크론 실측 시각 — 09:25→10:50(85분), 12:35→13:20(45분), 13:20→14:54(94분) 모두 "연속"
+  assert.equal(decideGradeDelivery({ ...base, pending: { firstSeenAt: at("09:25"), lastSeenAt: at("09:25") }, now: at("10:50") }).action, "send");
+  assert.equal(decideGradeDelivery({ ...base, pending: { firstSeenAt: at("12:35"), lastSeenAt: at("12:35") }, now: at("13:20") }).action, "send");
+  assert.equal(decideGradeDelivery({ ...base, pending: { firstSeenAt: at("13:20"), lastSeenAt: at("13:20") }, now: at("14:54") }).action, "send");
+  // 같은 정시 안에서 두 번 돌면(수동 실행 등) 30분이 안 돼서 아직 보류
+  assert.equal(decideGradeDelivery({ ...base, pending: { firstSeenAt: at("10:50"), lastSeenAt: at("10:50") }, now: at("10:55") }).action, "hold");
 });
 
-test("중간에 좋아졌다가 다시 나빠지면 처음부터 다시 잰다(연속이 끊김)", () => {
+test("중간에 좋아지면 보류 기록이 해소되고, 다시 나빠지면 처음부터 다시 잰다", () => {
   const base = { state: "축소검토" as const, previousState: "관찰" as const, lastRunOfDay: false, hasUrgentEvent: false };
-  // 10시 악화 → 11시 회복(기록 갱신 없음) → 12시 다시 악화
-  assert.deepEqual(decideGradeDelivery({ ...base, pending: { firstSeenAt: at("10:00"), lastSeenAt: at("10:00") }, now: at("12:00") }), { action: "hold", resetPending: true });
+  const logs = [
+    { eventKey: "grade-pending:096770:2026-10-27:축소검토", resolvedAt: null }, // 이번에도 후보 — 유지
+    { eventKey: "grade-pending:054450:2026-10-27:축소검토", resolvedAt: null }, // 좋아짐 — 해소
+    { eventKey: "grade-pending:000250:2026-10-26:정밀점검", resolvedAt: null }, // 지난 날짜 — 해소
+    { eventKey: "grade-pending:200350:2026-10-27:축소검토", resolvedAt: at("10:50") }, // 이미 해소됨
+    { eventKey: "weight-high:096770", resolvedAt: null }, // 사건 기록은 건드리지 않는다
+  ];
+  assert.deepEqual(stalePendingKeys(logs, new Set(["grade-pending:096770:2026-10-27:축소검토"])), [
+    "grade-pending:054450:2026-10-27:축소검토",
+    "grade-pending:000250:2026-10-26:정밀점검",
+  ]);
+  // 해소된 기록은 pending으로 넘기지 않는다(null) → 처음 본 것처럼 다시 보류
+  assert.deepEqual(decideGradeDelivery({ ...base, pending: null, now: at("12:35") }), { action: "hold", resetPending: true });
+  // 실행이 통째로 빠져 2시간 30분 넘게 못 봤으면 연속으로 치지 않는다
+  assert.deepEqual(decideGradeDelivery({ ...base, pending: { firstSeenAt: at("09:25"), lastSeenAt: at("09:25") }, now: at("12:35") }), { action: "hold", resetPending: true });
 });
 
 test("2단계 이상 악화·같은 종목 긴급 사건·그날 마지막 정시엔 지연 없이 보낸다", () => {

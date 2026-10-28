@@ -21,7 +21,7 @@ import { STATE_ICON, STATE_RANK, type AssessmentState } from "@/lib/holding-asse
 import { decideAlert, deepLossLine, formatAlertMessage, formatPriceLine, formatStockAlert, pickReasons, type AlertKind, type ImprovedHolding } from "@/lib/holding-alert-format";
 import { fetchMarketIndexMap, fetchRecentImportantFilings, gatherHoldingContext } from "@/lib/holding-context-store";
 import { getAllTheses } from "@/lib/holding-thesis";
-import { decideGradeDelivery, detectHoldingEvents, gradePendingKey, planEventDelivery } from "@/lib/holding-events";
+import { decideGradeDelivery, detectHoldingEvents, gradePendingKey, planEventDelivery, stalePendingKeys } from "@/lib/holding-events";
 import { buildScenarios } from "@/lib/holding-context";
 import {
   ANALYSIS_VERSION,
@@ -360,9 +360,11 @@ async function runAlertsForUser(userId: string, chatId: string): Promise<boolean
   const urgentCodes = new Set(eventPlan.send.filter((e) => e.severity === "긴급").map((e) => e.code));
   const gradeAlerts: PlannedAlert[] = [];
   const holds: { key: string; code: string; state: AssessmentState; reset: boolean }[] = [];
+  const candidateKeys = new Set(candidates.map((g) => gradePendingKey(g.code, report.date, g.state)));
+  const stalePending = stalePendingKeys(eventLogs, candidateKeys);
   for (const g of candidates) {
     const key = gradePendingKey(g.code, report.date, g.state);
-    const log = eventLogs.find((l) => l.eventKey === key);
+    const log = eventLogs.find((l) => l.eventKey === key && !l.resolvedAt);
     const decision = decideGradeDelivery({
       state: g.state,
       previousState: g.previousState,
@@ -375,16 +377,17 @@ async function runAlertsForUser(userId: string, chatId: string): Promise<boolean
     else holds.push({ key, code: g.code, state: g.state, reset: decision.resetPending });
   }
 
-  // 보내든 안 보내든 남겨야 하는 기록: 해소된 사건, 보류 중인 등급 악화, 첫 실행의 기존 상태
+  // 보내든 안 보내든 남겨야 하는 기록: 해소된 사건·등급 보류, 보류 중인 등급 악화, 첫 실행의 기존 상태
+  const resolveKeys = [...eventPlan.resolveKeys, ...stalePending];
   await Promise.all([
-    eventPlan.resolveKeys.length > 0
-      ? prisma.holdingEventLog.updateMany({ where: { userId, eventKey: { in: eventPlan.resolveKeys } }, data: { resolvedAt: now } })
+    resolveKeys.length > 0
+      ? prisma.holdingEventLog.updateMany({ where: { userId, eventKey: { in: resolveKeys } }, data: { resolvedAt: now } })
       : null,
     ...holds.map((h) =>
       prisma.holdingEventLog.upsert({
         where: { userId_eventKey: { userId, eventKey: h.key } },
         create: { userId, code: h.code, eventType: "grade-pending", eventKey: h.key, severity: h.state, title: `${h.state} 악화 확인 대기`, firstSeenAt: now, lastSeenAt: now },
-        update: h.reset ? { firstSeenAt: now, lastSeenAt: now } : { lastSeenAt: now },
+        update: h.reset ? { firstSeenAt: now, lastSeenAt: now, resolvedAt: null } : { lastSeenAt: now },
       })
     ),
     ...eventPlan.seed.map((e) =>
