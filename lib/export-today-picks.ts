@@ -11,11 +11,20 @@
 // 분석 안 된 종목에만 쓰게 한다("중복되는 종목은 걸러서").
 
 import { readFile, writeFile } from "fs/promises";
+import path from "path";
 import { prisma } from "@/lib/prisma";
 import { parsePredictionCandidates } from "@/lib/prediction-scoring";
 
-export const TODAY_PICKS_PATH =
-  "C:\\Users\\PC\\Desktop\\바이브 코딩\\다트 데이터\\기업분석 데이터\\today_picks.json";
+// 로컬 "기업분석" 프로그램(Python V3)이 JSON을 쓰는 폴더 — PC마다 사용자
+// 계정/경로가 다를 수 있어 .env의 COMPANY_ANALYSIS_WATCH_DIR로 덮어쓸 수
+// 있게 하고, 없으면 현재 실제 사용 중인 경로를 기본값으로 쓴다
+// (scripts/watch-company-analysis.ts도 같은 값을 가져다 쓴다 — 두 곳이
+// 서로 다른 폴더를 보는 사고를 막기 위해 여기 한 곳만 source of truth).
+export const COMPANY_ANALYSIS_DIR =
+  process.env.COMPANY_ANALYSIS_WATCH_DIR?.trim() ||
+  "C:\\Users\\Owner\\Desktop\\바이브 코딩\\바이브 코딩\\다트 데이터\\기업분석 데이터";
+
+export const TODAY_PICKS_PATH = path.join(COMPANY_ANALYSIS_DIR, "today_picks.json");
 
 // "하루에 20개씩"(사용자 지정) — finance_py.py 자체 한도(MAX_DAILY_BATCH=25)
 // 보다 살짝 낮춰서 여유를 둔다.

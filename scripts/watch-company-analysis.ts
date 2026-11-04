@@ -13,9 +13,13 @@
 import "dotenv/config";
 import chokidar from "chokidar";
 import { importCompanyAnalysisFile } from "../lib/company-analysis-import";
-import { exportTodayPicks } from "../lib/export-today-picks";
+import { exportTodayPicks, COMPANY_ANALYSIS_DIR } from "../lib/export-today-picks";
 
-const WATCH_DIR = "C:\\Users\\PC\\Desktop\\바이브 코딩\\다트 데이터\\기업분석 데이터";
+// 실제 경로는 lib/export-today-picks.ts의 COMPANY_ANALYSIS_DIR 한 곳만
+// source of truth로 둔다(여기서 따로 하드코딩하면 today_picks.json 쓰는
+// 폴더와 분석 JSON 감시 폴더가 서로 어긋날 수 있다 — 실제로 그렇게 어긋나
+// 있었다). PC마다 다르면 .env의 COMPANY_ANALYSIS_WATCH_DIR로 덮어쓴다.
+const WATCH_DIR = COMPANY_ANALYSIS_DIR;
 
 // today_picks.json(오늘 골구가 예상한 종목 + 지난 예측 백로그, 최신순·이미
 // 분석된 건 제외)도 이 프로세스가 같이 최신으로 유지한다 — 사용자가 매일
