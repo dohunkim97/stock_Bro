@@ -9,10 +9,14 @@
 // 로컬 개발 DB에 마이그레이션이 필요하면 `npx prisma migrate deploy`를 직접 실행한다.
 // BUILD_DRY_RUN=1이면 실행하지 않고 계획만 출력한다(검증용).
 //
-// DB 지문(2026-11-17): 빌드 로그에 DB 주소 대신 "호스트의 SHA-256 앞 8자리"만 찍는다. Preview와 운영 빌드
-// 로그의 지문이 다르면 서로 다른 DB(Neon 브랜치)다. 주소·비밀번호는 출력하지 않는다.
-// Preview 환경변수에 PRODUCTION_DB_FINGERPRINT(운영 빌드 로그의 지문)를 넣어 두면, Preview가 운영 DB를
-// 가리킬 때 빌드를 실패시켜 배포 자체를 막는다.
+// DB 지문(2026-11-17): 빌드 로그에 DB 주소 대신 "호스트의 SHA-256 앞 8자리"만 찍는다. 주소·비밀번호는 출력하지 않는다.
+//
+// Preview 전용 DB(2026-11-18): Neon 통합 변수 3개는 All Environments라 Preview에서도 운영 DB를 가리키고
+// 직접 고칠 수 없다. 그래서 앱은 Preview에서 PREVIEW_POSTGRES_PRISMA_URL·PREVIEW_POSTGRES_URL_NON_POOLING만
+// 쓴다(lib/db-url.ts, prisma.config.ts). 이 빌드 스크립트는 Preview 빌드에서
+//   - Preview 전용 변수가 없거나
+//   - 그 지문이 통합 변수(= 운영 DB)나 PRODUCTION_DB_FINGERPRINT와 같으면
+// 빌드를 멈춰 배포 자체를 막는다.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
@@ -39,10 +43,23 @@ function dbFingerprint(url) {
 const DB_VARS = ["POSTGRES_PRISMA_URL", "DATABASE_URL", "POSTGRES_URL_NON_POOLING"];
 const prints = DB_VARS.map((k) => [k, dbFingerprint(process.env[k])]);
 console.log(`[build] DB 지문(호스트 해시 앞 8자리): ${prints.map(([k, f]) => `${k}=${f ?? "없음"}`).join(", ")}`);
-const prodPrint = process.env.PRODUCTION_DB_FINGERPRINT?.trim();
-if (env === "preview" && prodPrint && prints.some(([, f]) => f === prodPrint)) {
-  console.error("[build] 중단: Preview 빌드의 DB 지문이 운영 DB와 같습니다. Preview 환경변수를 Preview 전용 Neon 브랜치로 바꾸세요.");
-  process.exit(1);
+if (env === "preview") {
+  const PREVIEW_VARS = ["PREVIEW_POSTGRES_PRISMA_URL", "PREVIEW_POSTGRES_URL_NON_POOLING"];
+  const previewPrints = PREVIEW_VARS.map((k) => [k, dbFingerprint(process.env[k])]);
+  console.log(`[build] Preview 전용 DB 지문: ${previewPrints.map(([k, f]) => `${k}=${f ?? "없음"}`).join(", ")}`);
+  const prodPrints = new Set(
+    [...prints.map(([, f]) => f), process.env.PRODUCTION_DB_FINGERPRINT?.trim()].filter((f) => f && f !== "invalid")
+  );
+  const missing = previewPrints.filter(([, f]) => !f || f === "invalid").map(([k]) => k);
+  if (missing.length) {
+    console.error(`[build] 중단: Preview 전용 DB 변수가 없거나 잘못됨(${missing.join(", ")}). Vercel에 Preview 환경으로만 추가하세요.`);
+    process.exit(1);
+  }
+  if (previewPrints.some(([, f]) => prodPrints.has(f))) {
+    console.error("[build] 중단: Preview 전용 DB가 운영 DB와 같은 곳을 가리킵니다. Neon 'preview' 브랜치 주소로 바꾸세요.");
+    process.exit(1);
+  }
+  console.log("[build] Preview 전용 DB 확인: 운영 DB와 다름");
 }
 
 for (const args of steps) {

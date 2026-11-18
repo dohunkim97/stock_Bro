@@ -11,6 +11,10 @@ export default defineConfig({
   datasource: {
     // Migrations need a direct (non-pooled) connection — Neon's pooled
     // connection (pgbouncer) doesn't support the advisory locks Migrate uses.
-    url: process.env["POSTGRES_URL_NON_POOLING"],
+    // Preview 배포는 Preview 전용 DB 변수만 쓴다(없으면 비워 둠 — 운영 DB로 넘어가지 않음, lib/db-url.ts와 같은 규칙).
+    url:
+      process.env["VERCEL_ENV"] === "preview"
+        ? process.env["PREVIEW_POSTGRES_URL_NON_POOLING"]?.trim() || undefined
+        : process.env["POSTGRES_URL_NON_POOLING"],
   },
 });
