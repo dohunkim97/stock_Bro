@@ -2,6 +2,7 @@
   "git": {
     "deploymentEnabled": {
       "main": true,
+      "chore/migrate-production-only": true,
       "**": false
     }
   },
