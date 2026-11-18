@@ -28,6 +28,13 @@ test("Preview는 Preview 전용 변수만 쓴다(통합 변수가 운영 주소�
   assert.equal(migrationDbUrl(env), PREVIEW.PREVIEW_POSTGRES_URL_NON_POOLING);
 });
 
+test("실행 중 VERCEL_ENV가 비어도 빌드 때 preview였으면 Preview로 본다", () => {
+  const env = { ...PROD, ...PREVIEW, GOLGOO_BUILD_VERCEL_ENV: "preview" };
+  assert.equal(runtimeDbUrl(env), PREVIEW.PREVIEW_POSTGRES_PRISMA_URL);
+  assert.throws(() => runtimeDbUrl({ ...PROD, GOLGOO_BUILD_VERCEL_ENV: "preview" }), /PREVIEW_POSTGRES_PRISMA_URL/);
+  assert.equal(runtimeDbUrl({ ...PROD, GOLGOO_BUILD_VERCEL_ENV: "production" }), PROD.POSTGRES_PRISMA_URL);
+});
+
 test("Preview인데 전용 변수가 없으면 운영 주소로 넘어가지 않는다", () => {
   for (const missing of [{}, { PREVIEW_POSTGRES_PRISMA_URL: "  " }]) {
     const env = { ...PROD, VERCEL_ENV: "preview", ...missing };

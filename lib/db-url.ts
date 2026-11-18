@@ -11,8 +11,9 @@ export type DbEnv = Record<string, string | undefined>;
 export const PREVIEW_RUNTIME_VAR = "PREVIEW_POSTGRES_PRISMA_URL";
 export const PREVIEW_MIGRATION_VAR = "PREVIEW_POSTGRES_URL_NON_POOLING";
 
+// 실행 중 VERCEL_ENV 또는 빌드 때 고정한 GOLGOO_BUILD_VERCEL_ENV(next.config.ts) 중 하나라도 preview면 Preview로 본다.
 function isPreview(env: DbEnv): boolean {
-  return env.VERCEL_ENV === "preview";
+  return env.VERCEL_ENV === "preview" || env.GOLGOO_BUILD_VERCEL_ENV === "preview";
 }
 
 /** 앱 실행용(연결 풀) 주소. Preview인데 전용 변수가 없으면 예외 — 운영 DB로 절대 넘어가지 않는다. */
